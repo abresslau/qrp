@@ -106,6 +106,20 @@ con.execute("DETACH sig;"); con.execute(f"ATTACH '{DSN} dbname=signal_spike' AS 
 the RO check, and a one-line recommendation **per QRP read surface** (live-attach vs materialized).
 Then: `DROP DATABASE signal_spike;` and delete `.spike/`.
 
+## Reproduction (committed runners)
+
+Both read `SYM_DB_PASSWORD` from the env (no secrets in the scripts):
+
+```bash
+# the live Postgres-attach test (needs the DuckDB postgres extension / network):
+SYM_DB_PASSWORD=... uv run --with duckdb --with "psycopg[binary]" python db/spikes/run_spike_live.py
+# the env-adapted runner that produced the 2026-06-08 findings (no extension needed):
+SYM_DB_PASSWORD=... uv run --with duckdb --with "psycopg[binary]" python db/spikes/run_spike_native.py
+```
+
+`run_spike_live.py` exits 3 with a clear message if `extensions.duckdb.org` is unreachable (the
+2026-06-08 case) — then fall back to `run_spike_native.py`. Results → `duckdb-federation-findings.md`.
+
 ## Out of scope (follow-ons, not this spike)
 - Where DuckDB runs in production (embedded in the API process vs a small query service) +
   concurrency model — decide after perf is known.
