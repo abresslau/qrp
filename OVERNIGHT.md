@@ -44,7 +44,13 @@ sym-DATA writes tonight). 100% priced/named; maintenance plan in `sym/docs/unive
 - **read-only DB role**: QRP uses one DSN for reads; the architecture's read-only-role hardening is a follow-up.
 - **Operate transport**: currently 2s poll — SSE is a nice-to-have.
 - **Brazil GICS gap**: financedatabase free tier lacks GICS for ~43/78 BR names (left Unclassified, not faked).
-- **Schemas applied directly** (`db/qrp/*.sql`), not yet Sqitch-formalised.
+- ~~**Schemas applied directly** (`db/qrp/*.sql`), not yet Sqitch-formalised.~~ **DONE 2026-06-08**
+  (commit `38074b0`): all six QRP schemas formalised into a Sqitch project (`project=qrp`,
+  `sqitch.conf` + `db/sqitch.plan` + `db/{deploy,revert,verify}/`); replays clean on a blank DB and
+  baselined on the live DB (coexists with sym's `sym` project). **Forward direction (not yet built):**
+  the DB-topology brainstorm (`sym/_bmad-output/.../brainstorming-session-2026-06-08-123427.md`) chose
+  **database-per-package + DuckDB federation** (supersedes AR-Q4) — federation spike run + recorded in
+  `db/spikes/` (cross-DB join model + READ_ONLY proven; live-PG attach deferred, env-blocked).
 - **sym `validate` has 2 pre-existing FAILs** (warehouse-wide unpriced names + Brazil GICS) — NOT caused by
   tonight's work (new BR names are 0 unpriced).
 - Modules `optimiser`/`altdata` etc. are spikes with curated/sample scope — broaden universes/sources for production.
