@@ -10,13 +10,14 @@ from qrp_api.modules.backtest.engine import run_backtest
 
 
 class DbBacktestGateway:
-    def __init__(self, conn: psycopg.Connection) -> None:
-        self._conn = conn
+    def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
+        self._conn = conn          # backtest DB — runs/points (read + write)
+        self._sym = sym_conn       # sym hub — the engine's read-only source (run only)
         self._conn.autocommit = True
 
     def run(self, factor: str, universe_id: str, top_pct: float) -> dict:
         start: date | None = None
-        return run_backtest(self._conn, factor=factor, universe_id=universe_id,
+        return run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
                             top_pct=top_pct, start=start)
 
     def runs(self, limit: int = 25) -> list[dict]:

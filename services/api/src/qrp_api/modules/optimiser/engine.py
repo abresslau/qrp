@@ -102,12 +102,11 @@ def _project_simplex(v: list[float]) -> list[float]:
     """Euclidean projection onto {w : sum(w)=1, w>=0} (Wang & Carreira-Perpiñán)."""
     u = sorted(v, reverse=True)
     css = 0.0
-    rho, theta = 0, 0.0
+    theta = 0.0
     for i, ui in enumerate(u):
         css += ui
         t = (css - 1.0) / (i + 1)
         if ui - t > 0:
-            rho = i + 1
             theta = t
     return [max(x - theta, 0.0) for x in v]
 
@@ -134,9 +133,12 @@ def _stats(w, mean, cov):
     return exp_ret, exp_vol, sharpe
 
 
-def solve(conn: psycopg.Connection, universe_id="sp500", method="min_variance",
-          n=40, lookback=252) -> dict:
-    conn.autocommit = True
+def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
+          universe_id="sp500", method="min_variance", n=40, lookback=252) -> dict:
+    # sym_conn reads the hub (universe/fundamentals/fact_returns/symbology); opt_conn writes
+    # solutions/weights to the optimiser database (DB-per-package; cross-DB read via psycopg).
+    conn = sym_conn  # all reads below go to the sym hub
+    opt_conn.autocommit = True
     names = _select_names(conn, universe_id, n)
     if len(names) < 5:
         return {"error": f"too few members with market cap for {universe_id!r}"}
@@ -164,7 +166,7 @@ def solve(conn: psycopg.Connection, universe_id="sp500", method="min_variance",
     tickers = _tickers(conn, figis)
     summary = {"n_dates": t, "max_weight": max(w), "n_nonzero": sum(1 for x in w if x > 1e-4),
                "weights_sum": sum(w)}
-    sol_id = conn.execute(
+    sol_id = opt_conn.execute(
         """
         INSERT INTO optimiser.solution
             (universe_id, method, n_assets, lookback_days, exp_return, exp_vol, sharpe, ew_vol,
@@ -175,7 +177,7 @@ def solve(conn: psycopg.Connection, universe_id="sp500", method="min_variance",
          json.dumps(summary)),
     ).fetchone()[0]
     order = sorted(range(len(figis)), key=lambda i: w[i], reverse=True)
-    with conn.cursor() as cur:
+    with opt_conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO optimiser.weight (solution_id, composite_figi, ticker, weight) "
             "VALUES (%s,%s,%s,%s)",
@@ -202,9 +204,13 @@ def _tickers(conn, figis) -> dict:
 if __name__ == "__main__":
     from qrp_api.db import connect
 
-    conn = connect()
+    from qrp_api.config import package_dsn
+
+    sym_conn = connect()
+    opt_conn = connect(package_dsn("optimiser"))
     try:
         for m in ("min_variance", "max_sharpe"):
-            print(json.dumps(solve(conn, "sp500", m, 40, 252), indent=2, default=str))
+            print(json.dumps(solve(sym_conn, opt_conn, "sp500", m, 40, 252), indent=2, default=str))
     finally:
-        conn.close()
+        sym_conn.close()
+        opt_conn.close()

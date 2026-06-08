@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=altdata
+%uri=https://github.com/abresslau/qrp-altdata
+
+altdata 2026-06-08T16:00:00Z Andre <ab@gladstone-management.com> # altdata schema: wiki article map + daily pageviews, own database

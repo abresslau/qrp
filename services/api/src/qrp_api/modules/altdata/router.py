@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from qrp_api.config import package_dsn
 from qrp_api.db import connect
 from qrp_api.modules.altdata.gateway import DbAltdataGateway
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/api/altdata", tags=["altdata"])
 
 
 def _gateway() -> Iterator[DbAltdataGateway]:
-    conn = connect()
+    conn = connect(package_dsn("altdata"))  # altdata owns its own database
     try:
         yield DbAltdataGateway(conn)
     finally:

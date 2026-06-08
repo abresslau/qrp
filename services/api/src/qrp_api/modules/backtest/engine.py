@@ -135,14 +135,18 @@ def _stats(daily: list[float], curve: list[float]) -> dict:
 
 
 def run_backtest(
-    conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
+    bt_conn: psycopg.Connection,
     factor: str = "mom_12_1",
     universe_id: str = "sp500",
     top_pct: float = 0.2,
     start: date | None = None,
     end: date | None = None,
 ) -> dict:
-    conn.autocommit = True
+    # sym_conn reads the hub (fact_returns/fundamentals/universe_membership); bt_conn writes
+    # runs/points to the backtest database (DB-per-package; cross-DB read via psycopg).
+    conn = sym_conn  # all reads below go to the sym hub
+    bt_conn.autocommit = True
     members = _members(conn, universe_id)
     rng = conn.execute(
         "SELECT min(as_of_date), max(as_of_date) FROM fact_returns "
@@ -206,7 +210,7 @@ def run_backtest(
         "first_holding_n": len(first_holding),
     }
 
-    run_id = conn.execute(
+    run_id = bt_conn.execute(
         """
         INSERT INTO backtest.run
             (factor, universe_id, top_pct, rebalance, start_date, end_date, n_days,
@@ -218,7 +222,7 @@ def run_backtest(
     ).fetchone()[0]
     # Persist the curve (sample to <= ~400 points to keep it light).
     step = max(1, len(points) // 400)
-    with conn.cursor() as cur:
+    with bt_conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO backtest.point (run_id, obs_date, strat_cum, base_cum) "
             "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
@@ -229,10 +233,13 @@ def run_backtest(
 
 
 if __name__ == "__main__":
+    from qrp_api.config import package_dsn
     from qrp_api.db import connect
 
-    conn = connect()
+    sym_conn = connect()
+    bt_conn = connect(package_dsn("backtest"))
     try:
-        print(json.dumps(run_backtest(conn), indent=2, default=str))
+        print(json.dumps(run_backtest(sym_conn, bt_conn), indent=2, default=str))
     finally:
-        conn.close()
+        sym_conn.close()
+        bt_conn.close()

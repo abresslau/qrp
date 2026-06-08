@@ -11,3 +11,6 @@ optimiser 2026-06-08T13:05:00Z Andre <ab@gladstone-management.com> # optimiser s
 altdata 2026-06-08T13:06:00Z Andre <ab@gladstone-management.com> # altdata schema: wiki article map + daily pageviews (attention proxy)
 relocate_macro [macro] 2026-06-08T14:30:00Z Andre <ab@gladstone-management.com> # macro relocated to its own database/project; drop the redundant schema from the sym DB
 relocate_signal [signal] 2026-06-08T15:30:00Z Andre <ab@gladstone-management.com> # signal relocated to its own database/project; drop the redundant schema from the sym DB
+relocate_altdata [altdata] 2026-06-08T16:15:00Z Andre <ab@gladstone-management.com> # altdata relocated to its own database/project; drop the redundant schema from the sym DB
+relocate_backtest [backtest] 2026-06-08T16:45:00Z Andre <ab@gladstone-management.com> # backtest relocated to its own database/project; drop the redundant schema from the sym DB
+relocate_optimiser [optimiser] 2026-06-08T17:15:00Z Andre <ab@gladstone-management.com> # optimiser relocated to its own database/project; drop the redundant schema from the sym DB

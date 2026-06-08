@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
+from qrp_api.config import package_dsn
 from qrp_api.db import connect
 from qrp_api.modules.optimiser.gateway import DbOptimiserGateway
 
@@ -14,11 +15,13 @@ router = APIRouter(prefix="/api/optimiser", tags=["optimiser"])
 
 
 def _gateway() -> Iterator[DbOptimiserGateway]:
-    conn = connect()
+    conn = connect(package_dsn("optimiser"))  # optimiser owns its own database
+    sym = connect()                           # sym hub — engine reads on solve
     try:
-        yield DbOptimiserGateway(conn)
+        yield DbOptimiserGateway(conn, sym)
     finally:
         conn.close()
+        sym.close()
 
 
 class OptSolutionSummary(BaseModel):

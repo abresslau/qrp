@@ -62,20 +62,22 @@ def _fetch_pageviews(article: str, start: date, end: date) -> list[tuple[date, i
     return out
 
 
-def run_ingest(conn: psycopg.Connection, start: date | None = None,
-               end: date | None = None) -> dict:
-    conn.autocommit = True
+def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
+               start: date | None = None, end: date | None = None) -> dict:
+    # sym_conn resolves figis from the hub (security_symbology); ad_conn writes altdata
+    # (DB-per-package; cross-DB read via psycopg).
+    ad_conn.autocommit = True
     end = end or date(2026, 6, 5)
     start = start or date(end.year, end.month, 1).replace(day=1)
     # default to ~120 days
     start = date.fromordinal(end.toordinal() - 120)
     summary = []
     for ticker, (article, name) in _MAP.items():
-        figi = _resolve_figi(conn, ticker)
+        figi = _resolve_figi(sym_conn, ticker)
         if not figi:
             summary.append({"ticker": ticker, "ok": False, "reason": "unresolved ticker"})
             continue
-        conn.execute(
+        ad_conn.execute(
             "INSERT INTO altdata.wiki_map (composite_figi, ticker, name, article) "
             "VALUES (%s,%s,%s,%s) ON CONFLICT (composite_figi) DO UPDATE SET "
             "ticker=EXCLUDED.ticker, name=EXCLUDED.name, article=EXCLUDED.article",
@@ -88,7 +90,7 @@ def run_ingest(conn: psycopg.Connection, start: date | None = None,
             continue
         n = 0
         for d, v in pvs:
-            conn.execute(
+            ad_conn.execute(
                 "INSERT INTO altdata.pageview (composite_figi, obs_date, views) VALUES (%s,%s,%s) "
                 "ON CONFLICT (composite_figi, obs_date) DO UPDATE SET views=EXCLUDED.views",
                 (figi, d, v),
@@ -99,11 +101,15 @@ def run_ingest(conn: psycopg.Connection, start: date | None = None,
 
 
 if __name__ == "__main__":
-    conn = connect()
+    from qrp_api.config import package_dsn
+
+    sym_conn = connect()
+    ad_conn = connect(package_dsn("altdata"))
     try:
-        res = run_ingest(conn)
+        res = run_ingest(sym_conn, ad_conn)
         for s in res["series"]:
             print(s)
         print("total observations:", res["total_obs"])
     finally:
-        conn.close()
+        sym_conn.close()
+        ad_conn.close()

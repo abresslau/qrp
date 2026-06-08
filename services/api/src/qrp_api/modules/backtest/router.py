@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
+from qrp_api.config import package_dsn
 from qrp_api.db import connect
 from qrp_api.modules.backtest.gateway import DbBacktestGateway
 
@@ -14,11 +15,13 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
 
 def _gateway() -> Iterator[DbBacktestGateway]:
-    conn = connect()
+    conn = connect(package_dsn("backtest"))  # backtest owns its own database
+    sym = connect()                          # sym hub — engine reads on run
     try:
-        yield DbBacktestGateway(conn)
+        yield DbBacktestGateway(conn, sym)
     finally:
         conn.close()
+        sym.close()
 
 
 class Stats(BaseModel):

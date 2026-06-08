@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=backtest
+%uri=https://github.com/abresslau/qrp-backtest
+
+backtest 2026-06-08T16:30:00Z Andre <ab@gladstone-management.com> # backtest schema: walk-forward run config + equity-curve points, own database

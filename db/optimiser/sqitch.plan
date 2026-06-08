@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=optimiser
+%uri=https://github.com/abresslau/qrp-optimiser
+
+optimiser 2026-06-08T17:00:00Z Andre <ab@gladstone-management.com> # optimiser schema: mean-variance solution + long-only weights, own database
