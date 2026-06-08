@@ -228,8 +228,16 @@ def run_backtest(
             "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
             [(run_id, d, s, b) for idx, (d, s, b) in enumerate(points) if idx % step == 0],
         )
+    # Equal-weight holdings per rebalance date — the paper portfolio's weight vectors over time
+    # (Q6.4: a backtest can be materialised as a Portfolio for analytics to measure).
+    weight_vectors = {
+        d.isoformat(): [[f, 1.0 / len(holdings[d])] for f in holdings[d]]
+        for d in rebals
+        if holdings[d]
+    }
     return {"run_id": int(run_id), "factor": factor, "universe_id": universe_id,
-            "n_days": len(common), "n_rebalances": len(rebals), "summary": summary}
+            "n_days": len(common), "n_rebalances": len(rebals), "summary": summary,
+            "weight_vectors": weight_vectors}
 
 
 if __name__ == "__main__":

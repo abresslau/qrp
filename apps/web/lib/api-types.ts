@@ -667,6 +667,11 @@ export interface components {
              * @default 0.2
              */
             top_pct: number;
+            /**
+             * Save Portfolio
+             * @default false
+             */
+            save_portfolio: boolean;
         };
         /** BacktestRunResult */
         BacktestRunResult: {
@@ -674,6 +679,8 @@ export interface components {
             ok: boolean;
             /** Run Id */
             run_id?: number | null;
+            /** Portfolio Id */
+            portfolio_id?: number | null;
             /** Error */
             error?: string | null;
         };

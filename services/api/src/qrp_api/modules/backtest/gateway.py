@@ -15,10 +15,19 @@ class DbBacktestGateway:
         self._sym = sym_conn       # sym hub — the engine's read-only source (run only)
         self._conn.autocommit = True
 
-    def run(self, factor: str, universe_id: str, top_pct: float) -> dict:
-        start: date | None = None
-        return run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
-                            top_pct=top_pct, start=start)
+    def run(self, factor: str, universe_id: str, top_pct: float, portfolios_gw=None) -> dict:
+        res = run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
+                           top_pct=top_pct, start=None)
+        # Q6.4: optionally materialise the run as a paper Portfolio (persisted via the
+        # portfolios package's own writer — module ownership respected, no cross-DB write here).
+        if portfolios_gw is not None and res.get("run_id") and res.get("weight_vectors"):
+            pid = portfolios_gw.create(
+                f"Backtest #{res['run_id']}: {factor} · {universe_id}", "(backtest)", "USD"
+            )
+            for iso, vec in sorted(res["weight_vectors"].items()):
+                portfolios_gw.upload_weights(pid, date.fromisoformat(iso), [(f, w) for f, w in vec])
+            res["portfolio_id"] = pid
+        return res
 
     def runs(self, limit: int = 25) -> list[dict]:
         rows = self._conn.execute(

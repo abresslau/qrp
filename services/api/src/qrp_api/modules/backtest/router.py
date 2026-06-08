@@ -68,11 +68,13 @@ class BacktestRunRequest(BaseModel):
     factor: str = "mom_12_1"
     universe: str = "sp500"
     top_pct: float = 0.2
+    save_portfolio: bool = False  # Q6.4: also materialise the run as a paper Portfolio
 
 
 class BacktestRunResult(BaseModel):
     ok: bool
     run_id: int | None = None
+    portfolio_id: int | None = None  # set when save_portfolio = true
     error: str | None = None
 
 
@@ -80,10 +82,21 @@ class BacktestRunResult(BaseModel):
 def run_backtest_ep(
     body: BacktestRunRequest = Body(...), gw: DbBacktestGateway = Depends(_gateway)
 ) -> dict:
-    res = gw.run(body.factor, body.universe, body.top_pct)
+    pconn = pgw = None
+    if body.save_portfolio:
+        from qrp_api.modules.portfolios.gateway import DbPortfolioGateway
+
+        pconn = connect(package_dsn("portfolios"))   # write the paper portfolio to its own DB
+        pgw = DbPortfolioGateway(pconn, gw._sym)      # reuse the sym hub for figi resolution
+    try:
+        res = gw.run(body.factor, body.universe, body.top_pct, portfolios_gw=pgw)
+    finally:
+        if pconn is not None:
+            pconn.close()
     if "error" in res:
-        return {"ok": False, "run_id": None, "error": res["error"]}
-    return {"ok": True, "run_id": res["run_id"], "error": None}
+        return {"ok": False, "run_id": None, "portfolio_id": None, "error": res["error"]}
+    return {"ok": True, "run_id": res["run_id"], "portfolio_id": res.get("portfolio_id"),
+            "error": None}
 
 
 @router.get("/runs", response_model=list[RunSummary])

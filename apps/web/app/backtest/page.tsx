@@ -95,6 +95,8 @@ export default function BacktestPage() {
   const [factor, setFactor] = useState("mom_12_1");
   const [universe, setUniverse] = useState("sp500");
   const [busy, setBusy] = useState(false);
+  const [savePortfolio, setSavePortfolio] = useState(false);
+  const [savedPid, setSavedPid] = useState<number | null>(null);
 
   const loadRuns = useCallback(() => {
     fetch("/api/backtest/runs", { cache: "no-store" })
@@ -120,14 +122,16 @@ export default function BacktestPage() {
 
   async function run() {
     setBusy(true);
+    setSavedPid(null);
     const res = await fetch("/api/backtest/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ factor, universe, top_pct: 0.2 }),
+      body: JSON.stringify({ factor, universe, top_pct: 0.2, save_portfolio: savePortfolio }),
     }).then((r) => r.json());
     setBusy(false);
     if (res.ok) {
       setSel(res.run_id);
+      setSavedPid(res.portfolio_id ?? null);
       loadRuns();
     }
   }
@@ -164,6 +168,14 @@ export default function BacktestPage() {
             </option>
           ))}
         </select>
+        <label className="flex items-center gap-1.5 text-sm text-muted">
+          <input
+            type="checkbox"
+            checked={savePortfolio}
+            onChange={(e) => setSavePortfolio(e.target.checked)}
+          />
+          Save as portfolio
+        </label>
         <button
           onClick={run}
           disabled={busy}
@@ -171,6 +183,11 @@ export default function BacktestPage() {
         >
           {busy ? "Running…" : "Run backtest"}
         </button>
+        {savedPid != null && (
+          <a href={`/portfolios/${savedPid}`} className="text-sm text-fg underline">
+            → saved as portfolio #{savedPid}
+          </a>
+        )}
       </div>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[16rem_1fr]">
