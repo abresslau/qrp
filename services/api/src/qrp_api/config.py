@@ -1,13 +1,11 @@
-"""Platform + database configuration for the QRP API.
+"""Platform + database configuration for the QRP gateway.
 
-Branding + the module registry come from ``platform.toml`` at the monorepo root. The
-database connection reuses sym's env convention (``SYM_DATABASE_URL`` wins, else discrete
-``SYM_DB_*`` with local-dev defaults), loaded from a monorepo-root ``.env`` — so the API
-points at the same database as the sym CLI with zero extra setup.
-
-(v1 uses a single DSN for reads. The architecture's dual-credential model — a read-only
-role for reads + an op-exec path — is a follow-up hardening; reads here are SQL over sym's
-published views/tables, and the API never mutates sym's schema.)
+Branding + the module registry come from ``platform.toml``. Database credentials are
+**instance-level, not package-level**: the shared Postgres instance is configured with the
+libpq-standard ``PG*`` env vars (``PGHOST``/``PGPORT``/``PGUSER``/``PGPASSWORD``), and each
+package only names its own database (``dbname = <package>``). sym is just another package whose
+database is named ``sym``. Override any package's whole DSN with ``<PKG>_DATABASE_URL`` (or its
+name with ``<PKG>_DB_NAME``) to move it to its own host later.
 """
 
 from __future__ import annotations
@@ -17,14 +15,15 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 
-_DB_DEFAULTS = {"host": "localhost", "port": "5432", "dbname": "sym", "user": "postgres"}
+# Shared-instance defaults (the DATABASE name is per-package, so it isn't here).
+_INSTANCE_DEFAULTS = {"host": "localhost", "port": "5432", "user": "postgres"}
 
 
 def _repo_root() -> Path:
     for parent in Path(__file__).resolve().parents:
         if (parent / "platform.toml").is_file():
             return parent
-    raise FileNotFoundError("platform.toml not found above the API package")
+    raise FileNotFoundError("platform.toml not found above the gateway package")
 
 
 @lru_cache
@@ -58,9 +57,10 @@ def _load_dotenv() -> None:
 
 
 def sym_project_dir() -> Path:
-    """Directory of the sym project (where `uv run sym ...` executes for Operate jobs).
+    """Directory of the sym CODE checkout (where `uv run sym <op>` executes for Operate jobs).
 
-    Override with SYM_PROJECT_DIR; default is a sibling `sym` checkout next to this repo.
+    This is a code path, not a credential. Override with SYM_PROJECT_DIR; default is a sibling
+    `sym` checkout next to this repo.
     """
     _load_dotenv()
     env = os.environ.get("SYM_PROJECT_DIR")
@@ -70,49 +70,32 @@ def sym_project_dir() -> Path:
     return sibling if (sibling / "pyproject.toml").is_file() else Path("C:/Projects/sym")
 
 
-def db_dsn() -> str:
-    """Resolve the sym database DSN from the environment (sym's convention)."""
-    _load_dotenv()
-    url = os.environ.get("SYM_DATABASE_URL")
-    if url:
-        return url
-    host = os.environ.get("SYM_DB_HOST", _DB_DEFAULTS["host"])
-    port = os.environ.get("SYM_DB_PORT", _DB_DEFAULTS["port"])
-    dbname = os.environ.get("SYM_DB_NAME", _DB_DEFAULTS["dbname"])
-    user = os.environ.get("SYM_DB_USER", _DB_DEFAULTS["user"])
-    parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={user}"]
-    password = os.environ.get("SYM_DB_PASSWORD")
-    if password:
-        parts.append(f"password={password}")
-    return " ".join(parts)
-
-
 def package_dsn(package: str) -> str:
-    """DSN for a package that owns its own database (DB-per-package topology).
+    """DSN for a package's own database on the shared instance.
 
-    On the same Postgres instance as sym by default (reuses SYM_DB_* host/creds), in a
-    database named after the package. Override per package via ``<PKG>_DATABASE_URL`` or the
-    discrete ``<PKG>_DB_*`` (e.g. SIGNAL_DB_HOST) — so a package can later move to its own host.
+    Instance creds come from the libpq-standard ``PG*`` env (shared by every package); this only
+    names the database (``dbname = <package>``). Override the whole DSN per package via
+    ``<PKG>_DATABASE_URL``, or just its name via ``<PKG>_DB_NAME``.
     """
     _load_dotenv()
     p = package.upper()
     url = os.environ.get(f"{p}_DATABASE_URL")
     if url:
         return url
-    host = os.environ.get(f"{p}_DB_HOST", os.environ.get("SYM_DB_HOST", _DB_DEFAULTS["host"]))
-    port = os.environ.get(f"{p}_DB_PORT", os.environ.get("SYM_DB_PORT", _DB_DEFAULTS["port"]))
+    host = os.environ.get("PGHOST", _INSTANCE_DEFAULTS["host"])
+    port = os.environ.get("PGPORT", _INSTANCE_DEFAULTS["port"])
+    user = os.environ.get("PGUSER", _INSTANCE_DEFAULTS["user"])
     dbname = os.environ.get(f"{p}_DB_NAME", package)
-    user = os.environ.get(f"{p}_DB_USER", os.environ.get("SYM_DB_USER", _DB_DEFAULTS["user"]))
     parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={user}"]
-    password = os.environ.get(f"{p}_DB_PASSWORD", os.environ.get("SYM_DB_PASSWORD"))
+    password = os.environ.get("PGPASSWORD")
     if password:
         parts.append(f"password={password}")
     return " ".join(parts)
 
 
-def macro_dsn() -> str:
-    """DSN for the `macro` package's own database (see ``package_dsn``)."""
-    return package_dsn("macro")
+def db_dsn() -> str:
+    """The sym hub database (sym is a package; its database is named ``sym``)."""
+    return package_dsn("sym")
 
 
 def signal_dsn() -> str:

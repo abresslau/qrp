@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import psycopg
 
-from qrp_api.config import macro_dsn
-from qrp_api.db import connect
-from qrp_api.modules.macro.sources import fetch_ecb, fetch_worldbank
+from macro.db import connect
+from macro.sources import fetch_ecb, fetch_worldbank
 
 # World Bank annual indicators × countries (US, Brazil, Euro area, UK, Japan).
 _WB = [
@@ -83,7 +82,7 @@ def run_ingest(conn: psycopg.Connection) -> dict:
 
 
 if __name__ == "__main__":
-    conn = connect(macro_dsn())  # macro owns its own database (DB-per-package topology)
+    conn = connect()  # macro owns its own database (DSN resolved by macro.config)
     try:
         result = run_ingest(conn)
         for s in result["series"]:

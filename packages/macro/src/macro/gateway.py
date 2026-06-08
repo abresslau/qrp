@@ -32,10 +32,10 @@ class DbMacroGateway:
                 "frequency": freq,
                 "n_obs": n,
                 "first": f.isoformat() if f else None,
-                "last": l.isoformat() if l else None,
+                "last": last.isoformat() if last else None,
                 "latest": float(latest) if latest is not None else None,
             }
-            for sid, src, name, geo, unit, freq, n, f, l, latest in rows
+            for sid, src, name, geo, unit, freq, n, f, last, latest in rows
         ]
 
     def observations(self, series_id: str) -> dict | None:

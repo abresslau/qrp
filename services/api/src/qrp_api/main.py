@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
 
         app.include_router(operate_router)
     if "macro" in enabled:
-        from qrp_api.modules.macro.router import router as macro_router
+        from macro.router import router as macro_router  # standalone package (carved out)
 
         app.include_router(macro_router)
     if "signal" in enabled:

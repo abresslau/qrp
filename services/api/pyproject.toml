@@ -7,7 +7,11 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "psycopg[binary]>=3.2",
+    "macro",            # the macro package (workspace member) — its router is mounted by the gateway
 ]
+
+[tool.uv.sources]
+macro = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

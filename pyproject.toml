@@ -10,7 +10,9 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["services/api"]
+# Explicit members (not packages/* — the reserved packages/sym stub has no pyproject yet).
+# Add each package here as it's carved out.
+members = ["services/api", "packages/macro"]
 
 [tool.ruff]
 line-length = 100
