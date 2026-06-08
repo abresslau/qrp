@@ -1,8 +1,11 @@
+-- Deploy qrp:backtest to pg
+
+BEGIN;
+
 -- QRP-managed `backtest` schema (NOT sym): walk-forward factor-strategy simulations over
 -- sym history. A run persists its config + summary; points hold the equity curves. The
 -- factor is recomputed from fact_returns at each rebalance date (no look-ahead). Idempotent
 -- per run_id; sym is read-only.
-
 CREATE SCHEMA IF NOT EXISTS backtest;
 
 CREATE TABLE IF NOT EXISTS backtest.run (
@@ -26,3 +29,5 @@ CREATE TABLE IF NOT EXISTS backtest.point (
     base_cum   DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (run_id, obs_date)
 );
+
+COMMIT;

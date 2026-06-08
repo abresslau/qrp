@@ -1,0 +1,11 @@
+%syntax-version=1.0.0
+%project=qrp
+%uri=https://github.com/abresslau/qrp
+
+portfolios 2026-06-08T13:00:00Z Andre <ab@gladstone-management.com> # qrp schema: portfolios + effective-dated weights (weights-first over sym_id)
+jobs [portfolios] 2026-06-08T13:01:00Z Andre <ab@gladstone-management.com> # qrp.job ledger for the Operate background-job surface
+macro 2026-06-08T13:02:00Z Andre <ab@gladstone-management.com> # macro schema: series catalog + observations (World Bank / ECB)
+signal 2026-06-08T13:03:00Z Andre <ab@gladstone-management.com> # signal schema: factor catalog + cross-sectional scores
+backtest 2026-06-08T13:04:00Z Andre <ab@gladstone-management.com> # backtest schema: walk-forward run config + equity-curve points
+optimiser 2026-06-08T13:05:00Z Andre <ab@gladstone-management.com> # optimiser schema: mean-variance solution + long-only weights
+altdata 2026-06-08T13:06:00Z Andre <ab@gladstone-management.com> # altdata schema: wiki article map + daily pageviews (attention proxy)

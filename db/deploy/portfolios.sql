@@ -1,7 +1,9 @@
+-- Deploy qrp:portfolios to pg
+
+BEGIN;
+
 -- QRP-owned schema (NOT sym). Portfolios are weights-first: a time series of
 -- effective-dated weight vectors over sym_id (composite_figi). Idempotent.
--- (A Sqitch migration can formalize this later; applied directly for the v1 slice.)
-
 CREATE SCHEMA IF NOT EXISTS qrp;
 
 CREATE TABLE IF NOT EXISTS qrp.portfolio (
@@ -25,3 +27,5 @@ CREATE TABLE IF NOT EXISTS qrp.portfolio_weight (
 
 CREATE INDEX IF NOT EXISTS idx_portfolio_weight_pd
     ON qrp.portfolio_weight (portfolio_id, as_of_date);
+
+COMMIT;

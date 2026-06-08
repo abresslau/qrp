@@ -1,7 +1,10 @@
+-- Deploy qrp:optimiser to pg
+
+BEGIN;
+
 -- QRP-managed `optimiser` schema (NOT sym): mean-variance portfolio solutions computed from
 -- sym's daily return covariance. A solution stores its config + expected stats; weights hold
 -- the long-only allocation. Idempotent per solution_id; sym is read-only.
-
 CREATE SCHEMA IF NOT EXISTS optimiser;
 
 CREATE TABLE IF NOT EXISTS optimiser.solution (
@@ -25,3 +28,5 @@ CREATE TABLE IF NOT EXISTS optimiser.weight (
     weight         DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (solution_id, composite_figi)
 );
+
+COMMIT;

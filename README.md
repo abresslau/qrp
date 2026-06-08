@@ -14,9 +14,30 @@ qrp/
 ├─ apps/web/              # Next.js 16 + Tailwind v4 console (:3000)
 ├─ services/api/          # FastAPI (uv) — per-module routers over sym (:8001)
 ├─ packages/sym/          # reserved fold-in slot (sym joins here later)
-├─ db/qrp/                # QRP's own `qrp` Postgres schema (portfolios) — 0001-portfolios.sql
+├─ sqitch.conf            # Sqitch config (project=qrp, engine=pg)
+├─ db/                    # QRP's own schemas as Sqitch migrations (deploy/revert/verify)
 └─ scripts/dev.mjs        # runs API + console together
 ```
+
+## Database migrations (Sqitch)
+
+QRP owns six schemas (`qrp`, `macro`, `signal`, `backtest`, `optimiser`, `altdata`) on the
+**shared** Postgres alongside sym (AR-Q4: schema-per-module). They are managed as a Sqitch
+project named **`qrp`** (`sqitch.conf` + `db/sqitch.plan` + `db/{deploy,revert,verify}/`),
+distinct from sym's own `sym` project; the two histories coexist in one registry, keyed by
+project name. QRP never mutates sym's schema — these migrations only create QRP-owned objects.
+
+Deploy via the `sqitch/sqitch` Docker image (no local sqitch needed), targeting the sym DB:
+
+```bash
+# PowerShell — set the target (no password in the repo; use a pgpass file or inline it locally)
+docker run --rm -v "${PWD}:/repo" -w /repo sqitch/sqitch \
+  deploy --verify "db:pg://postgres@host.docker.internal:5432/sym"
+```
+
+The deploy scripts are idempotent (`CREATE … IF NOT EXISTS`), so this is safe against both a
+blank database (full replay from zero) and the already-applied dev DB (no-op DDL + registry
+baseline). `sqitch revert` / `sqitch status <target>` work as usual.
 
 ## Run it (dev)
 

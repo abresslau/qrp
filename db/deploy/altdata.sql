@@ -1,7 +1,10 @@
+-- Deploy qrp:altdata to pg
+
+BEGIN;
+
 -- QRP-managed `altdata` schema (NOT sym): alternative-data signals. v1 source = Wikimedia
 -- pageviews as a per-company attention proxy, mapped to sym securities by composite_figi.
 -- Idempotent; sym is read-only.
-
 CREATE SCHEMA IF NOT EXISTS altdata;
 
 CREATE TABLE IF NOT EXISTS altdata.wiki_map (
@@ -19,3 +22,5 @@ CREATE TABLE IF NOT EXISTS altdata.pageview (
 );
 
 CREATE INDEX IF NOT EXISTS idx_altdata_pageview ON altdata.pageview (composite_figi, obs_date);
+
+COMMIT;

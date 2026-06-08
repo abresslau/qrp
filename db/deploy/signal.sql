@@ -1,7 +1,10 @@
+-- Deploy qrp:signal to pg
+
+BEGIN;
+
 -- QRP-managed `signal` schema (NOT sym): derived cross-sectional factor scores computed
 -- from sym data (fact_returns, fundamentals) per universe per as-of. Idempotent; scores
 -- upserted. sym is read-only here — signal owns its own derived store.
-
 CREATE SCHEMA IF NOT EXISTS signal;
 
 CREATE TABLE IF NOT EXISTS signal.factor (
@@ -25,3 +28,5 @@ CREATE TABLE IF NOT EXISTS signal.score (
 
 CREATE INDEX IF NOT EXISTS idx_signal_score_lookup
     ON signal.score (universe_id, factor_key, as_of_date, rank);
+
+COMMIT;
