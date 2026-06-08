@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import psycopg
 
+from qrp_api.config import macro_dsn
 from qrp_api.db import connect
 from qrp_api.modules.macro.sources import fetch_ecb, fetch_worldbank
 
@@ -82,7 +83,7 @@ def run_ingest(conn: psycopg.Connection) -> dict:
 
 
 if __name__ == "__main__":
-    conn = connect()
+    conn = connect(macro_dsn())  # macro owns its own database (DB-per-package topology)
     try:
         result = run_ingest(conn)
         for s in result["series"]:

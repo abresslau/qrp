@@ -7,5 +7,7 @@ import psycopg
 from qrp_api.config import db_dsn
 
 
-def connect() -> psycopg.Connection:
-    return psycopg.connect(db_dsn(), connect_timeout=5)
+def connect(dsn: str | None = None) -> psycopg.Connection:
+    """Open a connection. Defaults to the sym DB; pass a package DSN (e.g. ``macro_dsn()``)
+    to reach a package that owns its own database under the DB-per-package topology."""
+    return psycopg.connect(dsn or db_dsn(), connect_timeout=5)

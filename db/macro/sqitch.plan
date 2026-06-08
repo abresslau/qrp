@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=macro
+%uri=https://github.com/abresslau/qrp-macro
+
+macro 2026-06-08T14:00:00Z Andre <ab@gladstone-management.com> # macro schema: series catalog + observations (World Bank / ECB), own database

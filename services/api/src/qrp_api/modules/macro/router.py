@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from qrp_api.config import macro_dsn
 from qrp_api.db import connect
 from qrp_api.modules.macro.gateway import DbMacroGateway
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/api/macro", tags=["macro"])
 
 
 def _gateway() -> Iterator[DbMacroGateway]:
-    conn = connect()
+    conn = connect(macro_dsn())  # macro owns its own database (DB-per-package topology)
     try:
         yield DbMacroGateway(conn)
     finally:

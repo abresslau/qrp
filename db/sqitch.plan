@@ -9,3 +9,4 @@ signal 2026-06-08T13:03:00Z Andre <ab@gladstone-management.com> # signal schema:
 backtest 2026-06-08T13:04:00Z Andre <ab@gladstone-management.com> # backtest schema: walk-forward run config + equity-curve points
 optimiser 2026-06-08T13:05:00Z Andre <ab@gladstone-management.com> # optimiser schema: mean-variance solution + long-only weights
 altdata 2026-06-08T13:06:00Z Andre <ab@gladstone-management.com> # altdata schema: wiki article map + daily pageviews (attention proxy)
+relocate_macro [macro] 2026-06-08T14:30:00Z Andre <ab@gladstone-management.com> # macro relocated to its own database/project; drop the redundant schema from the sym DB
