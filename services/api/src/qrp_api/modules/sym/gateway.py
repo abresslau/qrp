@@ -12,14 +12,14 @@ from datetime import date, datetime
 
 import psycopg
 
+from qrp_api.modules.sym.freshness import AreaFreshness, classify
+
 
 def _as_text(v) -> str | None:
     """Render a JSONB/dict column as a compact string (review_queue.source_input is JSONB)."""
     if v is None or isinstance(v, str):
         return v
     return json.dumps(v, default=str, separators=(",", ":"))
-
-from qrp_api.modules.sym.freshness import AreaFreshness, classify
 
 # Curated short/medium windows for the heat-map selector (subset of return_window codes).
 HEATMAP_WINDOWS = ["1D", "WTD", "MTD", "QTD", "YTD", "1M", "3M", "6M", "1Y"]

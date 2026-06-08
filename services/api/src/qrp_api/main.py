@@ -41,35 +41,35 @@ def create_app() -> FastAPI:
 
         app.include_router(sym_router)
     if "portfolios" in enabled:
-        from qrp_api.modules.portfolios.router import router as portfolios_router
+        from portfolios.router import router as portfolios_router
 
         app.include_router(portfolios_router)
     if "analytics" in enabled:
-        from qrp_api.modules.analytics.router import router as analytics_router
+        from analytics.router import router as analytics_router
 
         app.include_router(analytics_router)
     if "sym" in enabled:  # Operate is sym's control plane (trigger sym's own ops)
-        from qrp_api.modules.operate.router import router as operate_router
+        from operate.router import router as operate_router
 
         app.include_router(operate_router)
     if "macro" in enabled:
         from macro.router import router as macro_router  # standalone package (carved out)
 
         app.include_router(macro_router)
-    if "signal" in enabled:
-        from qrp_api.modules.signal.router import router as signal_router
+    if "signals" in enabled:
+        from signals.router import router as signals_router
 
-        app.include_router(signal_router)
+        app.include_router(signals_router)
     if "backtest" in enabled:
-        from qrp_api.modules.backtest.router import router as backtest_router
+        from backtest.router import router as backtest_router
 
         app.include_router(backtest_router)
     if "optimiser" in enabled:
-        from qrp_api.modules.optimiser.router import router as optimiser_router
+        from optimiser.router import router as optimiser_router
 
         app.include_router(optimiser_router)
     if "altdata" in enabled:
-        from qrp_api.modules.altdata.router import router as altdata_router
+        from altdata.router import router as altdata_router
 
         app.include_router(altdata_router)
 

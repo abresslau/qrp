@@ -4,9 +4,50 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
+    "altdata",
+    "analytics",
+    "backtest",
     "macro",
+    "operate",
+    "optimiser",
+    "portfolios",
     "qrp",
     "qrp-api",
+    "signals",
+]
+
+[[package]]
+name = "altdata"
+version = "0.1.0"
+source = { editable = "packages/altdata" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[[package]]
+name = "analytics"
+version = "0.1.0"
+source = { editable = "packages/analytics" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
 ]
 
 [[package]]
@@ -38,6 +79,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/14/2c5dd9f512b66549ae92767a9c7b330ae88e1932ca57876909410251fe13/anyio-4.13.0.tar.gz", hash = "sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc", size = 231622, upload-time = "2026-03-24T12:59:09.671Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/da/42/e921fccf5015463e32a3cf6ee7f980a6ed0f395ceeaa45060b61d86486c2/anyio-4.13.0-py3-none-any.whl", hash = "sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708", size = 114353, upload-time = "2026-03-24T12:59:08.246Z" },
+]
+
+[[package]]
+name = "backtest"
+version = "0.1.0"
+source = { editable = "packages/backtest" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "portfolios" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "portfolios", editable = "packages/portfolios" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
 ]
 
 [[package]]
@@ -142,6 +202,57 @@ wheels = [
 name = "macro"
 version = "0.1.0"
 source = { editable = "packages/macro" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[[package]]
+name = "operate"
+version = "0.1.0"
+source = { editable = "packages/operate" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[[package]]
+name = "optimiser"
+version = "0.1.0"
+source = { editable = "packages/optimiser" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[[package]]
+name = "portfolios"
+version = "0.1.0"
+source = { editable = "packages/portfolios" }
 dependencies = [
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
@@ -415,18 +526,49 @@ name = "qrp-api"
 version = "0.1.0"
 source = { editable = "services/api" }
 dependencies = [
+    { name = "altdata" },
+    { name = "analytics" },
+    { name = "backtest" },
     { name = "fastapi" },
     { name = "macro" },
+    { name = "operate" },
+    { name = "optimiser" },
+    { name = "portfolios" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "signals" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "altdata", editable = "packages/altdata" },
+    { name = "analytics", editable = "packages/analytics" },
+    { name = "backtest", editable = "packages/backtest" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "macro", editable = "packages/macro" },
+    { name = "operate", editable = "packages/operate" },
+    { name = "optimiser", editable = "packages/optimiser" },
+    { name = "portfolios", editable = "packages/portfolios" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "signals", editable = "packages/signals" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
+]
+
+[[package]]
+name = "signals"
+version = "0.1.0"
+source = { editable = "packages/signals" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
 ]
 
 [[package]]

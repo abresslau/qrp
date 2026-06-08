@@ -1,7 +1,7 @@
 """Macro ingest: fetch the configured public series and upsert into the `macro` schema.
 
 Idempotent (observations upserted on (series_id, obs_date)). Run via
-``python -m qrp_api.modules.macro.ingest`` or the gateway's refresh().
+``python -m macro.ingest`` or the gateway's refresh().
 """
 
 from __future__ import annotations

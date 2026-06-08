@@ -27,8 +27,8 @@ description = "Alternative data"
 enabled = true
 
 [[modules]]
-key = "signal"
-name = "signal"
+key = "signals"
+name = "signals"
 description = "Derived signals & factors"
 enabled = true
 

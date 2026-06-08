@@ -414,7 +414,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/signal/factors": {
+    "/api/signals/factors": {
         parameters: {
             query?: never;
             header?: never;
@@ -422,7 +422,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Factors */
-        get: operations["list_factors_api_signal_factors_get"];
+        get: operations["list_factors_api_signals_factors_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -431,7 +431,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/signal/factors/{factor_key}": {
+    "/api/signals/factors/{factor_key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -439,7 +439,7 @@ export interface paths {
             cookie?: never;
         };
         /** Factor Ranking */
-        get: operations["factor_ranking_api_signal_factors__factor_key__get"];
+        get: operations["factor_ranking_api_signals_factors__factor_key__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1951,7 +1951,7 @@ export interface operations {
             };
         };
     };
-    list_factors_api_signal_factors_get: {
+    list_factors_api_signals_factors_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1971,7 +1971,7 @@ export interface operations {
             };
         };
     };
-    factor_ranking_api_signal_factors__factor_key__get: {
+    factor_ranking_api_signals_factors__factor_key__get: {
         parameters: {
             query: {
                 /** @description universe_id, e.g. sp500 | ibov | ibx */
