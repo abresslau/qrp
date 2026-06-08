@@ -57,6 +57,21 @@ class CreatedPortfolio(BaseModel):
     portfolio_id: int
 
 
+class Client(BaseModel):
+    client_id: int
+    name: str
+    created_at: str | None
+    n_portfolios: int
+
+
+class CreateClient(BaseModel):
+    name: str
+
+
+class CreatedClient(BaseModel):
+    client_id: int
+
+
 class Weight(BaseModel):
     figi: str
     ticker: str
@@ -111,6 +126,22 @@ def create_portfolio(
 ) -> dict:
     pid = gw.create(body.name, body.client, body.base_currency)
     return {"portfolio_id": pid}
+
+
+# Declared BEFORE /{pid} so "clients" isn't captured as a portfolio id.
+@router.get("/clients", response_model=list[Client])
+def list_clients(gw: DbPortfolioGateway = Depends(_gateway)) -> list[dict]:
+    return gw.clients()
+
+
+@router.post("/clients", response_model=CreatedClient)
+def create_client(
+    body: CreateClient = Body(...), gw: DbPortfolioGateway = Depends(_gateway)
+) -> dict:
+    try:
+        return {"client_id": gw.create_client(body.name)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/{pid}", response_model=PortfolioDetail)

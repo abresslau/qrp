@@ -43,24 +43,62 @@ class DbPortfolioGateway:
         )
         return tickers, names
 
+    # ---- clients (FR-13) ----
+    def _resolve_client(self, name: str) -> int | None:
+        """Resolve a client by name, creating it if new (deduped by name). Blank -> None."""
+        name = (name or "").strip()
+        if not name:
+            return None
+        row = self._conn.execute(
+            "INSERT INTO portfolios.client (name) VALUES (%s) "
+            "ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING client_id",
+            (name,),
+        ).fetchone()
+        return int(row[0])
+
+    def create_client(self, name: str) -> int:
+        cid = self._resolve_client(name)
+        if cid is None:
+            raise ValueError("client name must be non-empty")
+        return cid
+
+    def clients(self) -> list[dict]:
+        rows = self._conn.execute(
+            """
+            SELECT c.client_id, c.name, c.created_at, count(p.portfolio_id) AS n_portfolios
+              FROM portfolios.client c
+              LEFT JOIN portfolios.portfolio p USING (client_id)
+             GROUP BY c.client_id, c.name, c.created_at
+             ORDER BY c.name
+            """
+        ).fetchall()
+        return [
+            {"client_id": cid, "name": n, "created_at": ca.isoformat() if ca else None,
+             "n_portfolios": np}
+            for cid, n, ca, np in rows
+        ]
+
     # ---- portfolios ----
     def create(self, name: str, client: str = "", base_currency: str = "USD") -> int:
+        client_id = self._resolve_client(client)  # FR-13: link to a first-class Client
         row = self._conn.execute(
-            "INSERT INTO portfolios.portfolio (name, client, base_currency) VALUES (%s, %s, %s) "
+            "INSERT INTO portfolios.portfolio (name, client_id, base_currency) VALUES (%s, %s, %s) "
             "RETURNING portfolio_id",
-            (name, client, base_currency),
+            (name, client_id, base_currency),
         ).fetchone()
         return int(row[0])
 
     def list(self) -> list[dict]:
         rows = self._conn.execute(
             """
-            SELECT p.portfolio_id, p.name, p.client, p.base_currency, p.created_at,
+            SELECT p.portfolio_id, p.name, coalesce(c.name, '') AS client, p.base_currency,
+                   p.created_at,
                    count(w.composite_figi) AS n_weights,
                    max(w.as_of_date) AS latest_as_of
               FROM portfolios.portfolio p
+              LEFT JOIN portfolios.client c ON c.client_id = p.client_id
               LEFT JOIN portfolios.portfolio_weight w USING (portfolio_id)
-             GROUP BY p.portfolio_id, p.name, p.client, p.base_currency, p.created_at
+             GROUP BY p.portfolio_id, p.name, c.name, p.base_currency, p.created_at
              ORDER BY p.created_at DESC
             """
         ).fetchall()
@@ -79,8 +117,10 @@ class DbPortfolioGateway:
 
     def get(self, pid: int) -> dict | None:
         meta = self._conn.execute(
-            "SELECT portfolio_id, name, client, base_currency, created_at "
-            "FROM portfolios.portfolio WHERE portfolio_id = %s",
+            "SELECT p.portfolio_id, p.name, coalesce(c.name, '') AS client, p.base_currency, "
+            "p.created_at FROM portfolios.portfolio p "
+            "LEFT JOIN portfolios.client c ON c.client_id = p.client_id "
+            "WHERE p.portfolio_id = %s",
             (pid,),
         ).fetchone()
         if not meta:
