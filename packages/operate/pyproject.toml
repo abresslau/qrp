@@ -2,8 +2,11 @@
 name = "operate"
 version = "0.1.0"
 description = "QRP operate package — sym's control plane (job ledger in the qrp database; runs sym ops)."
-requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115", "pydantic>=2", "psycopg[binary]>=3.2"]
+requires-python = ">=3.13"
+dependencies = ["fastapi>=0.115", "pydantic>=2", "psycopg[binary]>=3.2", "sym"]
+
+[tool.uv.sources]
+sym = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

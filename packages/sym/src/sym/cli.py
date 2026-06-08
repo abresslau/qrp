@@ -1,0 +1,1186 @@
+"""Command-line entry point for sym.
+
+Story 1.1 ships ``version`` and ``check-db``; Story 1.6 adds ``resolve`` (FIGI
+assignment); Story 1.7 adds ``delist``; Story 1.8 adds ``classify`` (GICS); Story
+2.1 adds ``snapshot-calendar``; Story 2.5 adds ``backfill`` / ``delta`` / ``dev``;
+Story 2.8 adds ``sweep``; Story 2.9 adds ``backup``; Story 3.4 adds ``recompute``
+(the deterministic returns rebuild the DR runbook depends on); Story U1.1 adds
+``universe`` (define/list research universes — the pluggable universe layer).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from datetime import date
+
+from sym import __version__
+
+
+def _cmd_version(_args: argparse.Namespace) -> int:
+    print(f"sym {__version__}")
+    return 0
+
+
+def _cmd_check_db(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+
+    try:
+        with connect() as conn:
+            row = conn.execute("select version()").fetchone()
+    except psycopg.OperationalError as exc:
+        print(f"connection failed: {exc}", file=sys.stderr)
+        return 1
+    server_version = row[0] if row else "unknown"
+    print(f"connected: {server_version}")
+    return 0
+
+
+def _cmd_resolve(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.identity.figi import HttpOpenFigiClient, OpenFigiError, resolve_universe
+    from sym.identity.universe import load_seed_universe
+
+    load_dotenv()
+    securities = load_seed_universe()
+    client = HttpOpenFigiClient(api_key=os.environ.get("OPENFIGI_API_KEY"))
+
+    try:
+        with connect() as conn:
+            summary = resolve_universe(conn, client, securities)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    except OpenFigiError as exc:
+        print(f"OpenFIGI unavailable: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"resolved {len(securities)} seed names: "
+        f"{summary.assigned} assigned ({summary.securities_created} new, "
+        f"{summary.names_written} named), "
+        f"{summary.no_figi_found} no_figi_found, "
+        f"{summary.ambiguous_figi} ambiguous_figi, "
+        f"{summary.share_class_conflict} share_class_conflict "
+        f"({summary.review_enqueued} review rows enqueued)"
+    )
+    return 0
+
+
+def _cmd_names(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.identity.figi import HttpOpenFigiClient, OpenFigiError, backfill_names
+
+    load_dotenv()
+    client = HttpOpenFigiClient(api_key=os.environ.get("OPENFIGI_API_KEY"), max_retries=6)
+    try:
+        with connect() as conn:
+            summary = backfill_names(conn, client, limit=args.limit)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    except OpenFigiError as exc:
+        print(f"OpenFIGI unavailable: {exc}", file=sys.stderr)
+        return 2
+    print(
+        f"named {summary.named}/{summary.attempted} unnamed securities "
+        f"({summary.skipped_mismatch} ticker-recycled, {summary.skipped_unresolved} unresolved)"
+    )
+    return 0
+
+
+def _cmd_delist(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.identity.lifecycle import delist_security
+
+    try:
+        delist_date = date.fromisoformat(args.delist_date)
+    except ValueError as exc:
+        print(f"invalid delist date {args.delist_date!r}: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        with connect() as conn:
+            found = delist_security(conn, args.composite_figi, delist_date=delist_date)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not found:
+        print(f"no security with CompositeFIGI {args.composite_figi}", file=sys.stderr)
+        return 1
+    print(f"delisted {args.composite_figi} effective {delist_date.isoformat()}")
+    return 0
+
+
+def _cmd_classify(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.classification.gics import (
+        DEFAULT_COVERAGE_THRESHOLD,
+        FinanceDatabaseGicsSource,
+        classify_universe,
+    )
+    from sym.config import load_dotenv
+    from sym.db import connect
+
+    load_dotenv()
+    source = FinanceDatabaseGicsSource()
+
+    try:
+        with connect() as conn:
+            summary = classify_universe(conn, source)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"classified {summary.classified}/{summary.active_total} active securities "
+        f"({summary.coverage:.1%} coverage): "
+        f"{summary.rows_inserted} inserted, {summary.rows_updated} updated, "
+        f"{summary.rows_closed} closed, {summary.unchanged} unchanged, "
+        f"{summary.failed} failed"
+    )
+    if not summary.meets_threshold():
+        print(
+            f"coverage {summary.coverage:.1%} is below the "
+            f"{DEFAULT_COVERAGE_THRESHOLD:.0%} threshold (AC #2)",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
+def _cmd_snapshot_calendar(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.calendar.snapshot import (
+        ExchangeCalendarsSource,
+        read_exchange_mics,
+        snapshot_calendars,
+    )
+    from sym.config import load_dotenv
+    from sym.db import connect
+
+    load_dotenv()
+    source = ExchangeCalendarsSource()
+    # Cover near-future trading-day math without pulling decades past the horizon.
+    end = date(date.today().year + 1, 12, 31)
+
+    try:
+        with connect() as conn:
+            mics = read_exchange_mics(conn)
+            summary = snapshot_calendars(conn, source, mics, end=end)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"snapshot of {summary.requested} exchanges "
+        f"(exchange_calendars {source.library_version}): "
+        f"{summary.versions_written} new versions ({summary.sessions_written} sessions), "
+        f"{summary.unchanged} unchanged, {summary.empty} empty, "
+        f"{summary.unknown_mic} unknown, {summary.failed} failed"
+    )
+    if summary.unknown_mics:
+        unknown = ", ".join(summary.unknown_mics)
+        print(f"  unknown to exchange_calendars: {unknown}", file=sys.stderr)
+    return 0
+
+
+def _cmd_load(mode: str):
+    def run(args: argparse.Namespace) -> int:
+        import psycopg
+
+        from sym.config import source_key
+        from sym.db import connect
+        from sym.ingest.pipeline import run_load
+        from sym.sources import get_source
+        from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+
+        key = source_key()
+        universe = getattr(args, "universe", None)
+        dev_limit = getattr(args, "limit", None)
+        history_floor = None
+        if getattr(args, "history_floor", None):
+            try:
+                history_floor = date.fromisoformat(args.history_floor)
+            except ValueError as exc:
+                print(
+                    f"invalid --history-floor date {args.history_floor!r}: {exc}", file=sys.stderr
+                )
+                return 1
+        try:
+            with connect() as conn:
+                # symbol resolution is vendor-specific; yfinance today (EODHD in 2.7).
+                resolver = make_yahoo_symbol_resolver(conn)
+                source = get_source(key, symbol_for=resolver)
+                if universe:
+                    from sym.universe.ingest import run_universe_load
+
+                    summary = run_universe_load(
+                        conn, source, universe, mode, asof=date.today(),
+                        dev_limit=dev_limit, history_floor=history_floor,
+                    )
+                else:
+                    summary = run_load(conn, source, mode, asof=date.today(), dev_limit=dev_limit)
+        except psycopg.OperationalError as exc:
+            print(f"database connection failed: {exc}", file=sys.stderr)
+            return 1
+
+        scope = f"universe={universe}" if universe else "active master"
+        print(
+            f"{mode} ({key}, {scope}) run #{summary.run_id} [{summary.status}]: "
+            f"attempted={summary.attempted} loaded={summary.loaded} "
+            f"skipped={summary.skipped} errored={summary.errored} "
+            f"rows={summary.rows} flags={summary.flags} gaps={summary.gaps}"
+        )
+        for figi, msg in summary.errors[:10]:
+            print(f"  error {figi}: {msg[:80]}", file=sys.stderr)
+        return 2 if summary.errored else 0
+
+    return run
+
+
+def _cmd_recompute(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
+
+    end = date.fromisoformat(args.to) if args.to else date.today()
+    start = date.fromisoformat(args.start) if args.start else end - DEFAULT_LOOKBACK
+    try:
+        with connect() as conn:
+            summary = load_returns(conn, start=start, end=end)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"recompute PR+TR [{start} .. {end}]: {summary.securities} securities, "
+        f"{summary.rows:,} fact_returns rows"
+    )
+    return 0
+
+
+def _cmd_backup(args: argparse.Namespace) -> int:
+    import subprocess
+    from pathlib import Path
+
+    from sym.config import load_db_config
+    from sym.dr import run_backup
+
+    default = Path("backups") / f"sym-{date.today():%Y%m%d}.dump"
+    output = Path(args.output) if args.output else default
+    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        run_backup(load_db_config(), str(output))
+    except FileNotFoundError as exc:
+        print(f"backup failed: {exc}", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as exc:
+        print(f"pg_dump failed (exit {exc.returncode})", file=sys.stderr)
+        return 1
+    size = output.stat().st_size
+    print(f"backup written: {output} ({size:,} bytes) — restore: see docs/disaster-recovery.md")
+    return 0
+
+
+def _cmd_sweep(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import source_key
+    from sym.db import connect
+    from sym.ingest.pipeline import run_sweep
+    from sym.sources import get_source
+    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+
+    key = source_key()
+    try:
+        with connect() as conn:
+            resolver = make_yahoo_symbol_resolver(conn)
+            source = get_source(key, symbol_for=resolver)
+            summary = run_sweep(conn, source, asof=date.today())
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"sweep ({key}) run #{summary.run_id} [{summary.status}]: "
+        f"checked={summary.loaded} divergences={summary.flags} errored={summary.errored}"
+    )
+    for figi, msg in summary.errors[:10]:
+        print(f"  error {figi}: {msg[:80]}", file=sys.stderr)
+    return 2 if summary.errored else 0
+
+
+def _cmd_fundamentals(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+    from sym.universe.fundamentals import (
+        YFinanceSharesHistorySource,
+        all_resolved_member_figis,
+        load_fundamentals_history,
+        recompute_market_cap_usd,
+        resolved_member_figis,
+    )
+    from sym.universe.registry import UniverseError
+
+    if not args.all and not args.universe:
+        print("specify --universe <id> or --all", file=sys.stderr)
+        return 1
+    load_dotenv()
+    try:
+        with connect() as conn:
+            conn.autocommit = True  # durable per-figi upserts (set before any query)
+            figis = (
+                all_resolved_member_figis(conn) if args.all
+                else resolved_member_figis(conn, args.universe)
+            )
+            if args.limit:
+                figis = figis[: args.limit]
+            source = YFinanceSharesHistorySource(make_yahoo_symbol_resolver(conn))
+            summary = load_fundamentals_history(conn, source, figis)
+            usd_rows = recompute_market_cap_usd(conn)  # populate market_cap_usd for the new rows
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    scope = "all universes" if args.all else repr(args.universe)
+    print(
+        f"fundamentals for {scope}: "
+        f"attempted={summary.attempted} loaded={summary.loaded} gaps={summary.gaps} "
+        f"rows={summary.rows}; market_cap_usd recomputed ({usd_rows} rows)"
+    )
+    return 0
+
+
+def _cmd_msci_import(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.benchmarks.msci import load_msci_file
+    from sym.benchmarks.returns import recompute_index_returns
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.returns.loader import DEFAULT_LOOKBACK
+
+    load_dotenv()
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            summary = load_msci_file(
+                conn, args.path, msci_code=args.msci_code, name=args.name,
+                currency_code=args.currency,
+            )
+            end = date.today()
+            recompute_index_returns(conn, start=end - DEFAULT_LOOKBACK, end=end)
+    except ValueError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except FileNotFoundError as exc:
+        print(f"file not found: {exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"msci import ({args.msci_code}) -> sym_id {summary.sym_id}: "
+        f"parsed {summary.parsed}, {summary.written} levels written"
+    )
+    return 0
+
+
+def _cmd_benchmarks(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.benchmarks.figis import attach_index_figis
+    from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels
+    from sym.benchmarks.links import link_universe_benchmarks
+    from sym.benchmarks.returns import recompute_index_returns
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.returns.loader import DEFAULT_LOOKBACK
+
+    load_dotenv()
+    end = date.today()
+    start = end - DEFAULT_LOOKBACK
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            if args.attach_figis:  # standalone: just (re)attach canonical FIGIs
+                attached, missing = attach_index_figis(conn)
+                print(f"figis: {attached} attached, {missing} missing (load levels first)")
+                return 0
+            summary = load_index_levels(conn, YahooIndexLevelSource())
+            rets = recompute_index_returns(conn, start=start, end=end)
+            links = link_universe_benchmarks(conn)
+            attached, _ = attach_index_figis(conn)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"benchmarks: {summary.instruments} instruments, "
+        f"{summary.levels_written} levels written, {summary.deferred} deferred (MSCI), "
+        f"{summary.gaps} gaps; index returns: {rets.rows:,} rows / {rets.series} series; "
+        f"universe links: {links.linked} created; figis: {attached} attached"
+    )
+    return 0
+
+
+def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.benchmarks.links import universe_with_benchmark
+    from sym.db import connect
+    from sym.universe.registry import UniverseError
+
+    as_of = date.today()
+    if args.asof:
+        try:
+            as_of = date.fromisoformat(args.asof)
+        except ValueError as exc:
+            print(f"invalid --asof date {args.asof!r}: {exc}", file=sys.stderr)
+            return 1
+    try:
+        with connect() as conn:
+            snap = universe_with_benchmark(conn, args.universe_id, as_of)
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    level = f"{snap.benchmark_level}" if snap.benchmark_level is not None else "n/a"
+    print(
+        f"{args.universe_id!r} as-of {as_of.isoformat()}: {len(snap.members)} constituents; "
+        f"primary benchmark sym_id={snap.benchmark_sym_id} level={level}"
+    )
+    return 0
+
+
+def _cmd_eod(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.eod import run_eod
+
+    load_dotenv()
+    only = [s.strip() for s in args.steps.split(",")] if args.steps else None
+    skip = [s.strip() for s in args.skip.split(",")] if args.skip else None
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            summary = run_eod(conn, only=only, skip=skip, dry_run=args.dry_run)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    label = "eod plan" if args.dry_run else "eod run"
+    print(f"{label}:")
+    for r in summary.results:
+        marker = {"planned": "plan", "ok": " ok ", "error": "FAIL"}.get(r.status, "?")
+        print(f"  [{marker}] {r.key}: {r.detail}")
+    if not args.dry_run:
+        print(f"overall: {'OK' if summary.ok else 'FAILED'}")
+    return 0 if summary.ok else 2
+
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.validate.results import FAIL
+    from sym.validate.runner import format_report, validate
+
+    try:
+        with connect() as conn:
+            results, overall = validate(conn, args.universe)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(format_report(results))
+    return 2 if overall == FAIL else 0
+
+
+def _fx_currencies(args: argparse.Namespace) -> list[str] | None:
+    return [c.strip().upper() for c in args.currencies.split(",")] if args.currencies else None
+
+
+def _fx_source(name: str):
+    from sym.fx.source import EcbSdmxSource, FawazahmedSource, FrankfurterSource
+
+    return {
+        "frankfurter": FrankfurterSource,
+        "ecb": EcbSdmxSource,
+        "fawazahmed0": FawazahmedSource,
+    }[name]()
+
+
+def _cmd_fx(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+
+    load_dotenv()
+    today = date.today()
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            if args.fx_command == "backfill":
+                from sym.fx.ingest import DEFAULT_FX_FLOOR, backfill_fx
+
+                start = date.fromisoformat(args.start) if args.start else DEFAULT_FX_FLOOR
+                s = backfill_fx(
+                    conn, _fx_source(args.source), end=today, start=start,
+                    currencies=_fx_currencies(args),
+                )
+                print(
+                    f"fx backfill: {s.currencies} currencies, inserted={s.inserted}, "
+                    f"skipped={s.skipped_existing}, implausible={s.implausible}"
+                )
+                if s.flagged:
+                    print(f"  flagged (rejected): {', '.join(s.flagged[:10])}")
+                if s.inserted:  # new FX can fill previously-uncovered currency/dates
+                    from sym.universe.fundamentals import recompute_market_cap_usd
+
+                    print(f"  market_cap_usd recomputed ({recompute_market_cap_usd(conn)} rows)")
+            elif args.fx_command == "delta":
+                from sym.fx.ingest import delta_fx
+
+                s = delta_fx(
+                    conn, _fx_source(args.source), end=today, currencies=_fx_currencies(args)
+                )
+                print(
+                    f"fx delta: inserted={s.inserted}, skipped={s.skipped_existing}, "
+                    f"implausible={s.implausible}"
+                )
+                if s.inserted:
+                    from sym.universe.fundamentals import recompute_market_cap_usd
+
+                    print(f"  market_cap_usd recomputed ({recompute_market_cap_usd(conn)} rows)")
+            elif args.fx_command == "coverage":
+                from sym.validate.fx import check_fx_coverage
+
+                r = check_fx_coverage(conn)
+                print(f"fx coverage: {r.status} ({r.checked} currencies, {r.failures} fail, "
+                      f"{r.warnings} warn)")
+                for s in r.samples[:20]:
+                    print(f"  {s}")
+            elif args.fx_command == "divergence":
+                from decimal import Decimal
+
+                from sym.fx.reconcile import DEFAULT_DIVERGENCE, find_divergences
+
+                threshold = Decimal(args.threshold) if args.threshold else DEFAULT_DIVERGENCE
+                since = date.fromisoformat(args.since) if args.since else None
+                rep = find_divergences(
+                    conn, source_a=args.source_a, source_b=args.source_b,
+                    threshold=threshold, start=since, currencies=_fx_currencies(args),
+                )
+                print(
+                    f"fx divergence: {rep.source_a} vs {rep.source_b} "
+                    f"(threshold {threshold * 100:.3f}%): compared={rep.compared}, "
+                    f"diverged={rep.diverged}, max={rep.max_rel * 100:.3f}%"
+                )
+                for d in rep.worst[:20]:
+                    print(
+                        f"  {d.currency}@{d.as_of_date}: {rep.source_a}={d.rate_a} "
+                        f"{rep.source_b}={d.rate_b}  (delta {d.rel * 100:.3f}%)"
+                    )
+                return 1 if rep.diverged else 0
+            elif args.fx_command == "convert":
+                from sym.fx.convert import convert
+
+                as_of = date.fromisoformat(args.asof) if args.asof else today
+                out = convert(conn, args.amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of)
+                if out is None:
+                    print(f"convert: unavailable ({args.from_ccy.upper()}->"
+                          f"{args.to_ccy.upper()} as-of {as_of}: no/stale rate)")
+                    return 1
+                print(f"{args.amount} {args.from_ccy.upper()} = {out:.4f} "
+                      f"{args.to_ccy.upper()}  (as-of {as_of})")
+            elif args.fx_command == "px":
+                from sym.fx.restate import price_in_currency
+
+                on = date.fromisoformat(args.on) if args.on else today
+                px = price_in_currency(conn, args.figi, on, args.ccy.upper())
+                if px is None:
+                    print(f"px: unavailable ({args.figi} in {args.ccy.upper()} on {on})")
+                    return 1
+                print(f"{args.figi} adj close on {on} = {px:.4f} {args.ccy.upper()}")
+            elif args.fx_command == "returns":
+                from sym.fx.restate import returns_in_currency
+
+                as_of = date.fromisoformat(args.asof) if args.asof else today
+                res = returns_in_currency(conn, args.figi, as_of, args.ccy.upper())
+                if not res:
+                    print(f"returns: none for {args.figi} as-of {as_of}")
+                    return 1
+                print(f"{args.figi} returns in {args.ccy.upper()} (as-of {as_of}):")
+                for code in ("1D", "1W", "1M", "3M", "YTD", "1Y", "5Y"):
+                    r = res.get(code)
+                    if not r:
+                        continue
+                    pr = f"{float(r['pr']) * 100:.2f}%" if r["pr"] is not None else "n/a"
+                    tr = f"{float(r['tr']) * 100:.2f}%" if r["tr"] is not None else "n/a"
+                    print(f"  {code:5} PR={pr:>9}  TR={tr:>9}")
+            elif args.fx_command == "mcap":
+                from sym.marketcap import market_cap
+
+                on = date.fromisoformat(args.on) if args.on else today
+                mc = market_cap(conn, args.figi, on, args.ccy.upper() if args.ccy else None)
+                if mc.value is None:
+                    print(f"mcap: unavailable ({args.figi} on {on})")
+                    return 1
+                print(
+                    f"{args.figi} market cap on {on} = {mc.value:,.0f} {mc.currency} "
+                    f"(= {mc.close_raw} {mc.local_currency} x {mc.shares:,.0f} shares "
+                    f"as-of {mc.shares_asof})"
+                )
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_universe_add(args: argparse.Namespace) -> int:
+    import json
+
+    import psycopg
+
+    from sym.db import connect
+    from sym.universe.registry import UniverseError
+    from sym.universe.store import add_universe
+
+    config = None
+    if args.config:
+        try:
+            config = json.loads(args.config)
+        except json.JSONDecodeError as exc:
+            print(f"invalid --config JSON: {exc}", file=sys.stderr)
+            return 1
+    if args.from_path:
+        config = {**(config or {}), "path": args.from_path}
+    if args.index:
+        config = {**(config or {}), "index": args.index}
+    if args.rule:
+        config = {**(config or {}), "rule": args.rule}
+    if args.n is not None:
+        config = {**(config or {}), "n": args.n}
+    source_pref = None
+    if args.source_pref:
+        source_pref = [s.strip() for s in args.source_pref.split(",") if s.strip()]
+    pit_from = None
+    if args.pit_from:
+        try:
+            pit_from = date.fromisoformat(args.pit_from)
+        except ValueError as exc:
+            print(f"invalid --pit-from date {args.pit_from!r}: {exc}", file=sys.stderr)
+            return 1
+
+    try:
+        with connect() as conn:
+            inserted = add_universe(
+                conn,
+                args.universe_id,
+                kind=args.kind,
+                name=args.name,
+                config=config,
+                pit_valid_from=pit_from,
+                source_pref=source_pref,
+            )
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    if inserted:
+        print(f"added universe {args.universe_id!r} (kind={args.kind})")
+        return 0
+    print(f"universe {args.universe_id!r} already exists", file=sys.stderr)
+    return 0
+
+
+def _cmd_universe_list(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.universe.store import list_universes
+
+    try:
+        with connect() as conn:
+            universes = list_universes(conn)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not universes:
+        print("no universes defined")
+        return 0
+    for u in universes:
+        pit = u.pit_valid_from.isoformat() if u.pit_valid_from else "-"
+        print(f"{u.universe_id:<16} {u.kind:<12} pit_from={pit:<12} {u.name}")
+    return 0
+
+
+def _cmd_universe_refresh(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.universe.refresh import refresh_universe
+    from sym.universe.registry import UniverseError
+
+    load_dotenv()
+    try:
+        with connect() as conn:
+            summary = refresh_universe(conn, args.universe_id)
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"refreshed {args.universe_id!r}: appended={summary.appended} events, "
+        f"resolved={summary.resolved} unresolved={summary.unresolved}, "
+        f"projected {summary.figis} figis / {summary.intervals} intervals"
+    )
+    return 0
+
+
+def _cmd_universe_members(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.universe.query import members
+    from sym.universe.registry import UniverseError
+
+    as_of = date.today()
+    if args.asof:
+        try:
+            as_of = date.fromisoformat(args.asof)
+        except ValueError as exc:
+            print(f"invalid --asof date {args.asof!r}: {exc}", file=sys.stderr)
+            return 1
+    try:
+        with connect() as conn:
+            figis = members(conn, args.universe_id, as_of)
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    for figi in sorted(figis):
+        print(figi)
+    print(
+        f"{len(figis)} member(s) of {args.universe_id!r} as-of {as_of.isoformat()}",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _cmd_universe_monitor(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.universe.monitor import run_monitor
+    from sym.universe.registry import UniverseError
+
+    load_dotenv()
+    try:
+        with connect() as conn:
+            summary = run_monitor(conn, args.universe_id)
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"monitored {args.universe_id!r} [{summary.status}]: "
+        f"joiners={summary.joiners} leavers={summary.leavers} "
+        f"applied={summary.applied} proposed={summary.proposed}"
+        + (f" — {summary.detail}" if summary.detail else "")
+    )
+    return 0 if summary.status != "error" else 2
+
+
+def _cmd_universe_coverage(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.universe.ingest import coverage
+    from sym.universe.registry import UniverseError
+
+    as_of = date.today()
+    if args.asof:
+        try:
+            as_of = date.fromisoformat(args.asof)
+        except ValueError as exc:
+            print(f"invalid --asof date {args.asof!r}: {exc}", file=sys.stderr)
+            return 1
+    try:
+        with connect() as conn:
+            cov = coverage(conn, args.universe_id, as_of)
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        f"coverage {args.universe_id!r} as-of {as_of.isoformat()}:\n"
+        f"  members:        {cov.members_total} "
+        f"({cov.resolved} resolved {cov.resolved_pct:.1%}, {cov.unresolved} unresolved)\n"
+        f"  in master:      {cov.in_master}\n"
+        f"  priced:         {cov.priced} of {cov.resolved} resolved ({cov.priced_pct:.1%})\n"
+        f"  current ({as_of.isoformat()}): {cov.current_priced}/{cov.current_members} priced "
+        f"({cov.current_priced_pct:.1%})"
+    )
+    return 0
+
+
+def _cmd_universe_review(_args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.universe.review import build_digest, format_digest
+
+    try:
+        with connect() as conn:
+            digest = build_digest(conn)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(format_digest(digest))
+    return 0
+
+
+def _cmd_universe_confirm(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.db import connect
+    from sym.universe.gating import confirm_proposal, reject_proposal
+
+    action = reject_proposal if args.reject else confirm_proposal
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            ok = action(conn, args.proposal_id)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    verb = "rejected" if args.reject else "confirmed"
+    if ok:
+        print(f"{verb} proposal {args.proposal_id}")
+        return 0
+    print(f"proposal {args.proposal_id} not found or not pending", file=sys.stderr)
+    return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="sym",
+        description="Global Equity Security Master + Market Data + Returns warehouse.",
+    )
+    parser.add_argument("--version", action="version", version=f"sym {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True, metavar="<command>")
+
+    p_version = sub.add_parser("version", help="Print the sym version.")
+    p_version.set_defaults(func=_cmd_version)
+
+    p_check = sub.add_parser(
+        "check-db", help="Verify the database connection resolved from config."
+    )
+    p_check.set_defaults(func=_cmd_check_db)
+
+    p_resolve = sub.add_parser(
+        "resolve",
+        help="Resolve the seed universe to CompositeFIGIs via OpenFIGI (decoupled from ingestion).",
+    )
+    p_resolve.set_defaults(func=_cmd_resolve)
+
+    p_names = sub.add_parser(
+        "names",
+        help="Backfill company names (security_names) for securities created without one.",
+    )
+    p_names.add_argument("--limit", type=int, help="Cap the number of securities.")
+    p_names.set_defaults(func=_cmd_names)
+
+    p_delist = sub.add_parser(
+        "delist",
+        help="Soft-delete a security: set status=delisted + delist_date, retaining all history.",
+    )
+    p_delist.add_argument("composite_figi", help="CompositeFIGI of the security to delist.")
+    p_delist.add_argument("delist_date", help="Delisting date (ISO YYYY-MM-DD).")
+    p_delist.set_defaults(func=_cmd_delist)
+
+    p_classify = sub.add_parser(
+        "classify",
+        help="Populate GICS classification for active securities from financedatabase.",
+    )
+    p_classify.set_defaults(func=_cmd_classify)
+
+    p_snapshot_cal = sub.add_parser(
+        "snapshot-calendar",
+        help="Snapshot exchange_calendars trading days into the versioned trading_calendar table.",
+    )
+    p_snapshot_cal.set_defaults(func=_cmd_snapshot_calendar)
+
+    def _add_load_args(p: argparse.ArgumentParser) -> None:
+        p.add_argument(
+            "--universe",
+            help="Drive ingestion from a universe's maintained membership (Story U4).",
+        )
+        p.add_argument("--limit", type=int, help="Cap the number of securities (dev/smoke).")
+        p.add_argument(
+            "--history-floor",
+            dest="history_floor",
+            help="Backfill price history from this date for all members (ISO), "
+            "overriding the membership window — for build-forward universes.",
+        )
+
+    p_backfill = sub.add_parser(
+        "backfill", help="Load full raw price history for the active universe (resumable)."
+    )
+    _add_load_args(p_backfill)
+    p_backfill.set_defaults(func=_cmd_load("backfill"))
+
+    p_delta = sub.add_parser(
+        "delta", help="Load only sessions since each security's last success (gap from DB state)."
+    )
+    _add_load_args(p_delta)
+    p_delta.set_defaults(func=_cmd_load("delta"))
+
+    p_dev = sub.add_parser(
+        "dev", help="Load a small recent window for the active universe (fast smoke load)."
+    )
+    _add_load_args(p_dev)
+    p_dev.set_defaults(func=_cmd_load("dev"))
+
+    p_sweep = sub.add_parser(
+        "sweep",
+        help="Re-fetch the trailing 90 days and flag source-side corrections (no overwrite).",
+    )
+    p_sweep.set_defaults(func=_cmd_sweep)
+
+    p_backup = sub.add_parser(
+        "backup",
+        help="pg_dump source-of-truth data (excludes recomputable fact_returns) for DR.",
+    )
+    p_backup.add_argument("--output", help="Output path (default: backups/sym-YYYYMMDD.dump).")
+    p_backup.set_defaults(func=_cmd_backup)
+
+    p_recompute = sub.add_parser(
+        "recompute",
+        help="Materialize the price-return matrix into fact_returns over an asof range.",
+    )
+    p_recompute.add_argument("--from", dest="start", help="Start asof (ISO; default: 1 year back).")
+    p_recompute.add_argument("--to", dest="to", help="End asof (ISO; default: today).")
+    p_recompute.set_defaults(func=_cmd_recompute)
+
+    p_benchmarks = sub.add_parser(
+        "benchmarks",
+        help="Load benchmark index level series (S&P 500, IBOV, …) from Yahoo under sym_id.",
+    )
+    p_benchmarks.add_argument(
+        "--attach-figis",
+        action="store_true",
+        help="Only (re)attach canonical index FIGIs from the static map; skip the level load.",
+    )
+    p_benchmarks.set_defaults(func=_cmd_benchmarks)
+
+    p_msci = sub.add_parser(
+        "msci-import",
+        help="Import an MSCI index-level export (CSV/Excel) into index_levels under sym_id.",
+    )
+    p_msci.add_argument("path", help="Path to the downloaded MSCI level file (.csv/.xls/.xlsx).")
+    p_msci.add_argument("--msci-code", dest="msci_code", required=True, help="MSCI index code.")
+    p_msci.add_argument("--name", help="Instrument name (to create it on first import).")
+    p_msci.add_argument("--currency", help="Instrument currency (ISO-4217, on first import).")
+    p_msci.set_defaults(func=_cmd_msci_import)
+
+    p_eod = sub.add_parser(
+        "eod",
+        help="Run the daily EOD pipeline (monitor->delta->benchmarks->recompute->validate); "
+        "scheduler-agnostic.",
+    )
+    p_eod.add_argument("--dry-run", action="store_true", help="Print the step plan, don't run.")
+    p_eod.add_argument("--steps", help="Comma-separated subset to run (e.g. delta,recompute).")
+    p_eod.add_argument("--skip", help="Comma-separated steps to skip.")
+    p_eod.set_defaults(func=_cmd_eod)
+
+    p_validate = sub.add_parser(
+        "validate",
+        help="Run the cross-layer validation suite (Epic V); non-zero exit on any failure.",
+    )
+    p_validate.add_argument("--universe", help="Scope completeness to one universe (else all).")
+    p_validate.set_defaults(func=_cmd_validate)
+
+    p_fx = sub.add_parser("fx", help="FX rates: backfill/delta, coverage, convert.")
+    fx_sub = p_fx.add_subparsers(dest="fx_command", required=True, metavar="<action>")
+    fx_bf = fx_sub.add_parser("backfill", help="Load full USD-base history (resumable).")
+    fx_bf.add_argument("--from", dest="start", help="Start date (ISO; default: 1999-01-04).")
+    fx_bf.add_argument("--currencies", help="Comma-separated subset (default: all in `currency`).")
+    fx_bf.add_argument(
+        "--source", default="frankfurter", choices=["frankfurter", "ecb", "fawazahmed0"],
+        help="FX source (default: frankfurter; ecb is the reconcile, fawazahmed0 the breadth "
+             "fallback).",
+    )
+    fx_bf.set_defaults(func=_cmd_fx)
+    fx_dl = fx_sub.add_parser("delta", help="Load the tail after the latest stored date.")
+    fx_dl.add_argument("--currencies", help="Comma-separated subset (default: all in `currency`).")
+    fx_dl.add_argument(
+        "--source", default="frankfurter", choices=["frankfurter", "ecb", "fawazahmed0"],
+        help="FX source (default: frankfurter).",
+    )
+    fx_dl.set_defaults(func=_cmd_fx)
+    fx_cov = fx_sub.add_parser("coverage", help="FX coverage vs priced-instrument currencies.")
+    fx_cov.set_defaults(func=_cmd_fx)
+    fx_div = fx_sub.add_parser(
+        "divergence", help="Cross-source rate divergence on overlapping (ccy, date) (FR4b)."
+    )
+    fx_div.add_argument("--source-a", dest="source_a", default="frankfurter",
+                        help="Source under test (default: frankfurter).")
+    fx_div.add_argument("--source-b", dest="source_b", default="ecb",
+                        help="Reference source / denominator (default: ecb).")
+    fx_div.add_argument("--threshold", help="Relative flag threshold (default: 0.005 = 0.5%%).")
+    fx_div.add_argument("--since", help="Only compare dates on/after this ISO date.")
+    fx_div.add_argument("--currencies", help="Comma-separated subset (default: all overlapping).")
+    fx_div.set_defaults(func=_cmd_fx)
+    fx_cv = fx_sub.add_parser("convert", help="Convert an amount between currencies as-of a date.")
+    fx_cv.add_argument("amount", help="Amount to convert (e.g. 1000000).")
+    fx_cv.add_argument("from_ccy", metavar="from", help="Source currency (e.g. BRL).")
+    fx_cv.add_argument("to_ccy", metavar="to", help="Target currency (e.g. USD).")
+    fx_cv.add_argument("--asof", help="As-of date (ISO; default: today).")
+    fx_cv.set_defaults(func=_cmd_fx)
+    fx_px = fx_sub.add_parser("px", help="A security's adjusted close folded to a currency.")
+    fx_px.add_argument("figi", help="CompositeFIGI.")
+    fx_px.add_argument("ccy", help="Target currency (e.g. USD).")
+    fx_px.add_argument("--on", help="Session date (ISO; default: today).")
+    fx_px.set_defaults(func=_cmd_fx)
+    fx_ret = fx_sub.add_parser("returns", help="Return windows restated to a currency.")
+    fx_ret.add_argument("figi", help="CompositeFIGI.")
+    fx_ret.add_argument("ccy", help="Target currency (e.g. USD).")
+    fx_ret.add_argument("--asof", help="As-of date (ISO; default: today).")
+    fx_ret.set_defaults(func=_cmd_fx)
+    fx_mc = fx_sub.add_parser("mcap", help="Derived market cap (price x shares) in LCY or a ccy.")
+    fx_mc.add_argument("figi", help="CompositeFIGI.")
+    fx_mc.add_argument("--ccy", help="Target currency (default: LCY / the security's own).")
+    fx_mc.add_argument("--on", help="Date (ISO; default: today).")
+    fx_mc.set_defaults(func=_cmd_fx)
+
+    p_fundamentals = sub.add_parser(
+        "fundamentals",
+        help="Load market cap / shares outstanding for a universe's members (Story U5.1).",
+    )
+    p_fundamentals.add_argument("--universe", help="Universe whose members to load.")
+    p_fundamentals.add_argument(
+        "--all", action="store_true", help="Load all universe members (deduped union)."
+    )
+    p_fundamentals.add_argument("--limit", type=int, help="Cap the number of securities.")
+    p_fundamentals.set_defaults(func=_cmd_fundamentals)
+
+    from sym.universe.registry import VALID_KINDS
+
+    p_universe = sub.add_parser(
+        "universe", help="Define and inspect research universes (Story U1.1)."
+    )
+    u_sub = p_universe.add_subparsers(dest="universe_command", required=True, metavar="<action>")
+    u_add = u_sub.add_parser("add", help="Register a universe.")
+    u_add.add_argument("universe_id", help="Short stable slug (e.g. seed, sp500).")
+    u_add.add_argument(
+        "--kind", required=True, choices=VALID_KINDS, help="Provider archetype."
+    )
+    u_add.add_argument("--name", help="Human-readable label (default: the id).")
+    u_add.add_argument("--config", help="Provider config as a JSON object.")
+    u_add.add_argument("--from", dest="from_path", help="Source path (sets config.path).")
+    u_add.add_argument("--index", help="Index key for an index universe (sets config.index).")
+    u_add.add_argument("--rule", help="Criteria rule name (e.g. top_n_market_cap).")
+    u_add.add_argument("--n", type=int, help="Criteria rule size N (e.g. top-N).")
+    u_add.add_argument(
+        "--source-pref",
+        dest="source_pref",
+        help="Comma-separated archetype preference (e.g. 'fmp,etf_holdings,wikipedia').",
+    )
+    u_add.add_argument("--pit-from", dest="pit_from", help="Trustworthy-history start (ISO date).")
+    u_add.set_defaults(func=_cmd_universe_add)
+    u_list = u_sub.add_parser("list", help="List registered universes.")
+    u_list.set_defaults(func=_cmd_universe_list)
+    u_refresh = u_sub.add_parser(
+        "refresh", help="Run a universe's provider, resolve members, rebuild its membership."
+    )
+    u_refresh.add_argument("universe_id", help="The universe slug.")
+    u_refresh.set_defaults(func=_cmd_universe_refresh)
+    u_members = u_sub.add_parser("members", help="List a universe's members as-of a date.")
+    u_members.add_argument("universe_id", help="The universe slug.")
+    u_members.add_argument("--asof", help="As-of date (ISO; default: today).")
+    u_members.set_defaults(func=_cmd_universe_members)
+    u_monitor = u_sub.add_parser(
+        "monitor", help="Run the maintenance monitor for a universe (discover + append changes)."
+    )
+    u_monitor.add_argument("universe_id", help="The universe slug.")
+    u_monitor.set_defaults(func=_cmd_universe_monitor)
+    u_review = u_sub.add_parser(
+        "review", help="Operator digest: gated changes, stale monitors, aging-unresolved, alarms."
+    )
+    u_review.set_defaults(func=_cmd_universe_review)
+    u_coverage = u_sub.add_parser(
+        "coverage", help="Report a universe's resolution + pricing coverage."
+    )
+    u_coverage.add_argument("universe_id", help="The universe slug.")
+    u_coverage.add_argument("--asof", help="As-of date (ISO; default: today).")
+    u_coverage.set_defaults(func=_cmd_universe_coverage)
+    u_bench = u_sub.add_parser(
+        "benchmark", help="Show a universe's constituents count + linked benchmark level as-of."
+    )
+    u_bench.add_argument("universe_id", help="The universe slug.")
+    u_bench.add_argument("--asof", help="As-of date (ISO; default: today).")
+    u_bench.set_defaults(func=_cmd_universe_benchmark)
+    u_confirm = u_sub.add_parser(
+        "confirm", help="Confirm (or --reject) a pending gated membership-change proposal."
+    )
+    u_confirm.add_argument("proposal_id", type=int, help="The membership_proposal id.")
+    u_confirm.add_argument(
+        "--reject", action="store_true", help="Reject instead of confirm."
+    )
+    u_confirm.set_defaults(func=_cmd_universe_confirm)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

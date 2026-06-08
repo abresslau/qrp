@@ -17,7 +17,7 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from operate.db import connect, sym_project_dir
+from operate.db import connect
 
 # Tail of combined stdout/stderr kept on the job row (chars).
 _OUTPUT_TAIL = 12000
@@ -87,7 +87,7 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
             try:
                 proc = subprocess.run(
                     argv,
-                    cwd=str(sym_project_dir()),
+                    cwd=None,  # sym is a workspace member; `uv run sym` resolves from the qrp env
                     capture_output=True,
                     text=True,
                     timeout=1800,

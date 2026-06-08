@@ -2,7 +2,7 @@
 name = "backtest"
 version = "0.1.0"
 description = "QRP backtest package — walk-forward factor-strategy backtests (own database)."
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
     "pydantic>=2",

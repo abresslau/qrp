@@ -3,7 +3,7 @@
 name = "qrp"
 version = "0.0.0"
 description = "QRP (Quant Research Platform) monorepo — console + API over the sym warehouse"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = []
 
 [tool.uv]
@@ -22,6 +22,7 @@ members = [
     "packages/altdata",
     "packages/analytics",
     "packages/operate",
+    "packages/sym",
 ]
 
 [tool.ruff]

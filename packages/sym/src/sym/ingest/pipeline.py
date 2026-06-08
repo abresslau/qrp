@@ -1,0 +1,401 @@
+"""Three-phase load orchestration (Story 2.5, FR-6 / AR-13).
+
+Drives the source adapter (Story 2.2) + atomic writer (Story 2.3/2.4) across the
+active universe in one of three runtime modes:
+
+* ``dev``      — a small recent window (fast smoke load),
+* ``backfill`` — full history from a floor (resumable: completed names skipped),
+* ``delta``    — only sessions since the last success (gap computed from DB state,
+                 not the clock); up-to-date names skipped, so a second delta mutates
+                 nothing.
+
+Each security loads in its own durable transaction (``conn.autocommit = True`` so a
+per-figi ``conn.transaction()`` is a top-level commit, never a savepoint) and a
+single failure is marked ``error`` and skipped — the cursor never advances without
+rows, and one bad name never halts the run.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
+
+import psycopg
+
+from sym.ingest.prices import expected_trading_days, ingest_result
+from sym.sources.contract import OhlcvResult
+
+DEV = "dev"
+BACKFILL = "backfill"
+DELTA = "delta"
+SWEEP = "sweep"
+
+DEFAULT_FLOOR = date(1990, 1, 1)
+DEV_DAYS = 30
+SWEEP_LOOKBACK_DAYS = 90
+# A faithful re-fetch reproduces stored raw exactly; anything past this relative
+# gap is a genuine source-side correction, not float noise.
+DIVERGENCE_TOLERANCE = Decimal("0.001")
+
+
+def compute_window(
+    mode: str,
+    cursor_date: date | None,
+    *,
+    floor: date,
+    end: date | None,
+    dev_days: int = DEV_DAYS,
+    floor_reached: date | None = None,
+) -> tuple[date, date] | None:
+    """The [start, end] sessions to fetch for one security, or None to skip it.
+
+    ``end`` is the latest available session (from the calendar, not the clock).
+
+    **Backfill is gap-aware.** The forward cursor only tracks the *latest* loaded
+    session, so a name first loaded from a late start (e.g. an index member loaded
+    from its membership-join date) looks "complete" even though its history below
+    the earliest stored bar was never fetched. ``floor_reached`` records the
+    deepest floor a prior backfill actually requested; backfill skips a name only
+    when ``floor_reached <= floor`` (we already asked at least this deep and got
+    whatever exists — even if the data starts at a later IPO) AND the cursor is
+    current. Otherwise it re-fetches ``[floor, end]`` and immutable ingestion
+    inserts only the missing bars. Forward modes (delta/dev) are unchanged.
+    """
+    if end is None:
+        return None
+    if mode == BACKFILL:
+        if floor > end:
+            return None
+        is_current = cursor_date is not None and cursor_date >= end
+        reached_floor = floor_reached is not None and floor_reached <= floor
+        if is_current and reached_floor:
+            return None  # already fetched down to (at least) this floor and current
+        return (floor, end)
+    if cursor_date is not None and cursor_date >= end:
+        return None  # up-to-date -> skip (AC #1 resume, AC #4 idempotency)
+    if mode == DELTA:
+        start = cursor_date + timedelta(days=1) if cursor_date is not None else floor
+    elif mode == DEV:
+        start = end - timedelta(days=dev_days)
+    else:
+        raise ValueError(f"unknown load mode {mode!r}")
+    if start > end:
+        return None
+    return (start, end)
+
+
+def fetch_with_retry(
+    source: object,
+    figi: str,
+    start: date,
+    end: date,
+    *,
+    retries: int = 3,
+    base: float = 1.0,
+    cap: float = 30.0,
+    sleep: Callable[[float], None] = time.sleep,
+) -> OhlcvResult:
+    """Fetch with capped exponential backoff + jitter, then re-raise (AR-13 429)."""
+    last: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return source.fetch_ohlcv(figi, start, end)
+        except Exception as exc:  # noqa: BLE001 - transient vendor/network failures
+            last = exc
+            if attempt < retries - 1:
+                delay = min(base * (2**attempt), cap)
+                sleep(delay + delay * 0.1 * attempt)  # mild jitter, deterministic
+    assert last is not None
+    raise last
+
+
+@dataclass
+class LoadSummary:
+    """What a load run did across the universe."""
+
+    mode: str
+    attempted: int = 0
+    loaded: int = 0
+    skipped: int = 0
+    errored: int = 0
+    rows: int = 0
+    flags: int = 0
+    gaps: int = 0
+    errors: list[tuple[str, str]] = field(default_factory=list)
+    run_id: int | None = None
+
+    @property
+    def status(self) -> str:
+        """``partial`` if any figi errored, else ``success`` (FR-8)."""
+        return "partial" if self.errored else "success"
+
+
+def read_active_with_cursor(
+    conn: psycopg.Connection,
+) -> list[tuple[str, str, date | None]]:
+    """Active securities with their listing MIC and last-loaded cursor (DB state)."""
+    rows = conn.execute(
+        """
+        SELECT s.composite_figi, s.mic, p.cursor_date
+          FROM securities s
+          LEFT JOIN pipeline_backfill_progress p ON p.composite_figi = s.composite_figi
+         WHERE s.status = 'active'
+         ORDER BY s.composite_figi
+        """
+    ).fetchall()
+    return [
+        (figi, mic.strip() if isinstance(mic, str) else mic, cursor)
+        for figi, mic, cursor in rows
+    ]
+
+
+def floor_reached_for(conn: psycopg.Connection, figi: str) -> date | None:
+    """The deepest history floor a prior successful backfill covered (None if unknown)."""
+    row = conn.execute(
+        "SELECT floor_reached_date FROM pipeline_backfill_progress WHERE composite_figi = %s",
+        (figi,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def record_floor_reached(conn: psycopg.Connection, figi: str, floor: date) -> None:
+    """Record that a successful backfill covered down to ``floor`` (keep the deepest)."""
+    conn.execute(
+        """
+        UPDATE pipeline_backfill_progress
+           SET floor_reached_date = LEAST(COALESCE(floor_reached_date, %s), %s)
+         WHERE composite_figi = %s
+        """,
+        (floor, floor, figi),
+    )
+
+
+def latest_session_for(conn: psycopg.Connection, mic: str, asof: date) -> date | None:
+    """Latest current-calendar session for ``mic`` on or before ``asof`` (not the clock)."""
+    row = conn.execute(
+        """
+        SELECT max(tc.session_date)
+          FROM trading_calendar tc
+          JOIN trading_calendar_version v USING (calendar_version)
+         WHERE v.is_current AND tc.mic = %s AND tc.session_date <= %s
+        """,
+        (mic, asof),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _mark_error(conn: psycopg.Connection, figi: str, source: str, detail: str) -> None:
+    """Mark a security errored WITHOUT advancing its cursor (AR-13)."""
+    conn.execute(
+        """
+        INSERT INTO pipeline_backfill_progress (composite_figi, source, status, detail)
+        VALUES (%s, %s, 'error', %s)
+        ON CONFLICT (composite_figi) DO UPDATE
+            SET status = 'error', detail = EXCLUDED.detail, source = EXCLUDED.source
+        """,
+        (figi, source, detail[:500]),
+    )
+
+
+def _write_run_log(
+    conn: psycopg.Connection,
+    summary: LoadSummary,
+    *,
+    source: str,
+    started_at: datetime,
+    finished_at: datetime,
+) -> int:
+    """Write one run-level log record (FR-8) and return its run_id."""
+    detail = "; ".join(f"{figi}: {msg}" for figi, msg in summary.errors[:5]) or None
+    row = conn.execute(
+        """
+        INSERT INTO pipeline_run_log
+            (mode, source, started_at, finished_at, attempted, loaded, skipped,
+             errored, rows_written, anomaly_flags, gaps, status, detail)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING run_id
+        """,
+        (
+            summary.mode, source, started_at, finished_at, summary.attempted,
+            summary.loaded, summary.skipped, summary.errored, summary.rows,
+            summary.flags, summary.gaps, summary.status, detail,
+        ),
+    ).fetchone()
+    return row[0]
+
+
+def run_load(
+    conn: psycopg.Connection,
+    source: object,
+    mode: str,
+    *,
+    asof: date,
+    floor: date = DEFAULT_FLOOR,
+    dev_days: int = DEV_DAYS,
+    dev_limit: int | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    securities: Sequence[tuple[str, str, date | None]] | None = None,
+    floor_for: Callable[[str], date | None] | None = None,
+    end_cap_for: Callable[[str], date | None] | None = None,
+) -> LoadSummary:
+    """Load a security set in ``mode``; one durable transaction per figi.
+
+    By default loads the active master (``read_active_with_cursor``). Universe-driven
+    ingestion (Story U4) passes its own ``securities`` selection plus:
+      * ``floor_for(figi)`` — the per-figi backfill floor (a joiner's membership
+        ``valid_from``, so its prior history is backfilled over its window);
+      * ``end_cap_for(figi)`` — caps the fetch end (a leaver's exit date), so a name
+        that left the universe stops fetching past its departure.
+    """
+    conn.autocommit = True  # per-figi commits must be top-level + durable (Story 2.4 finding)
+    source_name = getattr(source, "SOURCE", "unknown")
+    summary = LoadSummary(mode=mode)
+    started_at = now()
+
+    if securities is None:
+        securities = read_active_with_cursor(conn)
+    if mode == DEV and dev_limit is not None:
+        securities = securities[:dev_limit]
+
+    for figi, mic, cursor in securities:
+        summary.attempted += 1
+        end = latest_session_for(conn, mic, asof)
+        if end_cap_for is not None:
+            cap = end_cap_for(figi)
+            if cap is not None and (end is None or cap < end):
+                end = cap
+        fig_floor = (floor_for(figi) if floor_for is not None else None) or floor
+        reached = floor_reached_for(conn, figi) if mode == BACKFILL else None
+        window = compute_window(
+            mode, cursor, floor=fig_floor, end=end, dev_days=dev_days, floor_reached=reached
+        )
+        if window is None:
+            summary.skipped += 1
+            continue
+        start, stop = window
+        try:
+            # Fetch AND ingest are isolated: a constraint/currency failure in the
+            # write must mark one figi errored, not halt the run (AC #3).
+            result = fetch_with_retry(source, figi, start, stop, sleep=sleep)
+            expected = expected_trading_days(conn, mic, start, stop)
+            result_summary = ingest_result(conn, result, expected_sessions=expected)
+        except Exception as exc:  # noqa: BLE001 - isolate one figi's failure
+            _mark_error(conn, figi, source_name, str(exc))
+            summary.errored += 1
+            summary.errors.append((figi, str(exc)))
+            continue
+        summary.loaded += 1
+        summary.rows += result_summary.bars_written
+        summary.flags += len(result_summary.flags)
+        summary.gaps += len(result_summary.gaps)
+        if mode == BACKFILL:
+            # We requested down to `start`; whatever Yahoo returned, that floor is
+            # now covered — record it so a later same-floor backfill skips this name.
+            record_floor_reached(conn, figi, start)
+
+    summary.run_id = _write_run_log(
+        conn, summary, source=source_name, started_at=started_at, finished_at=now()
+    )
+    return summary
+
+
+def detect_divergences(
+    stored: dict[date, Decimal],
+    bars: Sequence,
+    *,
+    tolerance: Decimal = DIVERGENCE_TOLERANCE,
+) -> list[tuple[date, Decimal, Decimal, Decimal]]:
+    """Stored raw close vs re-fetched, for dates we already have.
+
+    Returns (session_date, stored, fetched, relative_diff) beyond ``tolerance``.
+    A date absent from ``stored`` is new data (delta's job), not a divergence.
+    """
+    divergences: list[tuple[date, Decimal, Decimal, Decimal]] = []
+    for bar in bars:
+        prior = stored.get(bar.date)
+        if prior is None or prior == 0:
+            continue
+        relative = abs(bar.close - prior) / prior
+        if relative > tolerance:
+            divergences.append((bar.date, prior, bar.close, relative))
+    return divergences
+
+
+def _read_stored_closes(
+    conn: psycopg.Connection, figi: str, start: date, end: date
+) -> dict[date, Decimal]:
+    rows = conn.execute(
+        """
+        SELECT session_date, close FROM prices_raw
+         WHERE composite_figi = %s AND session_date BETWEEN %s AND %s
+        """,
+        (figi, start, end),
+    ).fetchall()
+    return {session_date: close for session_date, close in rows}
+
+
+def _flag_divergence(
+    conn: psycopg.Connection,
+    figi: str,
+    divergence: tuple[date, Decimal, Decimal, Decimal],
+    source: str,
+) -> None:
+    """Record a sweep divergence as a reviewable flag (never overwrites the price)."""
+    session_date, stored, fetched, relative = divergence
+    conn.execute(
+        """
+        INSERT INTO prices_review
+            (composite_figi, session_date, flag_type, detail, pct_move, source)
+        VALUES (%s, %s, 'sweep_divergence', %s, %s, %s)
+        ON CONFLICT (composite_figi, session_date) DO UPDATE
+            SET flag_type = EXCLUDED.flag_type, detail = EXCLUDED.detail,
+                pct_move = EXCLUDED.pct_move, source = EXCLUDED.source
+            WHERE NOT prices_review.reviewed
+        """,
+        (figi, session_date, f"sweep: stored {stored} vs re-fetched {fetched}", relative, source),
+    )
+
+
+def run_sweep(
+    conn: psycopg.Connection,
+    source: object,
+    *,
+    asof: date,
+    lookback_days: int = SWEEP_LOOKBACK_DAYS,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+) -> LoadSummary:
+    """Re-fetch the trailing window per security and report source-side corrections.
+
+    Immutable (AR-10): stored prices are never overwritten — divergences are
+    flagged in ``prices_review`` for review. One durable transaction per figi,
+    error-isolated; the run is logged (``mode='sweep'``).
+    """
+    conn.autocommit = True
+    source_name = getattr(source, "SOURCE", "unknown")
+    summary = LoadSummary(mode=SWEEP)
+    started_at = now()
+    start = asof - timedelta(days=lookback_days)
+
+    for figi, _mic, _cursor in read_active_with_cursor(conn):
+        summary.attempted += 1
+        try:
+            result = fetch_with_retry(source, figi, start, asof, sleep=sleep)
+            stored = _read_stored_closes(conn, figi, start, asof)
+            divergences = detect_divergences(stored, result.bars)
+            for divergence in divergences:
+                _flag_divergence(conn, figi, divergence, source_name)
+            summary.loaded += 1
+            summary.flags += len(divergences)
+        except Exception as exc:  # noqa: BLE001 - isolate one figi's failure
+            summary.errored += 1
+            summary.errors.append((figi, str(exc)))
+
+    summary.run_id = _write_run_log(
+        conn, summary, source=source_name, started_at=started_at, finished_at=now()
+    )
+    return summary

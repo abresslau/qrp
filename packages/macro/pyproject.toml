@@ -2,7 +2,7 @@
 name = "macro"
 version = "0.1.0"
 description = "QRP macro package — macroeconomic / central-bank series (World Bank, ECB), own database."
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
     "pydantic>=2",

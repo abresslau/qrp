@@ -1,8 +1,8 @@
 """psycopg connections for the analytics package.
 
-Analytics has no database of its own: it reads the portfolios database (weights) and the
-sym hub (returns). Self-contained: builds DSNs from the libpq-standard PG* instance creds
-(PGHOST/PGPORT/PGUSER/PGPASSWORD). No qrp_api import — this package is standalone-shaped.
+Only the database name is given; host/port/user/password come from the libpq-standard PG*
+environment (PGHOST/PGPORT/PGUSER/PGPASSWORD), loaded from a .env if present. No qrp_api
+import — this package is standalone-shaped. Override one database with <DB>_DATABASE_URL.
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ from pathlib import Path
 
 import psycopg
 
-_OWN = "portfolios"  # analytics' primary read; it owns no database of its own
+_OWN = "portfolios"
 
 
-def _load_cwd_env() -> None:
+def _load_env() -> None:
     p = Path(".env")
     if not p.is_file():
         return
@@ -26,24 +26,11 @@ def _load_cwd_env() -> None:
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
-def _dsn(dbname: str) -> str:
-    _load_cwd_env()
-    override = os.environ.get(f"{dbname.upper()}_DATABASE_URL")
-    if override:
-        return override
-    host = os.environ.get("PGHOST", "localhost")
-    port = os.environ.get("PGPORT", "5432")
-    user = os.environ.get("PGUSER", "postgres")
-    parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={user}"]
-    pw = os.environ.get("PGPASSWORD")
-    if pw:
-        parts.append(f"password={pw}")
-    return " ".join(parts)
-
-
 def connect(dbname: str = _OWN) -> psycopg.Connection:
-    """Connect to a named database (defaults to portfolios — analytics' weights source)."""
-    return psycopg.connect(_dsn(dbname), connect_timeout=5)
+    """Connect to a database on the shared instance (PG* env supplies the rest)."""
+    _load_env()
+    target = os.environ.get(f"{dbname.upper()}_DATABASE_URL") or f"dbname={dbname}"
+    return psycopg.connect(target, connect_timeout=5)
 
 
 def hub() -> psycopg.Connection:

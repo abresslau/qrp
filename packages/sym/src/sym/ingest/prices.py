@@ -1,0 +1,257 @@
+"""Atomic raw-price + factor ingestion (Story 2.3, FR-5/NFR-2/3/6).
+
+Takes an :class:`~sym.sources.contract.OhlcvResult` from a source adapter and
+persists it per security: raw OHLCV into ``prices_raw``, explicit splits/dividends
+into ``corporate_actions``, missing trading days into ``price_gaps``, and the
+per-figi cursor/status into ``pipeline_backfill_progress`` — all in ONE transaction
+per figi (NFR-6). History is immutable by default (AR-10): every insert is
+``ON CONFLICT DO NOTHING``, so a re-run is a true no-op. Invalid vendor bars are
+flagged and excluded, never written; missing prices are logged, never forward-filled.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import date
+
+import psycopg
+
+from sym.ingest.anomaly import PriceFlag, detect_anomalies
+from sym.sources.contract import OhlcvBar, OhlcvResult
+
+
+def validate_bar(bar: OhlcvBar) -> tuple[bool, str | None]:
+    """Reject structurally corrupt vendor bars (NFR-2). Returns (ok, reason)."""
+    if bar.open <= 0 or bar.high <= 0 or bar.low <= 0 or bar.close <= 0:
+        return False, "non-positive price"
+    if bar.high < bar.low:
+        return False, "high < low"
+    if bar.high < bar.open or bar.high < bar.close or bar.low > bar.open or bar.low > bar.close:
+        return False, "OHLC out of [low, high]"
+    if bar.volume < 0:
+        return False, "negative volume"
+    return True, None
+
+
+def detect_gaps(expected_sessions: set[date], bar_dates: set[date]) -> list[date]:
+    """Interior open trading days with no price (NFR-3) — reported, never filled.
+
+    A gap is only meaningful *within the security's observed trading life*: an
+    open exchange session on or after its first bar that returned no price. Days
+    before the first observed bar are NOT gaps — the security simply was not
+    listed yet (the backfill window floors at 1990, but most names IPO'd far
+    later). If the window returned no bars at all we emit nothing: we cannot tell
+    "not listed yet" from "vendor outage" without history, and fabricating a gap
+    per session would bury the real holes (this collapsed a 63k-row log to ~200).
+    """
+    if not bar_dates:
+        return []
+    first = min(bar_dates)
+    return sorted(d for d in expected_sessions - bar_dates if d >= first)
+
+
+@dataclass
+class IngestSummary:
+    """What an ingest of one security wrote."""
+
+    figi: str
+    source: str
+    bars_written: int = 0
+    actions_written: int = 0
+    gaps: list[date] = field(default_factory=list)
+    rejected: list[tuple[date, str]] = field(default_factory=list)
+    flags: list[PriceFlag] = field(default_factory=list)
+    cursor_date: date | None = None
+
+
+def expected_trading_days(
+    conn: psycopg.Connection, mic: str, start: date, end: date
+) -> set[date]:
+    """Open sessions for ``mic`` in ``[start, end]`` from the current trading calendar."""
+    rows = conn.execute(
+        """
+        SELECT tc.session_date
+          FROM trading_calendar tc
+          JOIN trading_calendar_version v USING (calendar_version)
+         WHERE v.is_current
+           AND tc.mic = %s
+           AND tc.session_date BETWEEN %s AND %s
+        """,
+        (mic, start, end),
+    ).fetchall()
+    return {row[0] for row in rows}
+
+
+def _insert_bar(conn: psycopg.Connection, figi: str, bar: OhlcvBar, result: OhlcvResult) -> None:
+    conn.execute(
+        """
+        INSERT INTO prices_raw
+            (composite_figi, session_date, open, high, low, close, volume,
+             currency_code, source)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (composite_figi, session_date) DO NOTHING
+        """,
+        (
+            figi, bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume,
+            result.currency, result.source,
+        ),
+    )
+
+
+def _insert_action(
+    conn: psycopg.Connection,
+    figi: str,
+    *,
+    ex_date: date,
+    action_type: str,
+    value: object,
+    currency: str | None,
+    source: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO corporate_actions
+            (composite_figi, ex_date, action_type, value, currency_code, source)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (composite_figi, ex_date, action_type) DO NOTHING
+        """,
+        (figi, ex_date, action_type, value, currency, source),
+    )
+
+
+def ingest_result(
+    conn: psycopg.Connection,
+    result: OhlcvResult,
+    *,
+    expected_sessions: set[date] | None = None,
+) -> IngestSummary:
+    """Persist one security's OhlcvResult atomically (NFR-6).
+
+    Valid raw bars, explicit splits/dividends, detected gaps, and the cursor/status
+    advance all commit in a single transaction. A failure rolls the whole figi-batch
+    back and the cursor never advances. Invalid bars are excluded and reported in
+    ``rejected``; missing trading days are logged in ``price_gaps``, not filled.
+    """
+    figi = result.figi
+    summary = IngestSummary(figi=figi, source=result.source)
+
+    valid: list[OhlcvBar] = []
+    for bar in result.bars:
+        ok, reason = validate_bar(bar)
+        if ok:
+            valid.append(bar)
+        else:
+            summary.rejected.append((bar.date, reason or "invalid"))
+
+    with conn.transaction():
+        for bar in valid:
+            _insert_bar(conn, figi, bar, result)
+        summary.bars_written = len(valid)
+
+        for split in result.splits:
+            _insert_action(
+                conn, figi, ex_date=split.ex_date, action_type="split",
+                value=split.ratio, currency=None, source=result.source,
+            )
+        for dividend in result.dividends:
+            _insert_action(
+                conn, figi, ex_date=dividend.ex_date, action_type="dividend",
+                value=dividend.amount, currency=result.currency, source=result.source,
+            )
+        summary.actions_written = len(result.splits) + len(result.dividends)
+
+        if expected_sessions is not None:
+            summary.gaps = detect_gaps(expected_sessions, {bar.date for bar in valid})
+            for gap in summary.gaps:
+                conn.execute(
+                    """
+                    INSERT INTO price_gaps (composite_figi, session_date, source)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (composite_figi, session_date) DO NOTHING
+                    """,
+                    (figi, gap, result.source),
+                )
+
+        # Stage-1 anomaly annotation (AR-9 / NFR-1): flag suspect prices that DID
+        # land, in the same transaction. Idempotent; never clobber a human review.
+        summary.flags = detect_anomalies(valid, result.splits, expected_sessions)
+        for flag in summary.flags:
+            conn.execute(
+                """
+                INSERT INTO prices_review
+                    (composite_figi, session_date, flag_type, detail, pct_move, source)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (composite_figi, session_date) DO UPDATE
+                    SET flag_type = EXCLUDED.flag_type,
+                        detail = EXCLUDED.detail,
+                        pct_move = EXCLUDED.pct_move,
+                        source = EXCLUDED.source
+                    WHERE NOT prices_review.reviewed
+                """,
+                (
+                    figi, flag.session_date, flag.flag_type, flag.detail,
+                    flag.pct_move, result.source,
+                ),
+            )
+
+        summary.cursor_date = max((bar.date for bar in valid), default=None)
+        conn.execute(
+            """
+            INSERT INTO pipeline_backfill_progress
+                (composite_figi, source, cursor_date, status)
+            VALUES (%s, %s, %s, 'ok')
+            ON CONFLICT (composite_figi) DO UPDATE
+                SET cursor_date = GREATEST(
+                        pipeline_backfill_progress.cursor_date, EXCLUDED.cursor_date
+                    ),
+                    status = 'ok',
+                    source = EXCLUDED.source
+            """,
+            (figi, result.source, summary.cursor_date),
+        )
+
+    return summary
+
+
+def resolve_review(
+    conn: psycopg.Connection,
+    composite_figi: str,
+    session_date: date,
+    *,
+    resolution: str,
+) -> bool:
+    """Confirm or reject a flagged price (a review action, never an ingestion drop).
+
+    A legitimate large move is ``confirmed`` (it stays and will materialize once the
+    Epic 3 gate sees it reviewed); a genuine bad tick is ``rejected``. Returns True
+    if a flag row was updated.
+    """
+    if resolution not in ("confirmed", "rejected"):
+        raise ValueError(f"resolution must be 'confirmed' or 'rejected', got {resolution!r}")
+    updated = conn.execute(
+        """
+        UPDATE prices_review
+           SET reviewed = TRUE, resolution = %s, reviewed_at = now()
+         WHERE composite_figi = %s AND session_date = %s
+        RETURNING composite_figi
+        """,
+        (resolution, composite_figi, session_date),
+    ).fetchone()
+    return updated is not None
+
+
+def ingest_results(
+    conn: psycopg.Connection, results: Sequence[OhlcvResult]
+) -> list[IngestSummary]:
+    """Ingest several securities, each in its own transaction.
+
+    One bad figi is rolled back and skipped; it never halts the rest.
+    """
+    summaries: list[IngestSummary] = []
+    for result in results:
+        try:
+            summaries.append(ingest_result(conn, result))
+        except psycopg.Error:
+            summaries.append(IngestSummary(figi=result.figi, source=result.source))
+    return summaries

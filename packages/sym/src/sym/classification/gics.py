@@ -1,0 +1,377 @@
+"""GICS classification loading into the SCD table (Story 1.8, FR-4, AR-11).
+
+The free ``financedatabase`` source supplies only the top three GICS *labels*
+(sector, industry-group, industry); sub-industry and the numeric GICS *codes*
+are not available from it, so those columns exist in ``gics_scd`` for a future
+coded/point-in-time feed but stay NULL today (see ``migrations/deploy/gics_scd.sql``).
+
+The external dependency is isolated behind the :class:`GicsSource` protocol —
+mirroring :class:`sym.identity.figi.OpenFigiClient` — so the loading logic is
+testable without the financedatabase frame, and writes go through one
+``conn.transaction()`` per security so a single bad row never rolls back the run.
+Data is current-only, written in slowly-changing-dimension shape: a re-run with an
+unchanged classification is a no-op; a changed one closes the prior row
+(``valid_to = as_of``) before inserting the new one (never a hard delete).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date
+from typing import Any, Protocol
+
+import psycopg
+
+# financedatabase column -> GICS level. Only the top three labels are supplied.
+_FD_SECTOR = "sector"
+_FD_INDUSTRY_GROUP = "industry_group"
+_FD_INDUSTRY = "industry"
+
+DEFAULT_COVERAGE_THRESHOLD = 0.90  # AC #2 — never silently widened.
+
+
+@dataclass(frozen=True)
+class GicsClassification:
+    """One security's GICS classification.
+
+    Sub-industry and all numeric codes default to NULL: the financedatabase
+    source does not provide them. The SCD shape still carries the columns so a
+    licensed coded feed can populate them later without a migration.
+    """
+
+    composite_figi: str
+    sector_name: str | None
+    industry_group_name: str | None
+    industry_name: str | None
+    sub_industry_name: str | None = None
+    sector_code: str | None = None
+    industry_group_code: str | None = None
+    industry_code: str | None = None
+    sub_industry_code: str | None = None
+    source: str = "financedatabase"
+
+    @property
+    def is_classified(self) -> bool:
+        """A row counts toward coverage once the source supplies at least a sector."""
+        return self.sector_name is not None
+
+    def level_names(self) -> tuple[str | None, str | None, str | None, str | None]:
+        """The four level *names*, in level order — the SCD comparison key."""
+        return (
+            self.sector_name,
+            self.industry_group_name,
+            self.industry_name,
+            self.sub_industry_name,
+        )
+
+
+def _clean_str(value: Any) -> str | None:
+    """Normalise a frame cell to a non-empty string or None (NaN/float -> None)."""
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def classification_from_row(composite_figi: str, row: Mapping[str, Any]) -> GicsClassification:
+    """Map a financedatabase row to a :class:`GicsClassification`.
+
+    Only the three label columns are read; everything else stays NULL. NaN/empty
+    cells become None so an absent sector is correctly treated as unclassified.
+    """
+    return GicsClassification(
+        composite_figi=composite_figi,
+        sector_name=_clean_str(row.get(_FD_SECTOR)),
+        industry_group_name=_clean_str(row.get(_FD_INDUSTRY_GROUP)),
+        industry_name=_clean_str(row.get(_FD_INDUSTRY)),
+    )
+
+
+@dataclass(frozen=True)
+class SecurityIdentity:
+    """The identifiers a GICS source may match a security on.
+
+    ``composite_figi`` is our key (and what the result is attributed to);
+    ``isin`` is the fallback when the source lacks the CompositeFIGI.
+    """
+
+    composite_figi: str
+    isin: str | None = None
+    ticker: str | None = None
+
+
+class GicsSource(Protocol):
+    """Returns a classification per security the source can match, keyed on CompositeFIGI."""
+
+    def fetch(self, securities: Sequence[SecurityIdentity]) -> dict[str, GicsClassification]: ...
+
+
+class FinanceDatabaseGicsSource:
+    """GICS labels from the ``financedatabase`` Equities dataset.
+
+    Matches a security by CompositeFIGI first, then falls back to ISIN — many
+    non-US names carry an ISIN in the dataset but no CompositeFIGI, so ISIN
+    fallback is what lifts coverage over the AC #2 threshold. A match found by
+    ISIN is still attributed to *our* CompositeFIGI. The frame is injectable for
+    testing; left unset it loads lazily from ``financedatabase`` (a ~150k-row
+    dataset, loaded once and cached).
+    """
+
+    def __init__(self, frame: Any = None) -> None:
+        self._frame = frame
+
+    def _equities_frame(self) -> Any:
+        if self._frame is None:
+            import financedatabase as fd
+
+            self._frame = fd.Equities().select()
+        return self._frame
+
+    @staticmethod
+    def _index(frame: Any, key_col: str) -> dict[str, dict[str, Any]]:
+        """Map each non-null key to its first classified row (sector present)."""
+        if key_col not in frame.columns:
+            return {}
+        cols = [key_col, _FD_SECTOR, _FD_INDUSTRY_GROUP, _FD_INDUSTRY]
+        subset = frame[cols]
+        subset = subset[subset[key_col].notna() & subset[_FD_SECTOR].notna()]
+        subset = subset.drop_duplicates(subset=[key_col], keep="first")
+        return {record[key_col]: record for record in subset.to_dict("records")}
+
+    def fetch(self, securities: Sequence[SecurityIdentity]) -> dict[str, GicsClassification]:
+        frame = self._equities_frame()
+        by_figi = self._index(frame, "composite_figi")
+        by_isin = self._index(frame, "isin")
+        found: dict[str, GicsClassification] = {}
+        for security in securities:
+            row = by_figi.get(security.composite_figi)
+            if row is None and security.isin:
+                row = by_isin.get(security.isin)
+            if row is None:
+                continue
+            classification = classification_from_row(security.composite_figi, row)
+            if classification.is_classified:
+                found[security.composite_figi] = classification
+        return found
+
+
+@dataclass
+class ClassificationSummary:
+    """What a classification run covered and wrote."""
+
+    active_total: int = 0
+    classified: int = 0
+    rows_inserted: int = 0
+    rows_updated: int = 0
+    rows_closed: int = 0
+    unchanged: int = 0
+    failed: int = 0
+
+    @property
+    def coverage(self) -> float:
+        """Fraction of active securities that received a classification."""
+        if self.active_total == 0:
+            return 0.0
+        return self.classified / self.active_total
+
+    def meets_threshold(self, threshold: float = DEFAULT_COVERAGE_THRESHOLD) -> bool:
+        """True when coverage clears ``threshold`` (default AC #2's 0.90)."""
+        return self.coverage >= threshold
+
+
+def plan_classifications(
+    securities: Sequence[SecurityIdentity], source: GicsSource
+) -> list[GicsClassification]:
+    """Resolve classifications for the requested securities (no DB writes).
+
+    Keeps only securities the source actually classified, preserving request order.
+    """
+    found = source.fetch(list(securities))
+    return [
+        found[security.composite_figi]
+        for security in securities
+        if security.composite_figi in found
+        and found[security.composite_figi].is_classified
+    ]
+
+
+def read_active_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
+    """Active securities with their current ISIN/ticker (the GICS match keys).
+
+    The ISIN enables the financedatabase ISIN fallback for names the dataset
+    lacks a CompositeFIGI for. Active-only is the explicit survivorship scope.
+    """
+    rows = conn.execute(
+        """
+        SELECT s.composite_figi,
+               max(y.symbol_value) FILTER (WHERE y.symbol_type = 'isin')   AS isin,
+               max(y.symbol_value) FILTER (WHERE y.symbol_type = 'ticker') AS ticker
+          FROM securities s
+          LEFT JOIN security_symbology y
+                 ON y.composite_figi = s.composite_figi
+                AND y.valid_to IS NULL
+         WHERE s.status = 'active'
+         GROUP BY s.composite_figi
+         ORDER BY s.composite_figi
+        """
+    ).fetchall()
+    return [SecurityIdentity(figi, isin, ticker) for figi, isin, ticker in rows]
+
+
+def _current_row(
+    conn: psycopg.Connection, composite_figi: str
+) -> tuple[tuple[str | None, str | None, str | None, str | None], date] | None:
+    """The currently-effective ``(level_names, valid_from)`` for a FIGI, or None.
+
+    ``valid_from`` is returned so a same-day correction can be told apart from a
+    genuine cross-day version change (see :func:`apply_classifications`).
+    """
+    row = conn.execute(
+        """
+        SELECT sector_name, industry_group_name, industry_name, sub_industry_name, valid_from
+          FROM gics_scd
+         WHERE composite_figi = %s
+           AND valid_to IS NULL
+        """,
+        (composite_figi,),
+    ).fetchone()
+    if row is None:
+        return None
+    return (tuple(row[:4]), row[4])
+
+
+def apply_classifications(
+    conn: psycopg.Connection,
+    plans: Sequence[GicsClassification],
+    *,
+    as_of: date | None = None,
+) -> ClassificationSummary:
+    """Write classifications in SCD shape, one transaction per security.
+
+    Idempotent and survivorship-safe:
+
+    * unchanged currently-effective row → left alone;
+    * changed **on a later day** → the prior row is closed (``valid_to = as_of``)
+      and a new row inserted, so ``gics_scd_no_overlap`` holds and history is kept;
+    * changed **on the same day it was written** (``valid_from == as_of``) → the
+      row is updated **in place**. Closing it would set ``valid_to = valid_from``,
+      a zero-width period that violates ``gics_scd_validity_chk`` (``valid_to >
+      valid_from``); a same-day correction has no historical period to preserve.
+
+    Each security writes in its own transaction; a single failing write is
+    rolled back, counted in ``summary.failed``, and the run continues — one bad
+    row never halts the rest.
+    """
+    as_of = as_of or date.today()
+    summary = ClassificationSummary()
+    for classification in plans:
+        try:
+            with conn.transaction():
+                current = _current_row(conn, classification.composite_figi)
+                if current is not None and current[0] == classification.level_names():
+                    summary.unchanged += 1
+                    continue
+                if current is not None and current[1] == as_of:
+                    _update_in_place(conn, classification)
+                    summary.rows_updated += 1
+                    continue
+                if current is not None:
+                    conn.execute(
+                        """
+                        UPDATE gics_scd
+                           SET valid_to = %s
+                         WHERE composite_figi = %s
+                           AND valid_to IS NULL
+                        """,
+                        (as_of, classification.composite_figi),
+                    )
+                    summary.rows_closed += 1
+                _insert_row(conn, classification, valid_from=as_of)
+                summary.rows_inserted += 1
+        except psycopg.Error:
+            # A single security's write failing must not abort the whole run.
+            summary.failed += 1
+    return summary
+
+
+def _insert_row(
+    conn: psycopg.Connection, classification: GicsClassification, *, valid_from: date
+) -> None:
+    """Insert a new currently-effective (``valid_to`` NULL) classification row."""
+    conn.execute(
+        """
+        INSERT INTO gics_scd
+            (composite_figi, sector_code, sector_name,
+             industry_group_code, industry_group_name,
+             industry_code, industry_name,
+             sub_industry_code, sub_industry_name,
+             source, valid_from)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            classification.composite_figi,
+            classification.sector_code,
+            classification.sector_name,
+            classification.industry_group_code,
+            classification.industry_group_name,
+            classification.industry_code,
+            classification.industry_name,
+            classification.sub_industry_code,
+            classification.sub_industry_name,
+            classification.source,
+            valid_from,
+        ),
+    )
+
+
+def _update_in_place(conn: psycopg.Connection, classification: GicsClassification) -> None:
+    """Overwrite the currently-effective row's levels (same-day correction).
+
+    Touches only the level/source columns and never ``valid_from``/``valid_to``,
+    so no zero-width period is created. The ``set_updated_at`` trigger refreshes
+    ``updated_at``.
+    """
+    conn.execute(
+        """
+        UPDATE gics_scd
+           SET sector_code = %s, sector_name = %s,
+               industry_group_code = %s, industry_group_name = %s,
+               industry_code = %s, industry_name = %s,
+               sub_industry_code = %s, sub_industry_name = %s,
+               source = %s
+         WHERE composite_figi = %s
+           AND valid_to IS NULL
+        """,
+        (
+            classification.sector_code,
+            classification.sector_name,
+            classification.industry_group_code,
+            classification.industry_group_name,
+            classification.industry_code,
+            classification.industry_name,
+            classification.sub_industry_code,
+            classification.sub_industry_name,
+            classification.source,
+            classification.composite_figi,
+        ),
+    )
+
+
+def classify_universe(
+    conn: psycopg.Connection,
+    source: GicsSource,
+    *,
+    as_of: date | None = None,
+) -> ClassificationSummary:
+    """Classify every active security and report coverage against AC #2's threshold.
+
+    Reads the active universe, resolves classifications from ``source``, writes
+    them in SCD shape, and stamps the run's coverage onto the returned summary.
+    """
+    active = read_active_identities(conn)
+    plans = plan_classifications(active, source)
+    summary = apply_classifications(conn, plans, as_of=as_of)
+    summary.active_total = len(active)
+    summary.classified = len(plans)
+    return summary

@@ -1,0 +1,304 @@
+"""Tests for GICS classification loading (Story 1.8).
+
+Unit-level and DB-free, matching the house style (see tests/test_lifecycle.py):
+a fake ``GicsSource`` stands in for financedatabase and a routing fake connection
+stands in for psycopg. The one financedatabase-shaped test builds a small real
+pandas frame so NaN handling is exercised for real, without a network call.
+"""
+
+from __future__ import annotations
+
+import contextlib
+from datetime import date
+
+import pandas as pd
+import psycopg
+
+from sym.classification.gics import (
+    ClassificationSummary,
+    FinanceDatabaseGicsSource,
+    GicsClassification,
+    SecurityIdentity,
+    apply_classifications,
+    classification_from_row,
+    classify_universe,
+    plan_classifications,
+)
+
+
+def _gics(
+    figi,
+    sector="Information Technology",
+    ig="Software & Services",
+    ind="Software",
+):
+    return GicsClassification(
+        composite_figi=figi,
+        sector_name=sector,
+        industry_group_name=ig,
+        industry_name=ind,
+    )
+
+
+def _row(valid_from, sector="Information Technology", ig="Software & Services", ind="Software"):
+    """A currently-effective gics_scd row as _RouterConn stores it (5-tuple)."""
+    return (sector, ig, ind, None, valid_from)
+
+
+class _FakeSource:
+    def __init__(self, mapping):
+        self._mapping = mapping  # composite_figi -> GicsClassification
+
+    def fetch(self, securities):
+        return {
+            s.composite_figi: self._mapping[s.composite_figi]
+            for s in securities
+            if s.composite_figi in self._mapping
+        }
+
+
+class _Cursor:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+
+class _RouterConn:
+    """Routes SELECTs by table; records every executed statement.
+
+    ``current`` maps a FIGI to its currently-effective gics_scd row as a 5-tuple:
+    the four level names followed by ``valid_from`` (matching the columns
+    ``_current_row`` selects). The securities query returns identity-shaped
+    ``(composite_figi, isin, ticker)`` rows.
+    """
+
+    def __init__(self, active_figis=(), current=None):
+        self._active = [(f, None, None) for f in active_figis]
+        self._current = current or {}
+        self.calls: list[tuple[str, tuple]] = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        upper = sql.upper()
+        if "FROM SECURITIES" in upper:
+            return _Cursor(self._active)
+        if "FROM GICS_SCD" in upper and upper.lstrip().startswith("SELECT"):
+            row = self._current.get(params[0])
+            return _Cursor([row] if row else [])
+        return _Cursor([])
+
+    def transaction(self):
+        return contextlib.nullcontext()
+
+
+class _FailingConn:
+    """A connection whose writes (UPDATE/INSERT) always raise, to test isolation."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, tuple]] = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        upper = sql.upper().lstrip()
+        if upper.startswith(("INSERT", "UPDATE")):
+            raise psycopg.Error("simulated write failure")
+        return _Cursor([])  # SELECT current -> no currently-effective row
+
+    def transaction(self):
+        return contextlib.nullcontext()
+
+
+# --- classification_from_row (financedatabase row -> record) ----------------
+
+
+def test_row_maps_top_three_labels_and_nulls_the_rest():
+    row = {
+        "sector": "Health Care",
+        "industry_group": "Pharmaceuticals, Biotechnology & Life Sciences",
+        "industry": "Biotechnology",
+    }
+    c = classification_from_row("BBG000BVPV84", row)
+    assert c.sector_name == "Health Care"
+    assert c.industry_group_name == "Pharmaceuticals, Biotechnology & Life Sciences"
+    assert c.industry_name == "Biotechnology"
+    # financedatabase supplies neither sub-industry nor numeric GICS codes.
+    assert c.sub_industry_name is None
+    assert c.sector_code is None
+    assert c.sub_industry_code is None
+    assert c.is_classified
+
+
+def test_row_with_missing_sector_is_not_classified():
+    c = classification_from_row("BBG000000001", {"sector": float("nan")})
+    assert c.sector_name is None
+    assert c.is_classified is False
+
+
+# --- FinanceDatabaseGicsSource over an injected pandas frame ----------------
+
+
+def test_finance_database_source_keys_on_composite_figi_and_drops_nan():
+    frame = pd.DataFrame(
+        [
+            {
+                "composite_figi": "BBG000B9XRY4",
+                "isin": "US0378331005",
+                "sector": "Information Technology",
+                "industry_group": "Technology Hardware & Equipment",
+                "industry": "Technology Hardware, Storage & Peripherals",
+            },
+            {  # no composite_figi -> unjoinable by figi, must be skipped
+                "composite_figi": float("nan"),
+                "isin": float("nan"),
+                "sector": "Financials",
+                "industry_group": "Banks",
+                "industry": "Banks",
+            },
+            {  # has figi but no sector -> not classified, skipped
+                "composite_figi": "BBG000000XXX",
+                "isin": float("nan"),
+                "sector": float("nan"),
+                "industry_group": float("nan"),
+                "industry": float("nan"),
+            },
+        ]
+    )
+    source = FinanceDatabaseGicsSource(frame=frame)
+    found = source.fetch(
+        [
+            SecurityIdentity("BBG000B9XRY4", isin="US0378331005"),
+            SecurityIdentity("BBG000000XXX"),
+            SecurityIdentity("BBG000NOTHERE"),
+        ]
+    )
+    assert set(found) == {"BBG000B9XRY4"}
+    assert found["BBG000B9XRY4"].sector_name == "Information Technology"
+
+
+def test_finance_database_source_falls_back_to_isin():
+    # The dataset has the GICS under an ISIN but NOT under our CompositeFIGI
+    # (common for non-US names). The match must attribute to OUR figi.
+    frame = pd.DataFrame(
+        [
+            {
+                "composite_figi": "BBG_DATASET_FIGI",
+                "isin": "GB0005405286",
+                "sector": "Financials",
+                "industry_group": "Banks",
+                "industry": "Banks",
+            },
+        ]
+    )
+    source = FinanceDatabaseGicsSource(frame=frame)
+    found = source.fetch([SecurityIdentity("BBG_OUR_FIGI", isin="GB0005405286")])
+    assert "BBG_OUR_FIGI" in found  # attributed to our composite_figi, matched via ISIN
+    assert found["BBG_OUR_FIGI"].sector_name == "Financials"
+
+
+# --- plan_classifications ---------------------------------------------------
+
+
+def test_plan_keeps_only_classified_and_requested():
+    source = _FakeSource(
+        {"BBG000000001": _gics("BBG000000001"), "BBG000000002": _gics("BBG000000002")}
+    )
+    plans = plan_classifications(
+        [SecurityIdentity("BBG000000001"), SecurityIdentity("BBG000000404")], source
+    )
+    assert [p.composite_figi for p in plans] == ["BBG000000001"]
+
+
+# --- coverage (AC #2: >=90%) ------------------------------------------------
+
+
+def test_coverage_meets_threshold_at_ninety_percent():
+    figis = [f"BBG0000000{i:02d}" for i in range(10)]
+    mapping = {f: _gics(f) for f in figis[:9]}  # 9 of 10 classified
+    conn = _RouterConn(active_figis=figis)
+    summary = classify_universe(conn, _FakeSource(mapping), as_of=date(2026, 6, 6))
+    assert summary.active_total == 10
+    assert summary.classified == 9
+    assert summary.coverage == 0.9
+    assert summary.meets_threshold() is True  # default threshold is 0.90, not widened
+
+
+def test_coverage_below_threshold_is_reported_not_widened():
+    figis = [f"BBG0000000{i:02d}" for i in range(10)]
+    mapping = {f: _gics(f) for f in figis[:8]}  # only 8 of 10
+    conn = _RouterConn(active_figis=figis)
+    summary = classify_universe(conn, _FakeSource(mapping), as_of=date(2026, 6, 6))
+    assert summary.coverage == 0.8
+    assert summary.meets_threshold() is False
+    assert summary.meets_threshold(0.80) is True
+
+
+# --- apply_classifications: idempotent SCD writes ---------------------------
+
+
+def test_rerun_with_identical_classification_is_noop():
+    figi = "BBG000B9XRY4"
+    current = {figi: _row(date(2026, 1, 1))}  # same levels as _gics(figi)
+    conn = _RouterConn(current=current)
+    summary = apply_classifications(conn, [_gics(figi)], as_of=date(2026, 6, 6))
+    assert summary.unchanged == 1
+    assert summary.rows_inserted == 0
+    assert not any("INSERT" in sql.upper() for sql, _ in conn.calls)
+
+
+def test_changed_classification_on_a_later_day_closes_prior_row_then_inserts():
+    figi = "BBG000B9XRY4"
+    # Prior row was written on an EARLIER day, so closing it yields a non-empty period.
+    current = {figi: _row(date(2026, 1, 1), ind="Old Industry")}
+    conn = _RouterConn(current=current)
+    summary = apply_classifications(conn, [_gics(figi)], as_of=date(2026, 6, 6))
+    assert summary.rows_closed == 1
+    assert summary.rows_inserted == 1
+    assert summary.rows_updated == 0
+    statements = " ".join(sql.upper() for sql, _ in conn.calls)
+    assert "SET VALID_TO" in statements  # the prior row is closed
+    assert "INSERT INTO GICS_SCD" in statements
+    assert "DELETE" not in statements  # SCD closes, never deletes
+
+
+def test_changed_classification_on_the_same_day_updates_in_place():
+    """A same-day correction must NOT close-then-insert (that sets valid_to == valid_from,
+    violating gics_scd_validity_chk); it overwrites the currently-effective row instead."""
+    figi = "BBG000B9XRY4"
+    as_of = date(2026, 6, 6)
+    # Prior row was written TODAY (valid_from == as_of) with a stale industry label.
+    current = {figi: _row(as_of, ind="Old Industry")}
+    conn = _RouterConn(current=current)
+    summary = apply_classifications(conn, [_gics(figi)], as_of=as_of)
+    assert summary.rows_updated == 1
+    assert summary.rows_closed == 0
+    assert summary.rows_inserted == 0
+    statements = " ".join(sql.upper() for sql, _ in conn.calls)
+    assert "SET VALID_TO" not in statements  # never closes -> no zero-width period
+    assert "INSERT INTO GICS_SCD" not in statements
+    assert "SET SECTOR_CODE" in statements  # in-place level overwrite
+
+
+def test_new_figi_inserts_without_closing():
+    figi = "BBG000B9XRY4"
+    conn = _RouterConn()  # no currently-effective row
+    summary = apply_classifications(conn, [_gics(figi)], as_of=date(2026, 6, 6))
+    assert summary.rows_closed == 0
+    assert summary.rows_inserted == 1
+
+
+def test_failed_write_is_isolated_and_counted():
+    """One security's write failing is rolled back and counted; the run continues."""
+    conn = _FailingConn()
+    plans = [_gics("BBG000000001"), _gics("BBG000000002")]
+    summary = apply_classifications(conn, plans, as_of=date(2026, 6, 6))
+    assert summary.failed == 2  # both attempted despite the first failing
+    assert summary.rows_inserted == 0
+
+
+def test_summary_coverage_is_zero_when_no_active_securities():
+    assert ClassificationSummary().coverage == 0.0

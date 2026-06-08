@@ -1,0 +1,40 @@
+[project]
+name = "sym"
+version = "0.1.0"
+description = "Global Equity Security Master + Market Data + Returns warehouse (Module 1 of a personal quant research warehouse)."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "exchange-calendars>=4.13.2",
+    "financedatabase>=2.4.0",
+    "openfigi>=0.0.9",
+    "pandas>=3.0.3",
+    "psycopg[binary]>=3.3.4",
+    "requests>=2.34.2",
+    "yfinance>=1.4.1",
+]
+
+[project.scripts]
+sym = "sym.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.8,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+extend-exclude = ["_bmad", "_bmad-output", ".claude", "docs"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

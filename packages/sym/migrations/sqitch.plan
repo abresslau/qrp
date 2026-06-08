@@ -1,0 +1,53 @@
+%syntax-version=1.0.0
+%project=sym
+%uri=https://github.com/abresslau/sym
+
+updated_at_trigger 2026-06-06T12:00:00Z Andre <ab@gladstone-management.com> # Shared set_updated_at() trigger function (NFR-5)
+currency [updated_at_trigger] 2026-06-06T12:01:00Z Andre <ab@gladstone-management.com> # ISO-4217 currency reference table (FR-13)
+exchange [currency] 2026-06-06T12:02:00Z Andre <ab@gladstone-management.com> # MIC-keyed exchange reference table (FR-12)
+seed_reference_data [exchange] 2026-06-06T12:03:00Z Andre <ab@gladstone-management.com> # Seed active currencies + major exchange MICs
+securities [exchange] 2026-06-06T13:00:00Z Andre <ab@gladstone-management.com> # Security master keyed on CompositeFIGI (FR-1..FR-4)
+security_symbology [securities] 2026-06-06T13:01:00Z Andre <ab@gladstone-management.com> # Effective-dated symbology -> CompositeFIGI (FR-2, FR-3)
+securities_review_queue [updated_at_trigger] 2026-06-06T13:02:00Z Andre <ab@gladstone-management.com> # FIGI-assignment review surface (FR-4)
+gics_scd [securities] 2026-06-06T13:03:00Z Andre <ab@gladstone-management.com> # GICS classification, SCD shape, current-only data (FR-4, D4)
+trading_calendar [exchange] 2026-06-06T14:00:00Z Andre <ab@gladstone-management.com> # Versioned exchange_calendars snapshot (AR-4, returns prerequisite)
+rename_symbology_pk [security_symbology] 2026-06-06T15:00:00Z Andre <ab@gladstone-management.com> # Shorten surrogate PK symbology_id -> sym_id
+exchange_figi_exch_code [seed_reference_data] 2026-06-06T16:00:00Z Andre <ab@gladstone-management.com> # MIC -> OpenFIGI exchCode map for ticker resolution
+price_storage [securities] 2026-06-06T17:00:00Z Andre <ab@gladstone-management.com> # Raw OHLCV + factor store + cursor + gap log (FR-5, AR-6, NFR-2/3/6)
+prices_review [price_storage] 2026-06-06T18:00:00Z Andre <ab@gladstone-management.com> # Stage-1 anomaly annotation flags (AR-9, NFR-1)
+security_names [securities] 2026-06-06T19:00:00Z Andre <ab@gladstone-management.com> # Effective-dated company names from OpenFIGI
+prices_raw_drop_retrieved_at [price_storage] 2026-06-06T20:00:00Z Andre <ab@gladstone-management.com> # Drop redundant prices_raw.retrieved_at (created_at/updated_at suffice)
+pipeline_run_log [securities] 2026-06-06T21:00:00Z Andre <ab@gladstone-management.com> # Run-level pipeline log (FR-8, NFR-7, OI-3)
+prices_review_sweep_flag [prices_review] 2026-06-06T22:00:00Z Andre <ab@gladstone-management.com> # Allow sweep_divergence flag_type (AR-10)
+v_prices_adjusted [price_storage] 2026-06-06T23:00:00Z Andre <ab@gladstone-management.com> # Deterministic split-adjusted price view (AR-7)
+fact_returns [v_prices_adjusted] 2026-06-07T00:00:00Z Andre <ab@gladstone-management.com> # Materialized PR/TR matrix + return_window ref (FR-9, AR-7)
+fact_returns_gated [fact_returns] 2026-06-07T01:00:00Z Andre <ab@gladstone-management.com> # Anomaly gate column (AR-9/NFR-1 gate half)
+universe [updated_at_trigger] 2026-06-07T02:00:00Z Andre <ab@gladstone-management.com> # Universe registry (Story U1.1, pluggable universe layer)
+membership_event [universe] 2026-06-07T03:00:00Z Andre <ab@gladstone-management.com> # Append-only membership change-event log (Story U1.2, AR-6/AR-10)
+universe_member_resolution [universe] 2026-06-07T04:00:00Z Andre <ab@gladstone-management.com> # Frozen member->CompositeFIGI resolutions (Story U1.3)
+universe_membership [universe_member_resolution] 2026-06-07T05:00:00Z Andre <ab@gladstone-management.com> # Point-in-time membership projection (Story U1.4)
+universe_monitor_log [universe] 2026-06-07T06:00:00Z Andre <ab@gladstone-management.com> # Per-index maintenance run log + liveness (Story U3.1)
+membership_proposal [universe] 2026-06-07T07:00:00Z Andre <ab@gladstone-management.com> # Two-stage membership change staging (Story U3.2, AR-9)
+universe_accuracy_check [universe] 2026-06-07T08:00:00Z Andre <ab@gladstone-management.com> # Membership accuracy-gate results (Story U3.3, FR14)
+fundamentals [securities] 2026-06-07T09:00:00Z Andre <ab@gladstone-management.com> # Minimal fundamentals input for criteria screens (Story U5.1)
+backfill_floor_reached [price_storage] 2026-06-07T10:00:00Z Andre <ab@gladstone-management.com> # Gap-aware backfill floor watermark (U4.5 full-history fix)
+fundamentals_effective_date [fundamentals] 2026-06-07T11:00:00Z Andre <ab@gladstone-management.com> # Rename fundamentals.as_of -> effective_date (historical series)
+fundamentals_date_column [fundamentals_effective_date] 2026-06-07T12:00:00Z Andre <ab@gladstone-management.com> # Rename fundamentals.effective_date -> date (operator preference)
+date_naming_convention [fundamentals_date_column] 2026-06-07T13:00:00Z Andre <ab@gladstone-management.com> # Standardize DATE column names (as_of_date + _date suffix; portable)
+validation_logs [universe] 2026-06-07T14:00:00Z Andre <ab@gladstone-management.com> # Cross-layer validation logs: completeness + run log (Epic V)
+instrument [updated_at_trigger] 2026-06-07T15:00:00Z Andre <ab@gladstone-management.com> # Universal internal instrument identity (sym_id) + xref (Benchmark epic B1)
+index_levels [instrument] 2026-06-07T16:00:00Z Andre <ab@gladstone-management.com> # Benchmark index level series (PR/NTR/GTR variants, sym_id-keyed) (Benchmark epic B2)
+fact_index_returns [index_levels] 2026-06-07T17:00:00Z Andre <ab@gladstone-management.com> # Materialized benchmark index returns + alpha basis (Benchmark epic B3)
+index_levels_drop_variant [fact_index_returns] 2026-06-07T18:00:00Z Andre <ab@gladstone-management.com> # Drop variant: each index series is its own instrument (simplify)
+universe_benchmark [instrument] 2026-06-07T19:00:00Z Andre <ab@gladstone-management.com> # Link index universes to their benchmark level series (Benchmark epic B5)
+session_return_windows [fact_returns] 2026-06-07T20:00:00Z Andre <ab@gladstone-management.com> # Add 5D + 10D trading-session return windows (Story 3.1 ext)
+cumulative_multiyear_windows [session_return_windows] 2026-06-07T20:30:00Z Andre <ab@gladstone-management.com> # Add cumulative multi-year + since-IPO return windows (Story 3.1 ext)
+trailing_kind_prior_quarter [cumulative_multiyear_windows] 2026-06-07T21:00:00Z Andre <ab@gladstone-management.com> # Unify rolling+multiyear -> trailing kind; add PQ (prior quarter) window
+inception_kind_rename [trailing_kind_prior_quarter] 2026-06-07T21:30:00Z Andre <ab@gladstone-management.com> # Rename ipo kind -> inception; IPO/IPO_ANN codes -> SI/SI_ANN
+fx_rate [currency] 2026-06-08T09:00:00Z Andre <ab@gladstone-management.com> # FX rate storage + canonical-direction integrity (Epic FX, FX1)
+fx_views [fx_rate] 2026-06-08T09:30:00Z Andre <ab@gladstone-management.com> # FX derivation views v_fx + v_fx_daily (Epic FX, FX3a)
+fundamentals_market_cap_usd [fundamentals fx_rate] 2026-06-08T10:00:00Z Andre <ab@gladstone-management.com> # Add fundamentals.market_cap_usd (derived snapshot, market_cap x FX)
+fundamentals_market_cap_lcy [fundamentals_market_cap_usd] 2026-06-08T10:30:00Z Andre <ab@gladstone-management.com> # Rename fundamentals.market_cap -> market_cap_lcy (pairs with market_cap_usd)
+fundamentals_column_order [fundamentals_market_cap_lcy] 2026-06-08T11:00:00Z Andre <ab@gladstone-management.com> # Reorder fundamentals columns (market_cap_usd next to market_cap_lcy)
+fx_source_rank [fx_rate] 2026-06-08T12:00:00Z Andre <ab@gladstone-management.com> # FX source trust-tier rank for the canonical multi-source pick (Epic FX, FR4a/FR4b)
+fx_views_precedence [fx_views fx_source_rank] 2026-06-08T12:30:00Z Andre <ab@gladstone-management.com> # v_fx_daily: break multi-source ties by fx_source_rank (deterministic carry)
