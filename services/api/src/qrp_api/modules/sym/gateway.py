@@ -1,0 +1,456 @@
+"""DB-backed reads for the sym module (Overview Q2.1 + Universe heat map Q2.6/FR-23).
+
+Reads sym's tables/views directly (read/trigger posture; no writes). Every figure is a live
+read of sym — nothing mocked.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from datetime import date, datetime
+
+import psycopg
+
+
+def _as_text(v) -> str | None:
+    """Render a JSONB/dict column as a compact string (review_queue.source_input is JSONB)."""
+    if v is None or isinstance(v, str):
+        return v
+    return json.dumps(v, default=str, separators=(",", ":"))
+
+from qrp_api.modules.sym.freshness import AreaFreshness, classify
+
+# Curated short/medium windows for the heat-map selector (subset of return_window codes).
+HEATMAP_WINDOWS = ["1D", "WTD", "MTD", "QTD", "YTD", "1M", "3M", "6M", "1Y"]
+DEFAULT_HEATMAP_WINDOW = "YTD"
+
+
+@dataclass(frozen=True)
+class LastRun:
+    run_id: str | None
+    mode: str | None
+    status: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+    rows_written: int | None
+
+
+@dataclass(frozen=True)
+class SymOverview:
+    securities: int
+    universes: int
+    priced_securities: int
+    latest_session: date | None
+    freshness: list[AreaFreshness]
+    last_run: LastRun | None
+
+
+@dataclass(frozen=True)
+class UniverseRef:
+    universe_id: str
+    name: str
+    members_resolved: int
+
+
+def _scalar(conn: psycopg.Connection, sql: str, params: tuple = ()):
+    row = conn.execute(sql, params).fetchone()
+    return row[0] if row else None
+
+
+class DbSymGateway:
+    def __init__(self, conn: psycopg.Connection) -> None:
+        self._conn = conn
+
+    def healthy(self) -> bool:
+        try:
+            self._conn.execute("SELECT 1")
+            return True
+        except psycopg.Error:
+            return False
+
+    def overview(self) -> SymOverview:
+        c = self._conn
+        securities = _scalar(c, "SELECT count(*) FROM securities")
+        universes = _scalar(c, "SELECT count(*) FROM universe")
+        priced = _scalar(c, "SELECT count(DISTINCT composite_figi) FROM prices_raw")
+        latest_session = _scalar(c, "SELECT max(session_date) FROM prices_raw")
+
+        area_as_of = {
+            "prices": _scalar(c, "SELECT max(session_date) FROM prices_raw"),
+            "returns": _scalar(c, "SELECT max(as_of_date) FROM fact_returns"),
+            "fx": _scalar(c, "SELECT max(as_of_date) FROM fx_rate"),
+            "fundamentals": _scalar(c, "SELECT max(as_of_date) FROM fundamentals"),
+        }
+        freshness = [classify(a, d, latest_session) for a, d in area_as_of.items()]
+
+        row = c.execute(
+            "SELECT run_id, mode, status, started_at, finished_at, rows_written "
+            "FROM pipeline_run_log ORDER BY started_at DESC NULLS LAST LIMIT 1"
+        ).fetchone()
+        last_run = LastRun(str(row[0]), row[1], row[2], row[3], row[4], row[5]) if row else None
+
+        return SymOverview(
+            securities=securities,
+            universes=universes,
+            priced_securities=priced,
+            latest_session=latest_session,
+            freshness=freshness,
+            last_run=last_run,
+        )
+
+    def universes(self) -> list[UniverseRef]:
+        rows = self._conn.execute(
+            """
+            SELECT u.universe_id, u.name,
+                   count(*) FILTER (WHERE r.resolution_status = 'resolved') AS resolved
+              FROM universe u
+              LEFT JOIN universe_member_resolution r USING (universe_id)
+             GROUP BY u.universe_id, u.name
+             ORDER BY resolved DESC, u.universe_id
+            """
+        ).fetchall()
+        return [UniverseRef(uid, name, resolved) for uid, name, resolved in rows]
+
+    def return_windows(self) -> list[tuple[str, str]]:
+        """Curated (code, label) windows for the heat-map selector, in HEATMAP_WINDOWS order."""
+        rows = self._conn.execute(
+            "SELECT code, label FROM return_window WHERE code = ANY(%s)", (HEATMAP_WINDOWS,)
+        ).fetchall()
+        by_code = {code: label for code, label in rows}
+        return [(c, by_code[c]) for c in HEATMAP_WINDOWS if c in by_code]
+
+    def heatmap(self, universe_id: str, window_code: str) -> dict:
+        """Universe constituents sized by market cap (USD), colored by return over a window,
+        grouped by GICS sector. Constituents missing market cap are excluded but counted;
+        missing return -> null (neutral); missing sector -> 'Unclassified'. All live reads."""
+        c = self._conn
+        uname = _scalar(
+            c, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,)
+        )
+        wrow = c.execute(
+            "SELECT window_id, code FROM return_window WHERE code = %s", (window_code,)
+        ).fetchone()
+        if not wrow:
+            wrow = c.execute(
+                "SELECT window_id, code FROM return_window WHERE code = %s",
+                (DEFAULT_HEATMAP_WINDOW,),
+            ).fetchone()
+        window_id, window = wrow
+
+        rows = c.execute(
+            """
+            SELECT r.composite_figi AS figi,
+                   coalesce(tk.symbol_value, s.composite_figi) AS ticker,
+                   coalesce(sn.name, s.composite_figi) AS name,
+                   coalesce(g.sector_name, 'Unclassified') AS sector,
+                   g.industry_name AS industry,
+                   f.market_cap_usd,
+                   f.market_cap_lcy,
+                   f.currency_code,
+                   px.close AS price,
+                   fr.pr AS ret,
+                   isin.symbol_value AS isin
+              FROM universe_member_resolution r
+              JOIN securities s ON s.composite_figi = r.composite_figi
+              LEFT JOIN LATERAL (
+                  SELECT market_cap_usd, market_cap_lcy, currency_code FROM fundamentals f2
+                   WHERE f2.composite_figi = r.composite_figi AND f2.market_cap_usd IS NOT NULL
+                   ORDER BY as_of_date DESC LIMIT 1
+              ) f ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT close FROM prices_raw p2
+                   WHERE p2.composite_figi = r.composite_figi
+                   ORDER BY session_date DESC LIMIT 1
+              ) px ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT pr FROM fact_returns x
+                   WHERE x.composite_figi = r.composite_figi AND x.window_id = %s
+                   ORDER BY as_of_date DESC LIMIT 1
+              ) fr ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT sector_name, industry_name FROM gics_scd g2
+                   WHERE g2.composite_figi = r.composite_figi
+                   ORDER BY (g2.valid_to IS NULL) DESC, g2.valid_from DESC LIMIT 1
+              ) g ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT name FROM security_names z
+                   WHERE z.composite_figi = r.composite_figi
+                   ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
+              ) sn ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT symbol_value FROM security_symbology y
+                   WHERE y.composite_figi = r.composite_figi AND y.symbol_type = 'ticker'
+                   ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+              ) tk ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT symbol_value FROM security_symbology yi
+                   WHERE yi.composite_figi = r.composite_figi AND yi.symbol_type = 'isin'
+                   ORDER BY (yi.valid_to IS NULL) DESC, yi.valid_from DESC LIMIT 1
+              ) isin ON TRUE
+             WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
+            """,
+            (window_id, universe_id),
+        ).fetchall()
+
+        # Collapse share classes to one tile per issuer (ISIN CUSIP-issuer prefix, chars 3-8;
+        # fallback to the security's own FIGI). sym stores TOTAL shares on each class row, so
+        # each class ~ the whole-company cap -> take the largest-cap class as the representative
+        # (summing would double-count given that data). See the per-class-shares caveat.
+        groups: dict[str, dict] = {}
+        missing_mcap = 0
+        with_mcap = 0
+        for figi, ticker, name, sector, industry, mcap, mcap_lcy, currency, price, ret, isin in rows:
+            if mcap is None:
+                missing_mcap += 1
+                continue
+            with_mcap += 1
+            issuer = isin[2:8] if isin and len(isin) >= 8 else f"figi:{figi}"
+            cell = {
+                "ticker": ticker,
+                "name": name,
+                "sector": sector,
+                "industry": industry,
+                "market_cap_usd": float(mcap),
+                "market_cap_lcy": float(mcap_lcy) if mcap_lcy is not None else None,
+                "currency": currency,
+                "price": float(price) if price is not None else None,
+                "ret": float(ret) if ret is not None else None,
+            }
+            cur = groups.get(issuer)
+            if cur is None or cell["market_cap_usd"] > cur["market_cap_usd"]:
+                groups[issuer] = cell
+        cells = sorted(groups.values(), key=lambda x: x["market_cap_usd"], reverse=True)
+
+        return {
+            "universe_id": universe_id,
+            "universe_name": uname,
+            "window": window,
+            "members_resolved": len(rows),
+            "shown": len(cells),
+            "missing_mcap": missing_mcap,
+            "merged_share_classes": with_mcap - len(cells),
+            "cells": cells,
+        }
+
+    _SEC_FROM = """
+          FROM securities s
+          LEFT JOIN LATERAL (
+              SELECT symbol_value FROM security_symbology y
+               WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
+               ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+          ) tk ON TRUE
+          LEFT JOIN LATERAL (
+              SELECT name FROM security_names z
+               WHERE z.composite_figi = s.composite_figi
+               ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
+          ) sn ON TRUE
+    """
+
+    def securities(self, q: str | None, limit: int, offset: int) -> dict:
+        """Paged, optionally-searched list of securities (by ticker / name / FIGI)."""
+        c = self._conn
+        where = ""
+        params: list = []
+        if q:
+            where = (
+                " WHERE (upper(coalesce(tk.symbol_value, '')) LIKE %s"
+                " OR upper(coalesce(sn.name, '')) LIKE %s"
+                " OR s.composite_figi LIKE %s)"
+            )
+            like = f"%{q.upper()}%"
+            params = [like, like, like]
+        total = c.execute(
+            f"SELECT count(*) {self._SEC_FROM} {where}", params
+        ).fetchone()[0]
+        rows = c.execute(
+            f"""
+            SELECT s.composite_figi,
+                   coalesce(tk.symbol_value, s.composite_figi) AS ticker,
+                   sn.name, s.mic, s.currency_code, s.status
+            {self._SEC_FROM} {where}
+            ORDER BY tk.symbol_value NULLS LAST, s.composite_figi
+            LIMIT %s OFFSET %s
+            """,
+            [*params, limit, offset],
+        ).fetchall()
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "rows": [
+                {
+                    "figi": figi,
+                    "ticker": ticker,
+                    "name": name,
+                    "mic": mic,
+                    "currency": currency,
+                    "status": status,
+                }
+                for figi, ticker, name, mic, currency, status in rows
+            ],
+        }
+
+    def security_detail(self, figi: str) -> dict | None:
+        """One security: master + latest price + fundamentals + returns across windows."""
+        c = self._conn
+        master = c.execute(
+            "SELECT composite_figi, mic, currency_code, status, delist_date "
+            "FROM securities WHERE composite_figi = %s",
+            (figi,),
+        ).fetchone()
+        if not master:
+            return None
+        ticker = _scalar(
+            c,
+            "SELECT symbol_value FROM security_symbology WHERE composite_figi = %s "
+            "AND symbol_type = 'ticker' ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
+            (figi,),
+        )
+        name = _scalar(
+            c,
+            "SELECT name FROM security_names WHERE composite_figi = %s "
+            "ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
+            (figi,),
+        )
+        gics = c.execute(
+            "SELECT sector_name, industry_name, sub_industry_name FROM gics_scd "
+            "WHERE composite_figi = %s ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
+            (figi,),
+        ).fetchone()
+        px = c.execute(
+            "SELECT close, session_date FROM prices_raw WHERE composite_figi = %s "
+            "ORDER BY session_date DESC LIMIT 1",
+            (figi,),
+        ).fetchone()
+        fund = c.execute(
+            "SELECT market_cap_lcy, market_cap_usd, shares_outstanding, currency_code, as_of_date "
+            "FROM fundamentals WHERE composite_figi = %s ORDER BY as_of_date DESC LIMIT 1",
+            (figi,),
+        ).fetchone()
+        rets = c.execute(
+            """
+            SELECT DISTINCT ON (fr.window_id) fr.window_id, w.code, w.label, fr.pr, fr.tr, fr.as_of_date
+              FROM fact_returns fr JOIN return_window w USING (window_id)
+             WHERE fr.composite_figi = %s
+             ORDER BY fr.window_id, fr.as_of_date DESC
+            """,
+            (figi,),
+        ).fetchall()
+        return {
+            "figi": master[0],
+            "ticker": ticker or master[0],
+            "name": name,
+            "mic": master[1],
+            "currency": master[2],
+            "status": master[3],
+            "delist_date": master[4].isoformat() if master[4] else None,
+            "sector": gics[0] if gics else None,
+            "industry": gics[1] if gics else None,
+            "sub_industry": gics[2] if gics else None,
+            "price": {
+                "close": float(px[0]) if px and px[0] is not None else None,
+                "session_date": px[1].isoformat() if px and px[1] else None,
+            },
+            "fundamentals": {
+                "market_cap_lcy": float(fund[0]) if fund and fund[0] is not None else None,
+                "market_cap_usd": float(fund[1]) if fund and fund[1] is not None else None,
+                "shares_outstanding": float(fund[2]) if fund and fund[2] is not None else None,
+                "currency": fund[3] if fund else None,
+                "as_of": fund[4].isoformat() if fund and fund[4] else None,
+            }
+            if fund
+            else None,
+            "returns": [
+                {
+                    "code": code,
+                    "label": label,
+                    "pr": float(pr) if pr is not None else None,
+                    "tr": float(tr) if tr is not None else None,
+                    "as_of": asof.isoformat() if asof else None,
+                }
+                for _wid, code, label, pr, tr, asof in sorted(rets, key=lambda r: r[0])
+            ],
+        }
+
+    def attention(self) -> dict:
+        """Open attention items sym flagged: review queue, price gaps, membership proposals.
+        Read-only (acting on items is deferred — FR-11). Each surfaces sym's evidence."""
+        c = self._conn
+        review = c.execute(
+            "SELECT review_id, source_key, source_input, status, created_at "
+            "FROM securities_review_queue ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+        gaps_total = c.execute("SELECT count(*) FROM price_gaps").fetchone()[0]
+        gaps_recent = c.execute(
+            """
+            SELECT pg.composite_figi, tk.symbol_value, pg.session_date, pg.source, pg.detected_at
+              FROM price_gaps pg
+              LEFT JOIN LATERAL (
+                  SELECT symbol_value FROM security_symbology y
+                   WHERE y.composite_figi = pg.composite_figi AND y.symbol_type = 'ticker'
+                   ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+              ) tk ON TRUE
+             ORDER BY pg.detected_at DESC LIMIT 30
+            """
+        ).fetchall()
+        props = c.execute(
+            "SELECT proposal_id, universe_id, raw_identifier, change, status, created_at "
+            "FROM membership_proposal ORDER BY created_at DESC LIMIT 200"
+        ).fetchall()
+        return {
+            "review_queue": [
+                {
+                    "review_id": str(rid),
+                    "source_key": _as_text(sk),
+                    "source_input": _as_text(si),
+                    "status": st,
+                    "created_at": ca.isoformat() if ca else None,
+                }
+                for rid, sk, si, st, ca in review
+            ],
+            "price_gaps": {
+                "total": gaps_total,
+                "recent": [
+                    {
+                        "figi": figi,
+                        "ticker": tk,
+                        "session_date": sd.isoformat() if sd else None,
+                        "source": src,
+                        "detected_at": da.isoformat() if da else None,
+                    }
+                    for figi, tk, sd, src, da in gaps_recent
+                ],
+            },
+            "membership_proposals": [
+                {
+                    "proposal_id": str(pid),
+                    "universe_id": uid,
+                    "raw_identifier": ri,
+                    "change": ch,
+                    "status": st,
+                    "created_at": ca.isoformat() if ca else None,
+                }
+                for pid, uid, ri, ch, st, ca in props
+            ],
+        }
+
+    def validation(self) -> list[dict]:
+        """Recent validation runs (validation_run_log), newest first."""
+        rows = self._conn.execute(
+            "SELECT run_id, run_at, universe_id, checks, passed, warned, failed, status "
+            "FROM validation_run_log ORDER BY run_at DESC LIMIT 50"
+        ).fetchall()
+        return [
+            {
+                "run_id": str(rid),
+                "run_at": ra.isoformat() if ra else None,
+                "universe_id": uid,
+                "checks": checks,
+                "passed": passed,
+                "warned": warned,
+                "failed": failed,
+                "status": status,
+            }
+            for rid, ra, uid, checks, passed, warned, failed, status in rows
+        ]

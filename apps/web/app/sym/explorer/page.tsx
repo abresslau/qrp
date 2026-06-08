@@ -1,0 +1,125 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+
+type Row = {
+  figi: string;
+  ticker: string;
+  name: string | null;
+  mic: string | null;
+  currency: string | null;
+  status: string | null;
+};
+type Resp = { total: number; limit: number; offset: number; rows: Row[] };
+
+const LIMIT = 50;
+
+export default function ExplorerPage() {
+  const [q, setQ] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [data, setData] = useState<Resp | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    const t = setTimeout(
+      () => {
+        const url = `/api/sym/securities?limit=${LIMIT}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+        fetch(url, { cache: "no-store" })
+          .then((r) => r.json())
+          .then((d: Resp) => {
+            if (alive) {
+              setData(d);
+              setLoading(false);
+            }
+          })
+          .catch(() => alive && setLoading(false));
+      },
+      q ? 250 : 0,
+    );
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [q, offset]);
+
+  const total = data?.total ?? 0;
+  const from = total === 0 ? 0 : offset + 1;
+  const to = Math.min(offset + LIMIT, total);
+
+  return (
+    <div>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold tracking-tight text-fg">Securities</h1>
+        <input
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOffset(0);
+          }}
+          placeholder="Search ticker, name, or FIGI…"
+          className="w-72 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg outline-none focus:border-fg/40"
+        />
+      </div>
+
+      <div className="mb-2 text-xs text-muted">
+        {loading ? "Loading…" : `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`}
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-border">
+        <table className="w-full text-sm">
+          <thead className="bg-surface text-left text-muted">
+            <tr>
+              <th className="px-4 py-2 font-medium">Ticker</th>
+              <th className="px-4 py-2 font-medium">Name</th>
+              <th className="px-4 py-2 font-medium">Exchange</th>
+              <th className="px-4 py-2 font-medium">Ccy</th>
+              <th className="px-4 py-2 font-medium">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {(data?.rows ?? []).map((r) => (
+              <tr key={r.figi} className="hover:bg-fg/5">
+                <td className="px-4 py-2 font-medium">
+                  <Link href={`/sym/securities/${r.figi}`} className="hover:underline">
+                    {r.ticker}
+                  </Link>
+                </td>
+                <td className="px-4 py-2 text-muted">{r.name ?? "—"}</td>
+                <td className="px-4 py-2 tabular-nums text-muted">{r.mic ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{r.currency ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{r.status ?? "—"}</td>
+              </tr>
+            ))}
+            {!loading && data?.rows.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-6 text-center text-muted">
+                  No matches.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 flex items-center justify-end gap-2 text-sm">
+        <button
+          onClick={() => setOffset(Math.max(0, offset - LIMIT))}
+          disabled={offset === 0}
+          className="rounded-md border border-border px-3 py-1 text-fg disabled:opacity-40"
+        >
+          ← Prev
+        </button>
+        <button
+          onClick={() => setOffset(offset + LIMIT)}
+          disabled={to >= total}
+          className="rounded-md border border-border px-3 py-1 text-fg disabled:opacity-40"
+        >
+          Next →
+        </button>
+      </div>
+    </div>
+  );
+}

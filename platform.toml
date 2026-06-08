@@ -1,0 +1,57 @@
+# QRP (Quant Research Platform) — single source of truth for branding + enabled modules.
+# Provisional name; change it here and the API title + console shell follow.
+
+[platform]
+name = "QRP"
+tagline = "Quant Research Platform"
+theme = "dark"
+
+# Module registry. `enabled` is a feature toggle (engineering, not licensing).
+# The API mounts a module's routes, and the console shows its nav, only when enabled.
+[[modules]]
+key = "sym"
+name = "sym"
+description = "Security master · prices · returns · FX · fundamentals"
+enabled = true
+
+[[modules]]
+key = "macro"
+name = "macro"
+description = "Macroeconomic / central-bank data"
+enabled = true
+
+[[modules]]
+key = "altdata"
+name = "alt data"
+description = "Alternative data"
+enabled = true
+
+[[modules]]
+key = "signal"
+name = "signal"
+description = "Derived signals & factors"
+enabled = true
+
+[[modules]]
+key = "backtest"
+name = "backtest"
+description = "Backtesting"
+enabled = true
+
+[[modules]]
+key = "optimiser"
+name = "optimiser"
+description = "Optimisation"
+enabled = true
+
+[[modules]]
+key = "portfolios"
+name = "portfolios"
+description = "Clients & portfolios"
+enabled = true
+
+[[modules]]
+key = "analytics"
+name = "analytics"
+description = "Portfolio analytics"
+enabled = true

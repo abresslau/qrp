@@ -1,0 +1,41 @@
+@import "tailwindcss";
+
+/* Manual dark mode via a `.dark` class on <html> (toggle persists in localStorage;
+   default comes from platform.toml). Semantic tokens switch with the class. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --fg: #0a0a0a;
+  --surface: #f6f7f9;
+  --border: #e5e7eb;
+  --muted: #6b7280;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --fg: #ededed;
+  --surface: #171717;
+  --border: #262626;
+  --muted: #8a8a8a;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-fg: var(--fg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

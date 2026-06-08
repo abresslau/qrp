@@ -1,0 +1,16 @@
+# QRP monorepo — uv workspace root (virtual; not an installable package).
+[project]
+name = "qrp"
+version = "0.0.0"
+description = "QRP (Quant Research Platform) monorepo — console + API over the sym warehouse"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["services/api"]
+
+[tool.ruff]
+line-length = 100
