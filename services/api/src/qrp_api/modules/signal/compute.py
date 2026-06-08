@@ -144,29 +144,40 @@ def _store(conn, universe_id, as_of, factor_key, direction, raw: dict[str, float
     return n
 
 
-def compute_universe(conn: psycopg.Connection, universe_id: str, as_of: date | None = None) -> dict:
-    conn.autocommit = True
-    _ensure_catalog(conn)
+def compute_universe(
+    sym_conn: psycopg.Connection,
+    sig_conn: psycopg.Connection,
+    universe_id: str,
+    as_of: date | None = None,
+) -> dict:
+    """Read sym (``sym_conn``, read-only) to compute factors; write scores to the signal
+    database (``sig_conn``). The two connections are separate databases under the
+    DB-per-package topology — sym is the hub, signal owns its derived store."""
+    sig_conn.autocommit = True
+    _ensure_catalog(sig_conn)
     if as_of is None:
-        as_of = conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
-    members = _members(conn, universe_id, as_of)
+        as_of = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
+    members = _members(sym_conn, universe_id, as_of)
     counts = {
-        "mom_12_1": _store(conn, universe_id, as_of, "mom_12_1", "high",
-                           _raw_momentum(conn, members, as_of)),
-        "vol_1y": _store(conn, universe_id, as_of, "vol_1y", "low",
-                         _raw_vol(conn, members, as_of)),
-        "size": _store(conn, universe_id, as_of, "size", "low", _raw_size(conn, members)),
+        "mom_12_1": _store(sig_conn, universe_id, as_of, "mom_12_1", "high",
+                           _raw_momentum(sym_conn, members, as_of)),
+        "vol_1y": _store(sig_conn, universe_id, as_of, "vol_1y", "low",
+                         _raw_vol(sym_conn, members, as_of)),
+        "size": _store(sig_conn, universe_id, as_of, "size", "low", _raw_size(sym_conn, members)),
     }
     return {"universe_id": universe_id, "as_of": as_of.isoformat(), "members": len(members),
             "scored": counts}
 
 
 if __name__ == "__main__":
+    from qrp_api.config import signal_dsn
     from qrp_api.db import connect
 
-    conn = connect()
+    sym_conn = connect()              # sym DB — read-only by convention (the hub)
+    sig_conn = connect(signal_dsn())  # signal DB — the derived store this package owns
     try:
         for uid in ("sp500", "ibov", "ibx"):
-            print(compute_universe(conn, uid))
+            print(compute_universe(sym_conn, sig_conn, uid))
     finally:
-        conn.close()
+        sym_conn.close()
+        sig_conn.close()

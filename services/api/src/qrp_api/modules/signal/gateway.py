@@ -6,8 +6,39 @@ import psycopg
 
 
 class DbSignalGateway:
-    def __init__(self, conn: psycopg.Connection) -> None:
-        self._conn = conn
+    def __init__(
+        self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None
+    ) -> None:
+        self._conn = conn      # signal DB — this package's own factors + scores
+        self._sym = sym_conn   # sym DB (the hub) — security labels, enriched in-app
+
+    def _labels(self, figis: list[str]) -> tuple[dict, dict]:
+        """Ticker + name for ``figis`` read from the sym hub and merged in Python.
+
+        Cross-package read pattern under DB-per-package: signal owns scores in its own
+        database, sym owns the labels in another — so we read each and assemble in the service
+        layer rather than via a cross-database SQL join (live DuckDB federation would be the
+        alternative; either way the join leaves the database).
+        """
+        if not self._sym or not figis:
+            return {}, {}
+        tickers = dict(
+            self._sym.execute(
+                "SELECT DISTINCT ON (composite_figi) composite_figi, symbol_value "
+                "FROM security_symbology WHERE composite_figi = ANY(%s) AND symbol_type = 'ticker' "
+                "ORDER BY composite_figi, (valid_to IS NULL) DESC, valid_from DESC",
+                (figis,),
+            ).fetchall()
+        )
+        names = dict(
+            self._sym.execute(
+                "SELECT DISTINCT ON (composite_figi) composite_figi, name "
+                "FROM security_names WHERE composite_figi = ANY(%s) "
+                "ORDER BY composite_figi, (valid_to IS NULL) DESC, valid_from DESC",
+                (figis,),
+            ).fetchall()
+        )
+        return tickers, names
 
     def factors(self) -> list[dict]:
         rows = self._conn.execute(
@@ -55,26 +86,15 @@ class DbSignalGateway:
         order = "DESC" if bottom else "ASC"  # rank 1 = most favourable; bottom = least favourable
         rows = self._conn.execute(
             f"""
-            SELECT s.composite_figi,
-                   coalesce(tk.symbol_value, s.composite_figi) AS ticker,
-                   sn.name, s.raw, s.zscore, s.rank, s.pctile
-              FROM signal.score s
-              LEFT JOIN LATERAL (
-                  SELECT symbol_value FROM security_symbology y
-                   WHERE y.composite_figi = s.composite_figi AND y.symbol_type='ticker'
-                   ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
-              ) tk ON TRUE
-              LEFT JOIN LATERAL (
-                  SELECT name FROM security_names z
-                   WHERE z.composite_figi = s.composite_figi
-                   ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
-              ) sn ON TRUE
-             WHERE s.factor_key=%s AND s.universe_id=%s AND s.as_of_date=%s
-             ORDER BY s.rank {order}
+            SELECT composite_figi, raw, zscore, rank, pctile
+              FROM signal.score
+             WHERE factor_key=%s AND universe_id=%s AND as_of_date=%s
+             ORDER BY rank {order}
              LIMIT %s
             """,
             (factor_key, universe_id, as_of, limit),
         ).fetchall()
+        tickers, names = self._labels([r[0] for r in rows])  # enrich from the sym hub, in-app
         return {
             "factor_key": meta[0],
             "name": meta[1],
@@ -85,13 +105,13 @@ class DbSignalGateway:
             "bottom": bottom,
             "constituents": [
                 {
-                    "ticker": tk,
-                    "name": nm,
+                    "ticker": tickers.get(figi, figi),
+                    "name": names.get(figi),
                     "raw": float(raw),
                     "zscore": float(z) if z is not None else None,
                     "rank": rk,
                     "pctile": float(p) if p is not None else None,
                 }
-                for _figi, tk, nm, raw, z, rk, p in rows
+                for figi, raw, z, rk, p in rows
             ],
         }

@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from qrp_api.config import signal_dsn
 from qrp_api.db import connect
 from qrp_api.modules.signal.gateway import DbSignalGateway
 
@@ -14,11 +15,13 @@ router = APIRouter(prefix="/api/signal", tags=["signal"])
 
 
 def _gateway() -> Iterator[DbSignalGateway]:
-    conn = connect()
+    conn = connect(signal_dsn())  # signal owns its own database (DB-per-package topology)
+    sym = connect()               # sym hub — security labels, enriched in-app by the gateway
     try:
-        yield DbSignalGateway(conn)
+        yield DbSignalGateway(conn, sym)
     finally:
         conn.close()
+        sym.close()
 
 
 class FactorSummary(BaseModel):

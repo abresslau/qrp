@@ -87,22 +87,34 @@ def db_dsn() -> str:
     return " ".join(parts)
 
 
-def macro_dsn() -> str:
-    """DSN for the `macro` package's own database (DB-per-package topology).
+def package_dsn(package: str) -> str:
+    """DSN for a package that owns its own database (DB-per-package topology).
 
-    Lives on the same Postgres instance as sym by default (reuses SYM_DB_* host/creds), in a
-    separate database `macro`. Override via MACRO_DATABASE_URL or discrete MACRO_DB_*.
+    On the same Postgres instance as sym by default (reuses SYM_DB_* host/creds), in a
+    database named after the package. Override per package via ``<PKG>_DATABASE_URL`` or the
+    discrete ``<PKG>_DB_*`` (e.g. SIGNAL_DB_HOST) — so a package can later move to its own host.
     """
     _load_dotenv()
-    url = os.environ.get("MACRO_DATABASE_URL")
+    p = package.upper()
+    url = os.environ.get(f"{p}_DATABASE_URL")
     if url:
         return url
-    host = os.environ.get("MACRO_DB_HOST", os.environ.get("SYM_DB_HOST", _DB_DEFAULTS["host"]))
-    port = os.environ.get("MACRO_DB_PORT", os.environ.get("SYM_DB_PORT", _DB_DEFAULTS["port"]))
-    dbname = os.environ.get("MACRO_DB_NAME", "macro")
-    user = os.environ.get("MACRO_DB_USER", os.environ.get("SYM_DB_USER", _DB_DEFAULTS["user"]))
+    host = os.environ.get(f"{p}_DB_HOST", os.environ.get("SYM_DB_HOST", _DB_DEFAULTS["host"]))
+    port = os.environ.get(f"{p}_DB_PORT", os.environ.get("SYM_DB_PORT", _DB_DEFAULTS["port"]))
+    dbname = os.environ.get(f"{p}_DB_NAME", package)
+    user = os.environ.get(f"{p}_DB_USER", os.environ.get("SYM_DB_USER", _DB_DEFAULTS["user"]))
     parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={user}"]
-    password = os.environ.get("MACRO_DB_PASSWORD", os.environ.get("SYM_DB_PASSWORD"))
+    password = os.environ.get(f"{p}_DB_PASSWORD", os.environ.get("SYM_DB_PASSWORD"))
     if password:
         parts.append(f"password={password}")
     return " ".join(parts)
+
+
+def macro_dsn() -> str:
+    """DSN for the `macro` package's own database (see ``package_dsn``)."""
+    return package_dsn("macro")
+
+
+def signal_dsn() -> str:
+    """DSN for the `signal` package's own database (see ``package_dsn``)."""
+    return package_dsn("signal")
