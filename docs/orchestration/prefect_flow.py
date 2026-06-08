@@ -1,0 +1,25 @@
+"""Example Prefect flow for the sym EOD pipeline (copy into your Prefect project).
+
+Each task shells out to `sym eod --steps <step>`. sym has no Prefect dependency.
+"""
+from __future__ import annotations
+
+# import subprocess
+# from prefect import flow, task
+#
+# SYM = ["uv", "run", "--project", "/opt/sym", "sym"]
+#
+# @task(retries=2)
+# def step(name: str) -> None:
+#     subprocess.run([*SYM, "eod", "--steps", name], check=True)
+#
+# @flow(name="sym-eod")
+# def sym_eod() -> None:
+#     m = step.submit("monitor")
+#     d = step.submit("delta", wait_for=[m])
+#     b = step.submit("benchmarks", wait_for=[d])
+#     r = step.submit("recompute", wait_for=[b])
+#     step.submit("validate", wait_for=[r])
+#
+# if __name__ == "__main__":
+#     sym_eod()
