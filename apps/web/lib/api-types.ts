@@ -802,6 +802,12 @@ export interface components {
             tracking_error: number | null;
             /** Information Ratio */
             information_ratio: number | null;
+            /** Hit Ratio */
+            hit_ratio: number | null;
+            /** Batting Average */
+            batting_average: number | null;
+            /** Slugging Ratio */
+            slugging_ratio: number | null;
         };
         /** Observation */
         Observation: {

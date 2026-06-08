@@ -107,6 +107,9 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
               value={num(m.information_ratio)}
               cls={tone(m.information_ratio)}
             />
+            <Metric label="Hit ratio" value={pct(m.hit_ratio)} />
+            <Metric label="Batting avg" value={pct(m.batting_average)} />
+            <Metric label="Slugging ratio" value={num(m.slugging_ratio)} />
             <Metric label="Bench ann. return" value={pct(m.bench_ann_return)} />
             <Metric label="Bench volatility" value={pct(m.bench_ann_vol)} />
             <Metric label="Bench Sharpe" value={num(m.bench_sharpe)} />

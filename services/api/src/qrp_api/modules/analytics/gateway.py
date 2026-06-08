@@ -209,6 +209,16 @@ class DbAnalyticsGateway:
         active_ann = (ann_p - ann_b) if (ann_p is not None and ann_b is not None) else None
         alpha_ann = (mp - beta * mb) * ANN if beta is not None else None
 
+        # Skill metrics (FR-16), from the daily portfolio series p and active series (p - bench):
+        #   hit ratio       = share of periods the portfolio is positive
+        #   batting average = share of periods the portfolio beats the benchmark (active > 0)
+        #   slugging ratio  = average winning active return / average losing active magnitude
+        hit_ratio = sum(1 for x in p if x > 0) / n
+        batting_average = sum(1 for x in active if x > 0) / n
+        wins = [x for x in active if x > 0]
+        losses = [-x for x in active if x < 0]
+        slugging_ratio = (_mean(wins) / _mean(losses)) if wins and losses else None
+
         result["n_days"] = n
         result["start"], result["end"] = common[0].isoformat(), common[-1].isoformat()
         result["metrics"] = {
@@ -224,6 +234,9 @@ class DbAnalyticsGateway:
             "active_return": active_ann,
             "tracking_error": te,
             "information_ratio": (active_ann / te) if (active_ann is not None and te > 0) else None,
+            "hit_ratio": hit_ratio,
+            "batting_average": batting_average,
+            "slugging_ratio": slugging_ratio,
         }
         # Honest FX caveat: constituent returns are local-currency price returns.
         if bench_meta["currency"] and any(c != bench_meta["currency"] for c in currencies):

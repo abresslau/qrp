@@ -43,6 +43,9 @@ class Metrics(BaseModel):
     active_return: float | None
     tracking_error: float | None
     information_ratio: float | None
+    hit_ratio: float | None
+    batting_average: float | None
+    slugging_ratio: float | None
 
 
 class Analytics(BaseModel):
