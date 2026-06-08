@@ -16,8 +16,8 @@ router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 
 def _gateway() -> Iterator[DbPortfolioGateway]:
-    conn = connect(package_dsn("qrp"))  # qrp package owns its own database
-    sym = connect()                     # sym hub — labels + fact_returns (PnL), in-app
+    conn = connect(package_dsn("portfolios"))  # portfolios owns its own database
+    sym = connect()                            # sym hub — labels + fact_returns (PnL), in-app
     try:
         yield DbPortfolioGateway(conn, sym)
     finally:

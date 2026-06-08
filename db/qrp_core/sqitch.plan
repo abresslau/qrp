@@ -3,3 +3,4 @@
 %uri=https://github.com/abresslau/qrp-core
 
 qrp_core 2026-06-08T18:00:00Z Andre <ab@gladstone-management.com> # qrp schema: portfolios (weights-first) + Operate job ledger, own database
+split_portfolios [qrp_core] 2026-06-08T19:30:00Z Andre <ab@gladstone-management.com> # portfolio data moved to its own `portfolios` database; qrp DB keeps only the job ledger

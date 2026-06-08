@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=portfolios
+%uri=https://github.com/abresslau/qrp-portfolios
+
+portfolios 2026-06-08T19:00:00Z Andre <ab@gladstone-management.com> # portfolios schema: portfolio + effective-dated weights (own database, split from qrp)

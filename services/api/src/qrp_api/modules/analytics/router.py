@@ -15,8 +15,8 @@ router = APIRouter(tags=["analytics"])
 
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
-    conn = connect(package_dsn("qrp"))  # qrp DB — portfolio weights
-    sym = connect()                     # sym hub — fact_returns / index returns / instrument
+    conn = connect(package_dsn("portfolios"))  # portfolios DB — portfolio weights
+    sym = connect()                            # sym hub — fact_returns / index returns / instrument
     try:
         yield DbAnalyticsGateway(conn, sym)
     finally:

@@ -46,7 +46,7 @@ class DbPortfolioGateway:
     # ---- portfolios ----
     def create(self, name: str, client: str = "", base_currency: str = "USD") -> int:
         row = self._conn.execute(
-            "INSERT INTO qrp.portfolio (name, client, base_currency) VALUES (%s, %s, %s) "
+            "INSERT INTO portfolios.portfolio (name, client, base_currency) VALUES (%s, %s, %s) "
             "RETURNING portfolio_id",
             (name, client, base_currency),
         ).fetchone()
@@ -58,8 +58,8 @@ class DbPortfolioGateway:
             SELECT p.portfolio_id, p.name, p.client, p.base_currency, p.created_at,
                    count(w.composite_figi) AS n_weights,
                    max(w.as_of_date) AS latest_as_of
-              FROM qrp.portfolio p
-              LEFT JOIN qrp.portfolio_weight w USING (portfolio_id)
+              FROM portfolios.portfolio p
+              LEFT JOIN portfolios.portfolio_weight w USING (portfolio_id)
              GROUP BY p.portfolio_id, p.name, p.client, p.base_currency, p.created_at
              ORDER BY p.created_at DESC
             """
@@ -80,7 +80,7 @@ class DbPortfolioGateway:
     def get(self, pid: int) -> dict | None:
         meta = self._conn.execute(
             "SELECT portfolio_id, name, client, base_currency, created_at "
-            "FROM qrp.portfolio WHERE portfolio_id = %s",
+            "FROM portfolios.portfolio WHERE portfolio_id = %s",
             (pid,),
         ).fetchone()
         if not meta:
@@ -88,7 +88,7 @@ class DbPortfolioGateway:
         dates = [
             d.isoformat()
             for (d,) in self._conn.execute(
-                "SELECT DISTINCT as_of_date FROM qrp.portfolio_weight "
+                "SELECT DISTINCT as_of_date FROM portfolios.portfolio_weight "
                 "WHERE portfolio_id = %s ORDER BY as_of_date DESC",
                 (pid,),
             ).fetchall()
@@ -97,7 +97,7 @@ class DbPortfolioGateway:
         weights: list[dict] = []
         if latest:
             wrows = self._conn.execute(
-                "SELECT composite_figi, weight FROM qrp.portfolio_weight "
+                "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s ORDER BY weight DESC",
                 (pid, latest),
             ).fetchall()
@@ -145,7 +145,7 @@ class DbPortfolioGateway:
                 unresolved.append(ident)
                 continue
             self._conn.execute(
-                "INSERT INTO qrp.portfolio_weight (portfolio_id, as_of_date, composite_figi, weight) "
+                "INSERT INTO portfolios.portfolio_weight (portfolio_id, as_of_date, composite_figi, weight) "
                 "VALUES (%s, %s, %s, %s) "
                 "ON CONFLICT (portfolio_id, as_of_date, composite_figi) DO UPDATE SET weight = EXCLUDED.weight",
                 (pid, as_of, figi, weight),
@@ -156,7 +156,7 @@ class DbPortfolioGateway:
     # ---- returns / PnL engine ----
     def returns(self, pid: int, window_code: str) -> dict:
         asof = self._conn.execute(
-            "SELECT max(as_of_date) FROM qrp.portfolio_weight WHERE portfolio_id = %s", (pid,)
+            "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
         # return_window is a sym reference table; resolve the window id from the hub.
         wrow = self._sym.execute(
@@ -174,7 +174,7 @@ class DbPortfolioGateway:
             return empty
 
         wrows = self._conn.execute(
-            "SELECT composite_figi, weight FROM qrp.portfolio_weight "
+            "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
             "WHERE portfolio_id = %s AND as_of_date = %s",
             (pid, asof),
         ).fetchall()

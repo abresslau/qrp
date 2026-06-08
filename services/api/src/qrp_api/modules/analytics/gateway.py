@@ -89,7 +89,7 @@ class DbAnalyticsGateway:
         A date is included only when >= COVERAGE_FLOOR of weight is priced that day.
         """
         asof = self._conn.execute(
-            "SELECT max(as_of_date) FROM qrp.portfolio_weight WHERE portfolio_id = %s", (pid,)
+            "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
         if asof is None:
             return None, {}, []
@@ -99,7 +99,7 @@ class DbAnalyticsGateway:
         weights = {
             f: float(w)
             for f, w in self._conn.execute(
-                "SELECT composite_figi, weight FROM qrp.portfolio_weight "
+                "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s",
                 (pid, asof),
             ).fetchall()
