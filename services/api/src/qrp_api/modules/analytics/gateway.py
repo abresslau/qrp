@@ -61,12 +61,13 @@ def _ann_return(daily: list[float]) -> float | None:
 
 
 class DbAnalyticsGateway:
-    def __init__(self, conn: psycopg.Connection) -> None:
-        self._conn = conn
+    def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
+        self._conn = conn      # qrp DB — portfolio weights
+        self._sym = sym_conn    # sym hub — fact_returns / fact_index_returns / instrument / securities
 
     def benchmarks(self) -> list[dict]:
         """Index instruments that have a daily (1D) return series, for the selector."""
-        rows = self._conn.execute(
+        rows = self._sym.execute(
             """
             SELECT i.sym_id, i.name, i.currency_code
               FROM instrument i
@@ -93,62 +94,58 @@ class DbAnalyticsGateway:
         if asof is None:
             return None, {}, []
 
-        total_w = float(
-            self._conn.execute(
-                "SELECT coalesce(sum(weight), 0) FROM qrp.portfolio_weight "
+        # Weights from the qrp DB; the weight×return series is assembled IN-APP (cross-database:
+        # weights here, fact_returns in the sym hub) rather than a cross-DB SQL join.
+        weights = {
+            f: float(w)
+            for f, w in self._conn.execute(
+                "SELECT composite_figi, weight FROM qrp.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s",
                 (pid, asof),
-            ).fetchone()[0]
-        )
+            ).fetchall()
+        }
+        figis = list(weights)
+        total_w = sum(weights.values())
+        if not figis or total_w <= 0:
+            return asof, {}, []
+
         currencies = [
             r[0]
-            for r in self._conn.execute(
-                """
-                SELECT DISTINCT s.currency_code
-                  FROM qrp.portfolio_weight pw
-                  JOIN securities s ON s.composite_figi = pw.composite_figi
-                 WHERE pw.portfolio_id = %s AND pw.as_of_date = %s
-                """,
-                (pid, asof),
+            for r in self._sym.execute(
+                "SELECT DISTINCT currency_code FROM securities WHERE composite_figi = ANY(%s)",
+                (figis,),
             ).fetchall()
         ]
 
-        rows = self._conn.execute(
-            """
-            WITH w AS (
-                SELECT composite_figi, weight
-                  FROM qrp.portfolio_weight
-                 WHERE portfolio_id = %s AND as_of_date = %s
-            )
-            SELECT fr.as_of_date,
-                   sum(w.weight * fr.pr)  AS port_ret,
-                   sum(w.weight)          AS covered_w
-              FROM w
-              JOIN fact_returns fr
-                ON fr.composite_figi = w.composite_figi
-               AND fr.window_id = %s
-               AND fr.pr IS NOT NULL
-             GROUP BY fr.as_of_date
-            """,
-            (pid, asof, _ONE_DAY_WINDOW),
+        rows = self._sym.execute(
+            "SELECT as_of_date, composite_figi, pr FROM fact_returns "
+            "WHERE composite_figi = ANY(%s) AND window_id = %s AND pr IS NOT NULL",
+            (figis, _ONE_DAY_WINDOW),
         ).fetchall()
+        # date -> [Σ weight·pr, Σ weight] over priced constituents
+        agg: dict[date, list[float]] = {}
+        for d, figi, pr in rows:
+            w = weights.get(figi)
+            if w is None:
+                continue
+            acc = agg.setdefault(d, [0.0, 0.0])
+            acc[0] += w * float(pr)
+            acc[1] += w
 
         series: dict[date, float] = {}
-        if total_w > 0:
-            for d, port_ret, covered_w in rows:
-                if float(covered_w) / total_w >= COVERAGE_FLOOR:
-                    # normalise by covered weight so the series is a pure return
-                    series[d] = float(port_ret) / float(covered_w)
+        for d, (port_ret, covered_w) in agg.items():
+            if covered_w / total_w >= COVERAGE_FLOOR:
+                series[d] = port_ret / covered_w  # normalise by covered weight
         return asof, series, sorted(c for c in currencies if c)
 
     def _benchmark_daily(self, benchmark_id: int) -> tuple[dict | None, dict[date, float]]:
-        meta = self._conn.execute(
+        meta = self._sym.execute(
             "SELECT sym_id, name, currency_code FROM instrument WHERE sym_id = %s AND kind = 'index'",
             (benchmark_id,),
         ).fetchone()
         if not meta:
             return None, {}
-        rows = self._conn.execute(
+        rows = self._sym.execute(
             "SELECT as_of_date, ret FROM fact_index_returns "
             "WHERE sym_id = %s AND window_id = %s AND ret IS NOT NULL",
             (benchmark_id, _ONE_DAY_WINDOW),

@@ -14,3 +14,4 @@ relocate_signal [signal] 2026-06-08T15:30:00Z Andre <ab@gladstone-management.com
 relocate_altdata [altdata] 2026-06-08T16:15:00Z Andre <ab@gladstone-management.com> # altdata relocated to its own database/project; drop the redundant schema from the sym DB
 relocate_backtest [backtest] 2026-06-08T16:45:00Z Andre <ab@gladstone-management.com> # backtest relocated to its own database/project; drop the redundant schema from the sym DB
 relocate_optimiser [optimiser] 2026-06-08T17:15:00Z Andre <ab@gladstone-management.com> # optimiser relocated to its own database/project; drop the redundant schema from the sym DB
+relocate_qrp [jobs] 2026-06-08T18:15:00Z Andre <ab@gladstone-management.com> # qrp schema (portfolios+jobs) relocated to its own database/project qrp_core; drop from sym DB

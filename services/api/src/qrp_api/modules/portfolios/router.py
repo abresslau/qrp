@@ -8,6 +8,7 @@ from datetime import date
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from qrp_api.config import package_dsn
 from qrp_api.db import connect
 from qrp_api.modules.portfolios.gateway import DbPortfolioGateway
 
@@ -15,11 +16,13 @@ router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 
 def _gateway() -> Iterator[DbPortfolioGateway]:
-    conn = connect()
+    conn = connect(package_dsn("qrp"))  # qrp package owns its own database
+    sym = connect()                     # sym hub — labels + fact_returns (PnL), in-app
     try:
-        yield DbPortfolioGateway(conn)
+        yield DbPortfolioGateway(conn, sym)
     finally:
         conn.close()
+        sym.close()
 
 
 # ---- request models ----

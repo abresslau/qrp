@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from qrp_api.config import package_dsn
 from qrp_api.db import connect
 from qrp_api.modules.operate.gateway import DbOperateGateway
 
@@ -14,7 +15,7 @@ router = APIRouter(prefix="/api/operate", tags=["operate"])
 
 
 def _gateway() -> Iterator[DbOperateGateway]:
-    conn = connect()
+    conn = connect(package_dsn("qrp"))  # qrp.job ledger lives in the qrp database
     try:
         yield DbOperateGateway(conn)
     finally:

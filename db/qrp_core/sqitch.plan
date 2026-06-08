@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=qrp_core
+%uri=https://github.com/abresslau/qrp-core
+
+qrp_core 2026-06-08T18:00:00Z Andre <ab@gladstone-management.com> # qrp schema: portfolios (weights-first) + Operate job ledger, own database

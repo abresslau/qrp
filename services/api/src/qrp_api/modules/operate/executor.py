@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 import psycopg
 
-from qrp_api.config import db_dsn, sym_project_dir
+from qrp_api.config import package_dsn, sym_project_dir
 
 # Tail of combined stdout/stderr kept on the job row (chars).
 _OUTPUT_TAIL = 12000
@@ -69,7 +69,7 @@ def _now() -> datetime:
 
 def _run_job(job_id: int, op: Op, args: list[str]) -> None:
     """Worker body (daemon thread): hold an advisory lock, run the subprocess, record result."""
-    conn = psycopg.connect(db_dsn())
+    conn = psycopg.connect(package_dsn("qrp"))  # qrp.job ledger lives in the qrp database
     conn.autocommit = True
     key = _advisory_key(op.key, args)
     try:

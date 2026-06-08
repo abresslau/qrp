@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from qrp_api.config import package_dsn
 from qrp_api.db import connect
 from qrp_api.modules.analytics.gateway import DbAnalyticsGateway
 
@@ -14,11 +15,13 @@ router = APIRouter(tags=["analytics"])
 
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
-    conn = connect()
+    conn = connect(package_dsn("qrp"))  # qrp DB — portfolio weights
+    sym = connect()                     # sym hub — fact_returns / index returns / instrument
     try:
-        yield DbAnalyticsGateway(conn)
+        yield DbAnalyticsGateway(conn, sym)
     finally:
         conn.close()
+        sym.close()
 
 
 class Benchmark(BaseModel):
