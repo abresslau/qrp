@@ -24,11 +24,11 @@ from sym.universe.registry import CRITERIA, JOIN, POLL_BOUNDED, MembershipChange
 SOURCE = "criteria"
 
 
-def _top_n_market_cap(conn: psycopg.Connection, as_of: date, n: int) -> list[str]:
-    """The ``n`` largest securities by **point-in-time** market cap as of ``as_of``.
+def _top_n_market_cap(conn: psycopg.Connection, as_of_date: date, n: int) -> list[str]:
+    """The ``n`` largest securities by **point-in-time** market cap as of ``as_of_date``.
 
-    Market cap is recomputed for the date — the latest raw close on/before ``as_of``
-    times the latest shares-outstanding observation on/before ``as_of`` — so it is
+    Market cap is recomputed for the date — the latest raw close on/before ``as_of_date``
+    times the latest shares-outstanding observation on/before ``as_of_date`` — so it is
     never stale between sparse shares observations.
     """
     rows = conn.execute(
@@ -51,12 +51,12 @@ def _top_n_market_cap(conn: psycopg.Connection, as_of: date, n: int) -> list[str
          ORDER BY (s.shares_outstanding * p.close) DESC, s.composite_figi
          LIMIT %s
         """,
-        (as_of, as_of, n),
+        (as_of_date, as_of_date, n),
     ).fetchall()
     return [r[0] for r in rows]
 
 
-# Rule registry: name -> (conn, as_of, n) -> [composite_figi].
+# Rule registry: name -> (conn, as_of_date, n) -> [composite_figi].
 _RULES: dict[str, Callable[[psycopg.Connection, date, int], list[str]]] = {
     "top_n_market_cap": _top_n_market_cap,
 }

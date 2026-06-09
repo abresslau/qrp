@@ -21,9 +21,9 @@ class _Cur:
 class _Conn:
     """Dispatches the queries market_cap / convert issue."""
 
-    def __init__(self, *, local, close_raw, shares, shares_asof, fx=None):
+    def __init__(self, *, local, close_raw, shares, shares_as_of_date, fx=None):
         self.local, self.close_raw = local, close_raw
-        self.shares, self.shares_asof = shares, shares_asof
+        self.shares, self.shares_as_of_date = shares, shares_as_of_date
         self.fx = fx or {}  # {ccy: rate_per_usd} for convert's resolver
 
     def execute(self, sql, params=None):
@@ -32,7 +32,7 @@ class _Conn:
         if "FROM v_prices_adjusted" in sql:
             return _Cur((self.close_raw,) if self.close_raw is not None else None)
         if "FROM fundamentals" in sql:
-            return _Cur((self.shares, self.shares_asof) if self.shares is not None else None)
+            return _Cur((self.shares, self.shares_as_of_date) if self.shares is not None else None)
         if "SELECT as_of_date, rate FROM fx_rate" in sql:  # convert -> fx_rate resolver
             ccy = params[0]
             r = self.fx.get(ccy)
@@ -43,17 +43,17 @@ class _Conn:
 def test_lcy_market_cap_is_price_times_shares():
     # USD stock: 268.94 x 536,376,000 = 144,247,... ; ccy=None -> LCY (=USD here)
     conn = _Conn(local="USD", close_raw=Decimal("268.94"), shares=Decimal("536376000"),
-                 shares_asof=date(2026, 5, 1))
+                 shares_as_of_date=date(2026, 5, 1))
     mc = market_cap(conn, "BBG", D)
     assert mc.currency == "USD"
     assert mc.value == Decimal("268.94") * Decimal("536376000")
-    assert mc.shares_asof == date(2026, 5, 1)  # forward-filled report date exposed
+    assert mc.shares_as_of_date == date(2026, 5, 1)  # forward-filled report date exposed
 
 
 def test_local_cap_then_converted_to_usd():
     # A BRL stock: mcap_lcy = 10 x 1,000,000 = 10,000,000 BRL; USD = / 5.0 = 2,000,000
     conn = _Conn(local="BRL", close_raw=Decimal("10"), shares=Decimal("1000000"),
-                 shares_asof=D, fx={"BRL": Decimal("5.0")})
+                 shares_as_of_date=D, fx={"BRL": Decimal("5.0")})
     lcy = market_cap(conn, "BBG", D)            # LCY
     usd = market_cap(conn, "BBG", D, "USD")     # restated
     assert lcy.value == Decimal("10000000") and lcy.currency == "BRL"
@@ -61,14 +61,14 @@ def test_local_cap_then_converted_to_usd():
 
 
 def test_missing_price_or_shares_yields_none_value():
-    no_px = _Conn(local="USD", close_raw=None, shares=Decimal("100"), shares_asof=D)
-    no_sh = _Conn(local="USD", close_raw=Decimal("10"), shares=None, shares_asof=None)
+    no_px = _Conn(local="USD", close_raw=None, shares=Decimal("100"), shares_as_of_date=D)
+    no_sh = _Conn(local="USD", close_raw=Decimal("10"), shares=None, shares_as_of_date=None)
     assert market_cap(no_px, "BBG", D).value is None
     assert market_cap(no_sh, "BBG", D).value is None
 
 
 def test_missing_fx_leg_yields_none_value_but_keeps_inputs():
     conn = _Conn(local="BRL", close_raw=Decimal("10"), shares=Decimal("100"),
-                 shares_asof=D, fx={})  # no BRL rate -> convert returns None
+                 shares_as_of_date=D, fx={})  # no BRL rate -> convert returns None
     mc = market_cap(conn, "BBG", D, "USD")
     assert mc.value is None and mc.close_raw == Decimal("10") and mc.shares == Decimal("100")

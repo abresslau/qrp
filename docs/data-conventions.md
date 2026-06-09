@@ -31,7 +31,11 @@ calendar.
   `last_session_date`).
 - **Point-in-time observation date → `as_of_date`** (the one canonical name for
   "the date a fact/observation is *for*"): `fact_returns.as_of_date`,
-  `fundamentals.as_of_date`, `universe_accuracy_check.as_of_date`.
+  `fundamentals.as_of_date`, `universe_accuracy_check.as_of_date`. This name is
+  canonical at **every layer**, not just columns: Python parameters, local
+  variables, and CLI flags all use `as_of_date` / `--as_of_date` (never `asof`,
+  `as_of`, a `today` param that accepts any date, or a bare `date`). A literal
+  `date.today()` *default* may stay named `today` — the value really is today.
 - **Sanctioned exceptions** (kept as the universal SCD valid-time idiom, *not*
   forced to `_date`): **`valid_from`**, **`valid_to`**, and `pit_valid_from`.
 - **No column is ever a bare type or reserved word** (no `date`, `timestamp`),

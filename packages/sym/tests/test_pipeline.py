@@ -135,7 +135,7 @@ class _Source:
 @pytest.fixture
 def stub_db(monkeypatch):
     """Stub the DB-touching helpers so run_load's control flow is tested in isolation."""
-    monkeypatch.setattr(pipeline, "latest_session_for", lambda conn, mic, asof: END)
+    monkeypatch.setattr(pipeline, "latest_session_for", lambda conn, mic, as_of_date: END)
     monkeypatch.setattr(pipeline, "expected_trading_days", lambda conn, mic, s, e: set())
     monkeypatch.setattr(
         pipeline, "ingest_result",
@@ -157,7 +157,7 @@ def test_delta_skips_up_to_date_and_windows_from_cursor(stub_db, monkeypatch):
     ])
     conn = _Conn()
     src = _Source()
-    summary = run_load(conn, src, DELTA, asof=date(2026, 6, 6), sleep=lambda d: None)
+    summary = run_load(conn, src, DELTA, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
     assert (summary.loaded, summary.skipped, summary.attempted) == (2, 1, 3)
     assert conn.autocommit is True  # per-figi durable commits (Story 2.4 finding)
     fetched = dict((f, (s, e)) for f, s, e in src.fetched)
@@ -173,7 +173,7 @@ def test_one_failing_figi_is_isolated(stub_db, monkeypatch):
         ("F1", "XNAS", None), ("F2", "XNAS", None), ("F3", "XNAS", None),
     ])
     conn = _Conn()
-    summary = run_load(conn, _Source(fail_figis={"F2"}), BACKFILL, asof=date(2026, 6, 6),
+    summary = run_load(conn, _Source(fail_figis={"F2"}), BACKFILL, as_of_date=date(2026, 6, 6),
                        sleep=lambda d: None)
     assert (summary.loaded, summary.errored) == (2, 1)
     assert summary.errors[0][0] == "F2"

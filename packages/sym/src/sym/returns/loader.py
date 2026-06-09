@@ -4,7 +4,7 @@ Per the Story 3.3 spike the matrix is materialized via *filtered per-figi reads*
 ``v_prices_adjusted`` (never a full-view scan). For each security the loader pulls
 its adjusted series + raw closes + dividends + the current calendar once, builds a
 total-return index (EXDATE_C: dividends reinvested on ex-date, gross), and computes
-**both** PR (from ``adj_close``) and TR (from the TRI) for every (asof × every window)
+**both** PR (from ``adj_close``) and TR (from the TRI) for every (as_of_date × every window)
 using the ``windows.py`` spec. Insufficient history → NULL. One durable txn per figi.
 """
 
@@ -78,7 +78,7 @@ def total_return_index(
 class ReturnRow:
     composite_figi: str
     window_id: int
-    asof: date
+    as_of_date: date
     pr: Decimal | None
     tr: Decimal | None
     input_hash: str
@@ -87,31 +87,31 @@ class ReturnRow:
 
 def compute_return_rows(
     figi: str,
-    asofs: Sequence[date],
+    as_of_dates: Sequence[date],
     adj: dict[date, Decimal],
     tri: dict[date, Decimal],
     sessions: Sequence[date],
     calendar_version: int | None,
     gated_dates: Collection[date] = frozenset(),
 ) -> list[ReturnRow]:
-    """PR + TR rows for one security across ``asofs`` × all return windows (pure).
+    """PR + TR rows for one security across ``as_of_dates`` × all return windows (pure).
 
-    A row whose asof or base references an unreviewed flag (``gated_dates``) is
+    A row whose as_of_date or base references an unreviewed flag (``gated_dates``) is
     gated: pr/tr held NULL, ``gated=True`` (AR-9 gate half). ``input_hash`` still
     reflects the prices, so a later price change re-dirties even a gated row.
     """
     rows: list[ReturnRow] = []
-    for asof in asofs:
+    for as_of_date in as_of_dates:
         for window in WINDOWS:
             # end is as-of for base->as-of windows, a past session for `period` ones.
-            end = end_date(window, asof, sessions)
-            base = base_date(window, asof, sessions)
+            end = end_date(window, as_of_date, sessions)
+            base = base_date(window, as_of_date, sessions)
             adj_end = adj.get(end) if end is not None else None
             tri_end = tri.get(end) if end is not None else None
             adj_base = adj.get(base) if base is not None else None
             tri_base = tri.get(base) if base is not None else None
             gated = (
-                asof in gated_dates
+                as_of_date in gated_dates
                 or (base is not None and base in gated_dates)
                 or (end is not None and end in gated_dates)
             )
@@ -128,7 +128,7 @@ def compute_return_rows(
                     if tri_base is not None and tri_end is not None else None
                 )
             rows.append(
-                ReturnRow(figi, window.id, asof, pr, tr,
+                ReturnRow(figi, window.id, as_of_date, pr, tr,
                           input_hash(calendar_version, base, end, adj_base, adj_end,
                                      tri_base, tri_end),
                           gated)
@@ -201,23 +201,23 @@ def _upsert(conn: psycopg.Connection, rows: Sequence[ReturnRow]) -> None:
         return
     with conn.transaction(), conn.cursor() as cur:
         cur.execute(
-            "CREATE TEMP TABLE _ret (composite_figi char(12), window_id int, asof date, "
+            "CREATE TEMP TABLE _ret (composite_figi char(12), window_id int, as_of_date date, "
             "pr numeric, tr numeric, input_hash text, gated boolean) ON COMMIT DROP"
         )
         copy_sql = (
-            "COPY _ret (composite_figi, window_id, asof, pr, tr, input_hash, gated) FROM STDIN"
+            "COPY _ret (composite_figi, window_id, as_of_date, pr, tr, input_hash, gated) FROM STDIN"
         )
         with cur.copy(copy_sql) as cp:
             for r in rows:
                 cp.write_row(
-                    (r.composite_figi, r.window_id, r.asof, r.pr, r.tr, r.input_hash, r.gated)
+                    (r.composite_figi, r.window_id, r.as_of_date, r.pr, r.tr, r.input_hash, r.gated)
                 )
         # Dirty-set skip: rewrite only rows whose inputs OR gate status changed.
         cur.execute(
             """
             INSERT INTO fact_returns
                 (composite_figi, window_id, as_of_date, pr, tr, input_hash, gated)
-            SELECT composite_figi, window_id, asof, pr, tr, input_hash, gated FROM _ret
+            SELECT composite_figi, window_id, as_of_date, pr, tr, input_hash, gated FROM _ret
             ON CONFLICT (composite_figi, window_id, as_of_date) DO UPDATE
                 SET pr = EXCLUDED.pr, tr = EXCLUDED.tr,
                     input_hash = EXCLUDED.input_hash, gated = EXCLUDED.gated
@@ -240,7 +240,7 @@ def load_returns(
     end: date,
     figis: Sequence[str] | None = None,
 ) -> RecomputeSummary:
-    """Materialize PR + TR into fact_returns for asofs in [start, end].
+    """Materialize PR + TR into fact_returns for as_of_dates in [start, end].
 
     Spans ALL securities including delisted (AR-8 survivorship invariant) — see
     ``_securities_for_returns``.
@@ -259,11 +259,11 @@ def load_returns(
         adj = {d: adj_close for d, _close_raw, adj_close in price_rows}
         tri = total_return_index(price_rows, _dividends(conn, figi))
         gated_dates = _unreviewed_flag_dates(conn, figi)
-        asofs = [d for d in sorted(adj) if start <= d <= end]
-        if not asofs:
+        as_of_dates = [d for d in sorted(adj) if start <= d <= end]
+        if not as_of_dates:
             continue
         rows = compute_return_rows(
-            figi, asofs, adj, tri, sessions, calendar_version, gated_dates
+            figi, as_of_dates, adj, tri, sessions, calendar_version, gated_dates
         )
         _upsert(conn, rows)
         summary.securities += 1

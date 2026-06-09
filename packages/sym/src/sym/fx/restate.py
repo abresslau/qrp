@@ -7,7 +7,7 @@ materialization — a thin primitive; usage pulls features):
 - ``returns_in_currency`` — a security's return windows restated into a target currency.
 
 **The correct method (not naive spot × return):** an unhedged return in currency *X* is
-``(1 + r_local) · (FX_X(as_of) / FX_X(base)) − 1`` where ``FX_X(t)`` = target per unit of local
+``(1 + r_local) · (FX_X(as_of_date) / FX_X(base)) − 1`` where ``FX_X(t)`` = target per unit of local
 (``convert(1, local, X, t)``). That is identical to converting the price *levels* at both window
 endpoints and recomputing — it folds in the FX move over the window, never just the spot. For an
 *annualized* window the local rate is de-annualized to cumulative, restated, then re-annualized
@@ -38,7 +38,7 @@ def restate_return(
 ) -> Decimal | None:
     """Restate a local return into a target currency given the window's FX ratio (pure).
 
-    ``fx_ratio`` = ``FX_X(as_of) / FX_X(base)`` (target-per-local at the two window endpoints).
+    ``fx_ratio`` = ``FX_X(as_of_date) / FX_X(base)`` (target-per-local at the two window endpoints).
     Cumulative: ``(1+r)·ratio − 1``. Annualized: de-annualize → restate → re-annualize over
     ``years`` (actual elapsed years). Returns ``None`` on missing inputs.
     """
@@ -75,9 +75,9 @@ def price_in_currency(
 
 
 def returns_in_currency(
-    conn: psycopg.Connection, figi: str, as_of: date, target: str
+    conn: psycopg.Connection, figi: str, as_of_date: date, target: str
 ) -> dict[str, dict[str, Decimal | None]]:
-    """Restate every materialized return window for ``(figi, as_of)`` into ``target``.
+    """Restate every materialized return window for ``(figi, as_of_date)`` into ``target``.
 
     Returns ``{window_code: {'pr': …, 'tr': …}}``. A window whose base date or FX leg can't
     resolve yields ``None`` for that window. If the security is already in ``target``, the local
@@ -92,7 +92,7 @@ def returns_in_currency(
     mic = sec[1].strip() if isinstance(sec[1], str) else sec[1]
     rows = conn.execute(
         "SELECT window_id, pr, tr FROM fact_returns WHERE composite_figi=%s AND as_of_date=%s",
-        (figi, as_of),
+        (figi, as_of_date),
     ).fetchall()
     by_id = {w.id: w for w in WINDOWS}
     out: dict[str, dict[str, Decimal | None]] = {}
@@ -103,18 +103,18 @@ def returns_in_currency(
                 out[w.code] = {"pr": pr, "tr": tr}
         return out
     sessions = _calendar_sessions(conn, mic)
-    f_asof = convert(conn, _ONE, local, target, as_of)
+    f_asof = convert(conn, _ONE, local, target, as_of_date)
     for wid, pr, tr in rows:
         w = by_id.get(wid)
         if w is None:
             continue
-        base = base_date(w, as_of, sessions)
+        base = base_date(w, as_of_date, sessions)
         f_base = convert(conn, _ONE, local, target, base) if base is not None else None
         if f_asof is None or f_base is None or f_base <= 0:
             out[w.code] = {"pr": None, "tr": None}
             continue
         ratio = f_asof / f_base
-        years = period_years(as_of, base) if (w.annualized and base) else None
+        years = period_years(as_of_date, base) if (w.annualized and base) else None
         out[w.code] = {
             "pr": restate_return(pr, ratio, annualized=w.annualized, years=years),
             "tr": restate_return(tr, ratio, annualized=w.annualized, years=years),

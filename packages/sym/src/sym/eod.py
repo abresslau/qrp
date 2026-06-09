@@ -132,7 +132,7 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
         if key == "delta":
             from sym.ingest.pipeline import run_load
 
-            s = run_load(conn, source(), "delta", asof=as_of_date)
+            s = run_load(conn, source(), "delta", as_of_date=as_of_date)
             return f"loaded={s.loaded} skipped={s.skipped} errored={s.errored} rows={s.rows}"
         if key == "benchmarks":
             from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels

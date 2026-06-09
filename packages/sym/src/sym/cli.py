@@ -230,11 +230,11 @@ def _cmd_load(mode: str):
                     from sym.universe.ingest import run_universe_load
 
                     summary = run_universe_load(
-                        conn, source, universe, mode, asof=date.today(),
+                        conn, source, universe, mode, as_of_date=date.today(),
                         dev_limit=dev_limit, history_floor=history_floor,
                     )
                 else:
-                    summary = run_load(conn, source, mode, asof=date.today(), dev_limit=dev_limit)
+                    summary = run_load(conn, source, mode, as_of_date=date.today(), dev_limit=dev_limit)
         except psycopg.OperationalError as exc:
             print(f"database connection failed: {exc}", file=sys.stderr)
             return 1
@@ -311,7 +311,7 @@ def _cmd_sweep(_args: argparse.Namespace) -> int:
         with connect() as conn:
             resolver = make_yahoo_symbol_resolver(conn)
             source = get_source(key, symbol_for=resolver)
-            summary = run_sweep(conn, source, asof=date.today())
+            summary = run_sweep(conn, source, as_of_date=date.today())
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -451,16 +451,16 @@ def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
     from sym.db import connect
     from sym.universe.registry import UniverseError
 
-    as_of = date.today()
+    as_of_date = date.today()
     if args.as_of_date:
         try:
-            as_of = date.fromisoformat(args.as_of_date)
+            as_of_date = date.fromisoformat(args.as_of_date)
         except ValueError as exc:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
         with connect() as conn:
-            snap = universe_with_benchmark(conn, args.universe_id, as_of)
+            snap = universe_with_benchmark(conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -469,7 +469,7 @@ def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
         return 1
     level = f"{snap.benchmark_level}" if snap.benchmark_level is not None else "n/a"
     print(
-        f"{args.universe_id!r} as-of {as_of.isoformat()}: {len(snap.members)} constituents; "
+        f"{args.universe_id!r} as-of {as_of_date.isoformat()}: {len(snap.members)} constituents; "
         f"primary benchmark sym_id={snap.benchmark_sym_id} level={level}"
     )
     return 0
@@ -618,14 +618,14 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "convert":
                 from sym.fx.convert import convert
 
-                as_of = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                out = convert(conn, args.amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of)
+                as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
+                out = convert(conn, args.amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of_date)
                 if out is None:
                     print(f"convert: unavailable ({args.from_ccy.upper()}->"
-                          f"{args.to_ccy.upper()} as-of {as_of}: no/stale rate)")
+                          f"{args.to_ccy.upper()} as-of {as_of_date}: no/stale rate)")
                     return 1
                 print(f"{args.amount} {args.from_ccy.upper()} = {out:.4f} "
-                      f"{args.to_ccy.upper()}  (as-of {as_of})")
+                      f"{args.to_ccy.upper()}  (as-of {as_of_date})")
             elif args.fx_command == "px":
                 from sym.fx.restate import price_in_currency
 
@@ -638,12 +638,12 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "returns":
                 from sym.fx.restate import returns_in_currency
 
-                as_of = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                res = returns_in_currency(conn, args.figi, as_of, args.ccy.upper())
+                as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
+                res = returns_in_currency(conn, args.figi, as_of_date, args.ccy.upper())
                 if not res:
-                    print(f"returns: none for {args.figi} as-of {as_of}")
+                    print(f"returns: none for {args.figi} as-of {as_of_date}")
                     return 1
-                print(f"{args.figi} returns in {args.ccy.upper()} (as-of {as_of}):")
+                print(f"{args.figi} returns in {args.ccy.upper()} (as-of {as_of_date}):")
                 for code in ("1D", "1W", "1M", "3M", "YTD", "1Y", "5Y"):
                     r = res.get(code)
                     if not r:
@@ -662,7 +662,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 print(
                     f"{args.figi} market cap on {on} = {mc.value:,.0f} {mc.currency} "
                     f"(= {mc.close_raw} {mc.local_currency} x {mc.shares:,.0f} shares "
-                    f"as-of {mc.shares_asof})"
+                    f"as-of {mc.shares_as_of_date})"
                 )
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
@@ -786,16 +786,16 @@ def _cmd_universe_members(args: argparse.Namespace) -> int:
     from sym.universe.query import members
     from sym.universe.registry import UniverseError
 
-    as_of = date.today()
+    as_of_date = date.today()
     if args.as_of_date:
         try:
-            as_of = date.fromisoformat(args.as_of_date)
+            as_of_date = date.fromisoformat(args.as_of_date)
         except ValueError as exc:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
         with connect() as conn:
-            figis = members(conn, args.universe_id, as_of)
+            figis = members(conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -806,7 +806,7 @@ def _cmd_universe_members(args: argparse.Namespace) -> int:
     for figi in sorted(figis):
         print(figi)
     print(
-        f"{len(figis)} member(s) of {args.universe_id!r} as-of {as_of.isoformat()}",
+        f"{len(figis)} member(s) of {args.universe_id!r} as-of {as_of_date.isoformat()}",
         file=sys.stderr,
     )
     return 0
@@ -847,16 +847,16 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
     from sym.universe.ingest import coverage
     from sym.universe.registry import UniverseError
 
-    as_of = date.today()
+    as_of_date = date.today()
     if args.as_of_date:
         try:
-            as_of = date.fromisoformat(args.as_of_date)
+            as_of_date = date.fromisoformat(args.as_of_date)
         except ValueError as exc:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
         with connect() as conn:
-            cov = coverage(conn, args.universe_id, as_of)
+            cov = coverage(conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -865,12 +865,12 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
         return 1
 
     print(
-        f"coverage {args.universe_id!r} as-of {as_of.isoformat()}:\n"
+        f"coverage {args.universe_id!r} as-of {as_of_date.isoformat()}:\n"
         f"  members:        {cov.members_total} "
         f"({cov.resolved} resolved {cov.resolved_pct:.1%}, {cov.unresolved} unresolved)\n"
         f"  in master:      {cov.in_master}\n"
         f"  priced:         {cov.priced} of {cov.resolved} resolved ({cov.priced_pct:.1%})\n"
-        f"  current ({as_of.isoformat()}): {cov.current_priced}/{cov.current_members} priced "
+        f"  current ({as_of_date.isoformat()}): {cov.current_priced}/{cov.current_members} priced "
         f"({cov.current_priced_pct:.1%})"
     )
     return 0
@@ -1009,10 +1009,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_recompute = sub.add_parser(
         "recompute",
-        help="Materialize the price-return matrix into fact_returns over an asof range.",
+        help="Materialize the price-return matrix into fact_returns over an as_of_date range.",
     )
-    p_recompute.add_argument("--from", dest="start", help="Start asof (ISO; default: 1 year back).")
-    p_recompute.add_argument("--to", dest="to", help="End asof (ISO; default: today).")
+    p_recompute.add_argument("--from", dest="start", help="Start as_of_date (ISO; default: 1 year back).")
+    p_recompute.add_argument("--to", dest="to", help="End as_of_date (ISO; default: today).")
     p_recompute.set_defaults(func=_cmd_recompute)
 
     p_benchmarks = sub.add_parser(

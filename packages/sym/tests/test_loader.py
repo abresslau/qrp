@@ -22,10 +22,10 @@ ADJ = {
 }
 
 
-def _rows(adj, tri, asof=date(2024, 1, 4)):
+def _rows(adj, tri, as_of_date=date(2024, 1, 4)):
     return {
         r.window_id: r
-        for r in compute_return_rows("BBG000B9XRY4", [asof], adj, tri, SESSIONS, 53)
+        for r in compute_return_rows("BBG000B9XRY4", [as_of_date], adj, tri, SESSIONS, 53)
     }
 
 
@@ -98,7 +98,7 @@ def test_dividend_payer_tr_exceeds_pr():
 def test_asof_flagged_gates_all_windows():
     rows = compute_return_rows(
         "BBG000B9XRY4", [date(2024, 1, 4)], ADJ, ADJ, SESSIONS, 53,
-        gated_dates={date(2024, 1, 4)},  # the asof price is flagged unreviewed
+        gated_dates={date(2024, 1, 4)},  # the as_of_date price is flagged unreviewed
     )
     assert all(r.gated and r.pr is None and r.tr is None for r in rows)
 
@@ -141,7 +141,7 @@ def test_input_hash_format_is_pinned():
     # contract -- it decides the dirty-set skip across 9M+ fact_returns rows. Any
     # reorder/rename of the payload silently re-hashes everything and forces a full
     # rewrite; this pins it so such a change fails loudly instead. (Also guards the
-    # AC#5 "windows 1-18 byte-identical" invariant: end==asof for non-period windows,
+    # AC#5 "windows 1-18 byte-identical" invariant: end==as_of_date for non-period windows,
     # so a non-period row's hash must equal what this fixed input produces.)
     h = input_hash(
         53, date(2023, 1, 3), date(2024, 1, 4),

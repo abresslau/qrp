@@ -84,15 +84,15 @@ class OhlcvSource(Protocol):
     def fetch_ohlcv(self, figi: str, start: date, end: date) -> OhlcvResult: ...
 
 
-def cumulative_split_factor(splits: Sequence[SplitEvent], asof: date) -> Decimal:
-    """Back-adjustment split factor for ``asof``: product of ratios with a later ex-date.
+def cumulative_split_factor(splits: Sequence[SplitEvent], as_of_date: date) -> Decimal:
+    """Back-adjustment split factor for ``as_of_date``: product of ratios with a later ex-date.
 
     Derived ONLY from explicit split records (HARD RULE) — it takes no prices.
-    A price on ``asof`` is split-adjusted by dividing by this factor.
+    A price on ``as_of_date`` is split-adjusted by dividing by this factor.
     """
     factor = Decimal(1)
     for split in splits:
-        if split.ex_date > asof:
+        if split.ex_date > as_of_date:
             factor *= split.ratio
     return factor
 

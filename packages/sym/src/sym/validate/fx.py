@@ -33,9 +33,9 @@ def needed_currencies(conn: psycopg.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
-def check_fx_coverage(conn: psycopg.Connection, *, as_of: date | None = None) -> CheckResult:
-    """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of``."""
-    as_of = as_of or date.today()
+def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = None) -> CheckResult:
+    """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of_date``."""
+    as_of_date = as_of_date or date.today()
     needed = needed_currencies(conn)
     fx_count = conn.execute("SELECT count(*) FROM fx_rate").fetchone()[0]
     if fx_count == 0:
@@ -47,9 +47,9 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of: date | None = None) ->
         )
     warnings: list[str] = []
     for ccy in needed:
-        r = fx_rate(conn, ccy, as_of)
+        r = fx_rate(conn, ccy, as_of_date)
         if r.status == "no_data":
-            warnings.append(f"{ccy}: no USD rate on/before {as_of} (source gap)")
+            warnings.append(f"{ccy}: no USD rate on/before {as_of_date} (source gap)")
         elif r.status == "stale":
             warnings.append(f"{ccy}: stale {r.days_stale}d (last observed {r.observed_date})")
         elif r.is_filled and r.days_stale > WEEKEND_SPAN_DAYS:

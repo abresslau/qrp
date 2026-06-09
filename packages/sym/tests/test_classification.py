@@ -220,7 +220,7 @@ def test_coverage_meets_threshold_at_ninety_percent():
     figis = [f"BBG0000000{i:02d}" for i in range(10)]
     mapping = {f: _gics(f) for f in figis[:9]}  # 9 of 10 classified
     conn = _RouterConn(active_figis=figis)
-    summary = classify_universe(conn, _FakeSource(mapping), as_of=date(2026, 6, 6))
+    summary = classify_universe(conn, _FakeSource(mapping), as_of_date=date(2026, 6, 6))
     assert summary.active_total == 10
     assert summary.classified == 9
     assert summary.coverage == 0.9
@@ -231,7 +231,7 @@ def test_coverage_below_threshold_is_reported_not_widened():
     figis = [f"BBG0000000{i:02d}" for i in range(10)]
     mapping = {f: _gics(f) for f in figis[:8]}  # only 8 of 10
     conn = _RouterConn(active_figis=figis)
-    summary = classify_universe(conn, _FakeSource(mapping), as_of=date(2026, 6, 6))
+    summary = classify_universe(conn, _FakeSource(mapping), as_of_date=date(2026, 6, 6))
     assert summary.coverage == 0.8
     assert summary.meets_threshold() is False
     assert summary.meets_threshold(0.80) is True
@@ -244,7 +244,7 @@ def test_rerun_with_identical_classification_is_noop():
     figi = "BBG000B9XRY4"
     current = {figi: _row(date(2026, 1, 1))}  # same levels as _gics(figi)
     conn = _RouterConn(current=current)
-    summary = apply_classifications(conn, [_gics(figi)], as_of=date(2026, 6, 6))
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
     assert summary.unchanged == 1
     assert summary.rows_inserted == 0
     assert not any("INSERT" in sql.upper() for sql, _ in conn.calls)
@@ -255,7 +255,7 @@ def test_changed_classification_on_a_later_day_closes_prior_row_then_inserts():
     # Prior row was written on an EARLIER day, so closing it yields a non-empty period.
     current = {figi: _row(date(2026, 1, 1), ind="Old Industry")}
     conn = _RouterConn(current=current)
-    summary = apply_classifications(conn, [_gics(figi)], as_of=date(2026, 6, 6))
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
     assert summary.rows_closed == 1
     assert summary.rows_inserted == 1
     assert summary.rows_updated == 0
@@ -269,11 +269,11 @@ def test_changed_classification_on_the_same_day_updates_in_place():
     """A same-day correction must NOT close-then-insert (that sets valid_to == valid_from,
     violating gics_scd_validity_chk); it overwrites the currently-effective row instead."""
     figi = "BBG000B9XRY4"
-    as_of = date(2026, 6, 6)
-    # Prior row was written TODAY (valid_from == as_of) with a stale industry label.
-    current = {figi: _row(as_of, ind="Old Industry")}
+    as_of_date = date(2026, 6, 6)
+    # Prior row was written TODAY (valid_from == as_of_date) with a stale industry label.
+    current = {figi: _row(as_of_date, ind="Old Industry")}
     conn = _RouterConn(current=current)
-    summary = apply_classifications(conn, [_gics(figi)], as_of=as_of)
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=as_of_date)
     assert summary.rows_updated == 1
     assert summary.rows_closed == 0
     assert summary.rows_inserted == 0
@@ -286,7 +286,7 @@ def test_changed_classification_on_the_same_day_updates_in_place():
 def test_new_figi_inserts_without_closing():
     figi = "BBG000B9XRY4"
     conn = _RouterConn()  # no currently-effective row
-    summary = apply_classifications(conn, [_gics(figi)], as_of=date(2026, 6, 6))
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
     assert summary.rows_closed == 0
     assert summary.rows_inserted == 1
 
@@ -295,7 +295,7 @@ def test_failed_write_is_isolated_and_counted():
     """One security's write failing is rolled back and counted; the run continues."""
     conn = _FailingConn()
     plans = [_gics("BBG000000001"), _gics("BBG000000002")]
-    summary = apply_classifications(conn, plans, as_of=date(2026, 6, 6))
+    summary = apply_classifications(conn, plans, as_of_date=date(2026, 6, 6))
     assert summary.failed == 2  # both attempted despite the first failing
     assert summary.rows_inserted == 0
 

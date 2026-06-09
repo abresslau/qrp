@@ -83,7 +83,7 @@ def ensure_universe_securities(conn: psycopg.Connection, universe_id: str) -> Br
 
 
 def universe_securities(
-    conn: psycopg.Connection, universe_id: str, asof: date, *, backfill: bool
+    conn: psycopg.Connection, universe_id: str, as_of_date: date, *, backfill: bool
 ) -> list[tuple[str, str, date | None, date, date | None]]:
     """The security set to ingest for a universe.
 
@@ -91,7 +91,7 @@ def universe_securities(
     that resolves AND exists in ``securities``. ``member_from`` is the earliest
     membership ``valid_from`` (the backfill floor); ``member_to`` is the exit date
     (NULL if still a member — the leaver fetch cap). Forward modes (delta/dev) take
-    only members active as-of ``asof``; ``backfill`` takes all (so a name's whole
+    only members active as-of ``as_of_date``; ``backfill`` takes all (so a name's whole
     membership window is filled, leavers capped at their exit).
     """
     rows = conn.execute(
@@ -109,7 +109,7 @@ def universe_securities(
          GROUP BY um.composite_figi, s.mic, p.cursor_date
          ORDER BY um.composite_figi
         """,
-        (asof, asof, universe_id),
+        (as_of_date, as_of_date, universe_id),
     ).fetchall()
     out: list[tuple[str, str, date | None, date, date | None]] = []
     for figi, mic, cursor, member_from, member_to, active in rows:
@@ -127,7 +127,7 @@ def run_universe_load(
     universe_id: str,
     mode: str,
     *,
-    asof: date,
+    as_of_date: date,
     ensure_securities: bool = True,
     history_floor: date | None = None,
     **kwargs: object,
@@ -148,7 +148,7 @@ def run_universe_load(
     """
     if ensure_securities:
         ensure_universe_securities(conn, universe_id)
-    selection = universe_securities(conn, universe_id, asof, backfill=(mode == BACKFILL))
+    selection = universe_securities(conn, universe_id, as_of_date, backfill=(mode == BACKFILL))
     securities = [(figi, mic, cursor) for figi, mic, cursor, _f, _t in selection]
     cap_map = {figi: member_to for figi, _m, _c, _f, member_to in selection}
     floor_for = None
@@ -159,7 +159,7 @@ def run_universe_load(
         conn,
         source,
         mode,
-        asof=asof,
+        as_of_date=as_of_date,
         securities=securities,
         floor_for=floor_for,
         end_cap_for=cap_map.get,
@@ -192,7 +192,7 @@ class Coverage:
         return self.current_priced / self.current_members if self.current_members else 0.0
 
 
-def coverage(conn: psycopg.Connection, universe_id: str, asof: date) -> Coverage:
+def coverage(conn: psycopg.Connection, universe_id: str, as_of_date: date) -> Coverage:
     """Per-universe coverage so a partial load can't masquerade as complete."""
     cov = Coverage(universe_id)
     res = dict(
@@ -229,7 +229,7 @@ def coverage(conn: psycopg.Connection, universe_id: str, asof: date) -> Coverage
         SELECT count(DISTINCT composite_figi) FROM universe_membership
          WHERE universe_id = %s AND valid_from <= %s AND (valid_to IS NULL OR valid_to > %s)
         """,
-        (universe_id, asof, asof),
+        (universe_id, as_of_date, as_of_date),
     ).fetchone()[0]
     cov.current_priced = conn.execute(
         """
@@ -238,6 +238,6 @@ def coverage(conn: psycopg.Connection, universe_id: str, asof: date) -> Coverage
            AND (um.valid_to IS NULL OR um.valid_to > %s)
            AND EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = um.composite_figi)
         """,
-        (universe_id, asof, asof),
+        (universe_id, as_of_date, as_of_date),
     ).fetchone()[0]
     return cov

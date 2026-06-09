@@ -29,8 +29,8 @@ def _weekdays(start, end):
 SESSIONS = _weekdays(date(2020, 1, 1), date(2024, 12, 31))
 
 
-def _base(code, asof, sessions=SESSIONS):
-    return base_date(BY_CODE[code], asof, sessions)
+def _base(code, as_of_date, sessions=SESSIONS):
+    return base_date(BY_CODE[code], as_of_date, sessions)
 
 
 # --- the window set ---------------------------------------------------------
@@ -56,13 +56,13 @@ def test_window_set_has_stable_unique_ids():
 
 
 def test_session_count_bases():
-    asof = date(2024, 6, 14)  # Friday
+    as_of_date = date(2024, 6, 14)  # Friday
     # 5 trading days back: 6/13, 6/12, 6/11, 6/10, 6/7 -> 6/7.
-    assert _base("5D", asof) == date(2024, 6, 7)
+    assert _base("5D", as_of_date) == date(2024, 6, 7)
     # 10 trading days back continues: 6/6, 6/5, 6/4, 6/3, 5/31 -> 5/31.
-    assert _base("10D", asof) == date(2024, 5, 31)
+    assert _base("10D", as_of_date) == date(2024, 5, 31)
     # 5D with sessions==5 lands one further back than 1D (which is 1 session back).
-    assert _base("1D", asof) == date(2024, 6, 13)
+    assert _base("1D", as_of_date) == date(2024, 6, 13)
 
 
 def test_session_count_returns_none_when_history_short():
@@ -75,17 +75,17 @@ def test_session_count_returns_none_when_history_short():
 
 def test_prior_quarter_endpoints_are_the_completed_quarter():
     pq = BY_CODE["PQ"]
-    asof = date(2024, 11, 15)  # in Q4 -> the just-completed quarter is Q3
+    as_of_date = date(2024, 11, 15)  # in Q4 -> the just-completed quarter is Q3
     # end = last session of Q3 (2024-09-30 was a Mon), base = last session of Q2 (06-28 Fri).
-    assert end_date(pq, asof, SESSIONS) == date(2024, 9, 30)
-    assert base_date(pq, asof, SESSIONS) == date(2024, 6, 28)
+    assert end_date(pq, as_of_date, SESSIONS) == date(2024, 9, 30)
+    assert base_date(pq, as_of_date, SESSIONS) == date(2024, 6, 28)
     # Contrast QTD (current quarter, ends at as-of): base = prior-quarter end, end = as-of.
-    assert end_date(BY_CODE["QTD"], asof, SESSIONS) == asof
-    assert base_date(BY_CODE["QTD"], asof, SESSIONS) == date(2024, 9, 30)
+    assert end_date(BY_CODE["QTD"], as_of_date, SESSIONS) == as_of_date
+    assert base_date(BY_CODE["QTD"], as_of_date, SESSIONS) == date(2024, 9, 30)
 
 
 def test_prior_quarter_none_when_no_completed_quarter():
-    # asof in the first quarter with no sessions before it -> nothing completed.
+    # as_of_date in the first quarter with no sessions before it -> nothing completed.
     sessions = _weekdays(date(2024, 1, 1), date(2024, 2, 15))
     assert base_date(BY_CODE["PQ"], date(2024, 2, 1), sessions) is None
 
@@ -94,49 +94,49 @@ def test_prior_quarter_none_when_no_completed_quarter():
 
 
 def test_calendar_anchored_bases():
-    asof = date(2024, 6, 14)  # Friday
-    assert _base("1D", asof) == date(2024, 6, 13)  # prior session
-    assert _base("WTD", asof) == date(2024, 6, 7)  # last session of prior week
-    assert _base("MTD", asof) == date(2024, 5, 31)  # last session of prior month
-    assert _base("QTD", asof) == date(2024, 3, 29)  # last session of prior quarter
-    assert _base("YTD", asof) == date(2023, 12, 29)  # last session of prior year
+    as_of_date = date(2024, 6, 14)  # Friday
+    assert _base("1D", as_of_date) == date(2024, 6, 13)  # prior session
+    assert _base("WTD", as_of_date) == date(2024, 6, 7)  # last session of prior week
+    assert _base("MTD", as_of_date) == date(2024, 5, 31)  # last session of prior month
+    assert _base("QTD", as_of_date) == date(2024, 3, 29)  # last session of prior quarter
+    assert _base("YTD", as_of_date) == date(2023, 12, 29)  # last session of prior year
 
 
 # --- rolling: same calendar date N prior, snapped on/before (AC #1) ---------
 
 
 def test_rolling_on_a_trading_day():
-    asof = date(2024, 6, 14)
-    assert _base("1M", asof) == date(2024, 5, 14)
-    assert _base("1Y", asof) == date(2023, 6, 14)
+    as_of_date = date(2024, 6, 14)
+    assert _base("1M", as_of_date) == date(2024, 5, 14)
+    assert _base("1Y", as_of_date) == date(2023, 6, 14)
 
 
 def test_rolling_target_on_weekend_snaps_to_prior_session():
-    asof = date(2024, 6, 10)  # 3M back = 2024-03-10 (Sunday)
-    assert _base("3M", asof) == date(2024, 3, 8)  # last session on/before
+    as_of_date = date(2024, 6, 10)  # 3M back = 2024-03-10 (Sunday)
+    assert _base("3M", as_of_date) == date(2024, 3, 8)  # last session on/before
 
 
 def test_rolling_1w_is_seven_days_back_not_week_to_date():
-    asof = date(2024, 6, 12)  # Wednesday
-    assert _base("1W", asof) == date(2024, 6, 5)  # rolling 7 days back
-    assert _base("WTD", asof) == date(2024, 6, 7)  # calendar: last session of prior week
+    as_of_date = date(2024, 6, 12)  # Wednesday
+    assert _base("1W", as_of_date) == date(2024, 6, 5)  # rolling 7 days back
+    assert _base("WTD", as_of_date) == date(2024, 6, 7)  # calendar: last session of prior week
 
 
 # --- multi-year + since-inception (AC #2) -----------------------------------
 
 
 def test_multiyear_and_inception_bases():
-    asof = date(2024, 6, 14)
-    assert _base("2Y_ANN", asof) == date(2022, 6, 14)
-    assert _base("SI_ANN", asof) == SESSIONS[0]  # first available close
+    as_of_date = date(2024, 6, 14)
+    assert _base("2Y_ANN", as_of_date) == date(2022, 6, 14)
+    assert _base("SI_ANN", as_of_date) == SESSIONS[0]  # first available close
 
 
 # --- NULL rule (AC #4) ------------------------------------------------------
 
 
 def test_insufficient_history_is_none():
-    asof = date(2020, 6, 15)
-    assert _base("5Y_ANN", asof) is None  # history starts 2020; 2015 unreachable
+    as_of_date = date(2020, 6, 15)
+    assert _base("5Y_ANN", as_of_date) is None  # history starts 2020; 2015 unreachable
     assert base_date(BY_CODE["1D"], SESSIONS[0], SESSIONS) is None  # no prior session
 
 

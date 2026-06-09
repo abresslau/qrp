@@ -36,15 +36,15 @@ def write_name(
     name: str,
     *,
     source: str = "openfigi",
-    as_of: date | None = None,
+    as_of_date: date | None = None,
 ) -> str:
     """Record a company name in SCD shape; returns what happened.
 
     Unchanged → no-op; a same-day correction → update the current row in place; a
-    later rename → close the prior row (``valid_to = as_of``) and insert the new
+    later rename → close the prior row (``valid_to = as_of_date``) and insert the new
     one. Mirrors the gics SCD writer (no zero-width periods, immutable history).
     """
-    as_of = as_of or date.today()
+    as_of_date = as_of_date or date.today()
     current = conn.execute(
         """
         SELECT name, valid_from FROM security_names
@@ -56,7 +56,7 @@ def write_name(
     if current is not None and current[0] == name:
         return UNCHANGED
 
-    if current is not None and current[1] == as_of:
+    if current is not None and current[1] == as_of_date:
         conn.execute(
             """
             UPDATE security_names SET name = %s, source = %s
@@ -72,7 +72,7 @@ def write_name(
             UPDATE security_names SET valid_to = %s
              WHERE composite_figi = %s AND valid_to IS NULL
             """,
-            (as_of, composite_figi),
+            (as_of_date, composite_figi),
         )
 
     conn.execute(
@@ -80,6 +80,6 @@ def write_name(
         INSERT INTO security_names (composite_figi, name, source, valid_from)
         VALUES (%s, %s, %s, %s)
         """,
-        (composite_figi, name, source, as_of),
+        (composite_figi, name, source, as_of_date),
     )
     return REPLACED if current is not None else INSERTED

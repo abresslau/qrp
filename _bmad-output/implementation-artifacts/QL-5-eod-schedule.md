@@ -77,9 +77,15 @@ claude-opus-4-8 (Claude Code), 2026-06-09
   universe members/coverage/benchmarks) → `--as_of_date` for one consistent operator vocabulary
   matching the `as_of_date` column convention. Dagster `EodConfig.as_of_date` passes it through.
   Verified: past-date plan, default, invalid-date rejection (exit 1), 6 eod tests, validate.
-  - *Deferred (not user-facing):* deeper engine params still use `asof`/`today` internally
-    (`ingest.pipeline`, `returns.windows/loader`, `universe.gating`) — a standard term, no CLI/column
-    surface; a full internal rename is a larger core refactor left as optional follow-up.
+  - **Follow-up DONE (full sym sweep):** reconciled the deeper engine spellings too — `asof`,
+    `as_of`, `asofs`, and as-of `today` params across `ingest/`, `returns/`, `universe/`, `fx/`,
+    `classification/`, `identity/`, `validate/` (+ tests + the accuracy fixture/capture script) →
+    `as_of_date`. 288 word-boundary substitutions + surgical `today` edits; non-date compounds
+    (`price_asof`, `f_asof`, `shares_outstanding_asof`), the vendor literal `asofdate`, and
+    `date.today()` defaults intentionally preserved. Convention recorded in `docs/data-conventions.md`
+    (now spans columns + params + flags). 398 sym tests pass; dagster validate + EOD CLI unaffected.
+    *Out of scope:* the `services/api` JSON response key `"as_of"` is an external contract consumed
+    by the console — renaming it is a separate API+frontend change, not done here.
 
 ### File List
 - `packages/lineage/src/lineage/schedules.py` (new), `definitions.py` (jobs + schedules wiring)

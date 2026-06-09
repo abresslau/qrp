@@ -58,7 +58,7 @@ def is_surprising(
 def is_promotable(
     reason: str,
     first_seen: date,
-    today: date,
+    as_of_date: date,
     corroboration_count: int,
     *,
     persist_days: int = DEFAULT_PERSIST_DAYS,
@@ -72,7 +72,7 @@ def is_promotable(
     """
     if reason == REASON_CHURN:
         return False
-    persisted = (today - first_seen).days >= persist_days
+    persisted = (as_of_date - first_seen).days >= persist_days
     corroborated = corroboration_count >= min_corroborations
     return persisted or corroborated
 
@@ -91,12 +91,12 @@ def stage_changes(
     universe_id: str,
     changes: Iterable[MembershipChange],
     *,
-    today: date,
+    as_of_date: date,
     surprising: bool,
 ) -> StageSummary:
     """Upsert discovered changes into the proposal staging table.
 
-    First sighting inserts a pending proposal (``first_seen=today``); a repeat
+    First sighting inserts a pending proposal (``first_seen=as_of_date``); a repeat
     sighting bumps ``seen_count``/``last_seen`` and records the source as a
     corroboration (a *different* source seeing the same change is what
     corroboration means). Surprising runs stamp ``reason='churn_threshold'``.
@@ -116,7 +116,7 @@ def stage_changes(
             """,
             (
                 universe_id, ch.raw_identifier, ch.change, ch.effective_date,
-                ch.effective_date_precision, ch.source, today, today,
+                ch.effective_date_precision, ch.source, as_of_date, as_of_date,
                 Jsonb([ch.source]), reason,
             ),
         ).fetchone()
@@ -136,7 +136,7 @@ def stage_changes(
                AND change = %s AND effective_date = %s AND status = 'pending'
             """,
             (
-                today, Jsonb([ch.source]), Jsonb([ch.source]),
+                as_of_date, Jsonb([ch.source]), Jsonb([ch.source]),
                 universe_id, ch.raw_identifier, ch.change, ch.effective_date,
             ),
         )
@@ -152,7 +152,7 @@ def promote_ready_proposals(
     conn: psycopg.Connection,
     universe_id: str,
     *,
-    today: date,
+    as_of_date: date,
     persist_days: int = DEFAULT_PERSIST_DAYS,
     min_corroborations: int = DEFAULT_MIN_CORROBORATIONS,
 ) -> int:
@@ -173,7 +173,7 @@ def promote_ready_proposals(
     promoted = 0
     for (pid, raw, change, eff, precision, source, reason, first_seen, corr) in rows:
         if not is_promotable(
-            reason, first_seen, today, _corroboration_count(corr),
+            reason, first_seen, as_of_date, _corroboration_count(corr),
             persist_days=persist_days, min_corroborations=min_corroborations,
         ):
             continue
@@ -286,18 +286,18 @@ def stage_and_promote(
     changes: Sequence[MembershipChange],
     *,
     current_count: int,
-    today: date,
+    as_of_date: date,
     threshold: float = DEFAULT_CHURN_THRESHOLD,
     persist_days: int = DEFAULT_PERSIST_DAYS,
     min_corroborations: int = DEFAULT_MIN_CORROBORATIONS,
 ) -> tuple[StageSummary, int]:
     """Stage discovered changes (gating on churn) then promote the ready ones."""
     surprising = is_surprising(len(changes), current_count, threshold)
-    staged = stage_changes(conn, universe_id, changes, today=today, surprising=surprising)
+    staged = stage_changes(conn, universe_id, changes, as_of_date=as_of_date, surprising=surprising)
     promoted = 0
     if not surprising:
         promoted = promote_ready_proposals(
-            conn, universe_id, today=today,
+            conn, universe_id, as_of_date=as_of_date,
             persist_days=persist_days, min_corroborations=min_corroborations,
         )
     return staged, promoted

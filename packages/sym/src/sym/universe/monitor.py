@@ -139,7 +139,7 @@ def run_monitor(
     universe_id: str,
     *,
     client: object | None = None,
-    today: date | None = None,
+    as_of_date: date | None = None,
     lookback: timedelta = DEFAULT_MONITOR_LOOKBACK,
 ) -> MonitorSummary:
     """Re-run a universe's provider, append new changes, refresh the projection.
@@ -151,7 +151,7 @@ def run_monitor(
     import sym.universe.providers  # noqa: F401  (ensure providers self-register)
 
     conn.autocommit = True
-    today = today or date.today()
+    as_of_date = as_of_date or date.today()
     row = conn.execute(
         "SELECT kind, config, source_pref FROM universe WHERE universe_id = %s", (universe_id,)
     ).fetchone()
@@ -165,7 +165,7 @@ def run_monitor(
 
     try:
         provider = get_provider(kind, **provider_config)
-        changes = list(provider.members(today - lookback, today))
+        changes = list(provider.members(as_of_date - lookback, as_of_date))
     except Exception as exc:  # noqa: BLE001 - any provider failure is a loud error row
         summary = MonitorSummary(universe_id, MONITOR_ERROR, detail=str(exc)[:500])
         summary.monitor_run_id = _write_monitor_log(conn, summary)

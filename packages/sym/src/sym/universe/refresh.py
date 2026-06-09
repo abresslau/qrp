@@ -47,7 +47,7 @@ def refresh_universe(
     universe_id: str,
     *,
     client: object | None = None,
-    today: date | None = None,
+    as_of_date: date | None = None,
 ) -> RefreshSummary:
     """Provider → append → resolve → project, for one universe.
 
@@ -68,7 +68,7 @@ def refresh_universe(
     # projection rebuild) so a long live index refresh is resumable, not
     # all-or-nothing — mirrors the ingestion pipeline's autocommit discipline.
     conn.autocommit = True
-    today = today or date.today()
+    as_of_date = as_of_date or date.today()
     row = conn.execute(
         "SELECT kind, config, pit_valid_from, source_pref FROM universe WHERE universe_id = %s",
         (universe_id,),
@@ -87,7 +87,7 @@ def refresh_universe(
     # an index/criteria universe pulls full history from a configurable floor.
     if kind == CUSTOM_LIST:
         if pit is None:
-            pit = today
+            pit = as_of_date
             conn.execute(
                 "UPDATE universe SET pit_valid_from = %s WHERE universe_id = %s", (pit, universe_id)
             )
@@ -100,14 +100,14 @@ def refresh_universe(
     if kind == CRITERIA:
         provider_config["conn"] = conn
     provider = get_provider(kind, **provider_config)
-    changes = list(provider.members(fetch_start, today))
+    changes = list(provider.members(fetch_start, as_of_date))
     appended = append_changes(conn, universe_id, changes)
 
     # Derive the index honesty boundary from the data on first refresh (unless
     # pinned at add time): the earliest dated leave is the survivorship floor.
     if kind != CUSTOM_LIST and pit is None:
         leave_dates = [c.effective_date for c in changes if c.change == LEAVE]
-        pit = min(leave_dates) if leave_dates else today
+        pit = min(leave_dates) if leave_dates else as_of_date
         conn.execute(
             "UPDATE universe SET pit_valid_from = %s WHERE universe_id = %s", (pit, universe_id)
         )

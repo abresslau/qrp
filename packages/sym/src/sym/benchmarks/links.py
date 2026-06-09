@@ -103,28 +103,28 @@ def primary_benchmark(conn: psycopg.Connection, universe_id: str) -> int | None:
 @dataclass
 class UniverseSnapshot:
     universe_id: str
-    as_of: date
+    as_of_date: date
     members: set[str]
     benchmark_sym_id: int | None
     benchmark_level: object | None  # Decimal | None
 
 
 def universe_with_benchmark(
-    conn: psycopg.Connection, universe_id: str, as_of: date
+    conn: psycopg.Connection, universe_id: str, as_of_date: date
 ) -> UniverseSnapshot:
     """Point-in-time constituents + the primary benchmark's level, as-of a date.
 
     The payoff of the link: who was in the index *and* where the index closed on
     the same date. (Benchmark returns for any window are in `fact_index_returns`.)
     """
-    member_figis = members(conn, universe_id, as_of)
+    member_figis = members(conn, universe_id, as_of_date)
     sym_id = primary_benchmark(conn, universe_id)
     level = None
     if sym_id is not None:
         row = conn.execute(
             "SELECT level FROM index_levels WHERE sym_id = %s AND session_date <= %s "
             "ORDER BY session_date DESC LIMIT 1",
-            (sym_id, as_of),
+            (sym_id, as_of_date),
         ).fetchone()
         level = row[0] if row else None
-    return UniverseSnapshot(universe_id, as_of, member_figis, sym_id, level)
+    return UniverseSnapshot(universe_id, as_of_date, member_figis, sym_id, level)

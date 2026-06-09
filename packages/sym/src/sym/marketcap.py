@@ -11,7 +11,7 @@ the then-reported count, so on a report date the product matches the vendor figu
 forward-filled from the last report (they change slowly). **Caveat:** a stock split strictly
 *between* the last shares report and ``on_date`` leaves the carried share count on the wrong
 split basis until the next report — accurate on/near report dates, a small split-window
-approximation between (the standard data-vendor behavior). ``shares_asof`` is returned so the
+approximation between (the standard data-vendor behavior). ``shares_as_of_date`` is returned so the
 basis date is explicit.
 """
 
@@ -37,7 +37,7 @@ class MarketCap:
     local_currency: str | None
     close_raw: Decimal | None
     shares: Decimal | None
-    shares_asof: date | None  # report date the share count came from (forward-filled)
+    shares_as_of_date: date | None  # report date the share count came from (forward-filled)
 
 
 def shares_outstanding_asof(
@@ -73,15 +73,15 @@ def market_cap(
         (figi, on_date),
     ).fetchone()
     close_raw = px[0] if px and px[0] is not None else None
-    shares, shares_asof = shares_outstanding_asof(conn, figi, on_date)
+    shares, shares_as_of_date = shares_outstanding_asof(conn, figi, on_date)
 
     out_ccy = ccy or local or "?"
     if close_raw is None or shares is None or local is None:
-        return MarketCap(figi, on_date, out_ccy, None, local, close_raw, shares, shares_asof)
+        return MarketCap(figi, on_date, out_ccy, None, local, close_raw, shares, shares_as_of_date)
 
     mcap_lcy = close_raw * shares
     if ccy is None or ccy == local:
         value = mcap_lcy
     else:
         value = convert(conn, mcap_lcy, local, ccy, on_date)  # None if FX leg missing/stale
-    return MarketCap(figi, on_date, out_ccy, value, local, close_raw, shares, shares_asof)
+    return MarketCap(figi, on_date, out_ccy, value, local, close_raw, shares, shares_as_of_date)

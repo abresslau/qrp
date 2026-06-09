@@ -173,8 +173,8 @@ def record_floor_reached(conn: psycopg.Connection, figi: str, floor: date) -> No
     )
 
 
-def latest_session_for(conn: psycopg.Connection, mic: str, asof: date) -> date | None:
-    """Latest current-calendar session for ``mic`` on or before ``asof`` (not the clock)."""
+def latest_session_for(conn: psycopg.Connection, mic: str, as_of_date: date) -> date | None:
+    """Latest current-calendar session for ``mic`` on or before ``as_of_date`` (not the clock)."""
     row = conn.execute(
         """
         SELECT max(tc.session_date)
@@ -182,7 +182,7 @@ def latest_session_for(conn: psycopg.Connection, mic: str, asof: date) -> date |
           JOIN trading_calendar_version v USING (calendar_version)
          WHERE v.is_current AND tc.mic = %s AND tc.session_date <= %s
         """,
-        (mic, asof),
+        (mic, as_of_date),
     ).fetchone()
     return row[0] if row else None
 
@@ -232,7 +232,7 @@ def run_load(
     source: object,
     mode: str,
     *,
-    asof: date,
+    as_of_date: date,
     floor: date = DEFAULT_FLOOR,
     dev_days: int = DEV_DAYS,
     dev_limit: int | None = None,
@@ -263,7 +263,7 @@ def run_load(
 
     for figi, mic, cursor in securities:
         summary.attempted += 1
-        end = latest_session_for(conn, mic, asof)
+        end = latest_session_for(conn, mic, as_of_date)
         if end_cap_for is not None:
             cap = end_cap_for(figi)
             if cap is not None and (end is None or cap < end):
@@ -364,7 +364,7 @@ def run_sweep(
     conn: psycopg.Connection,
     source: object,
     *,
-    asof: date,
+    as_of_date: date,
     lookback_days: int = SWEEP_LOOKBACK_DAYS,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -379,13 +379,13 @@ def run_sweep(
     source_name = getattr(source, "SOURCE", "unknown")
     summary = LoadSummary(mode=SWEEP)
     started_at = now()
-    start = asof - timedelta(days=lookback_days)
+    start = as_of_date - timedelta(days=lookback_days)
 
     for figi, _mic, _cursor in read_active_with_cursor(conn):
         summary.attempted += 1
         try:
-            result = fetch_with_retry(source, figi, start, asof, sleep=sleep)
-            stored = _read_stored_closes(conn, figi, start, asof)
+            result = fetch_with_retry(source, figi, start, as_of_date, sleep=sleep)
+            stored = _read_stored_closes(conn, figi, start, as_of_date)
             divergences = detect_divergences(stored, result.bars)
             for divergence in divergences:
                 _flag_divergence(conn, figi, divergence, source_name)

@@ -29,7 +29,7 @@ class FxResolution:
     """The as-of resolution for one (currency, date)."""
 
     currency: str
-    as_of: date
+    as_of_date: date
     rate: Decimal | None
     observed_date: date | None
     days_stale: int
@@ -43,45 +43,45 @@ class FxResolution:
 
 def classify(
     currency: str,
-    as_of: date,
+    as_of_date: date,
     observed_date: date | None,
     rate: Decimal | None,
     *,
     outage_cap: int = OUTAGE_CAP_DAYS,
 ) -> FxResolution:
-    """Classify the latest observed rate ≤ ``as_of`` (pure).
+    """Classify the latest observed rate ≤ ``as_of_date`` (pure).
 
-    ``observed_date``/``rate`` are the most recent observation on/before ``as_of`` (or
-    ``None`` if there is none). ``no_data`` (nothing observed ≤ as_of, incl. an unknown
+    ``observed_date``/``rate`` are the most recent observation on/before ``as_of_date`` (or
+    ``None`` if there is none). ``no_data`` (nothing observed ≤ as_of_date, incl. an unknown
     currency) is distinct from ``stale`` (an observation exists but is older than the cap).
     """
     if observed_date is None or rate is None:
-        return FxResolution(currency, as_of, None, observed_date, 0, "no_data")
-    days = (as_of - observed_date).days
+        return FxResolution(currency, as_of_date, None, observed_date, 0, "no_data")
+    days = (as_of_date - observed_date).days
     if days < 0:
-        return FxResolution(currency, as_of, None, observed_date, days, "no_data")
+        return FxResolution(currency, as_of_date, None, observed_date, days, "no_data")
     if days > outage_cap:
-        return FxResolution(currency, as_of, None, observed_date, days, "stale")
-    return FxResolution(currency, as_of, rate, observed_date, days, "ok")
+        return FxResolution(currency, as_of_date, None, observed_date, days, "stale")
+    return FxResolution(currency, as_of_date, rate, observed_date, days, "ok")
 
 
 def fx_rate(
     conn: psycopg.Connection,
     currency: str,
-    as_of: date,
+    as_of_date: date,
     *,
     outage_cap: int = OUTAGE_CAP_DAYS,
 ) -> FxResolution:
-    """Resolve the USD-base rate (currency per 1 USD) as-of ``as_of`` (thin DB wrapper)."""
+    """Resolve the USD-base rate (currency per 1 USD) as-of ``as_of_date`` (thin DB wrapper)."""
     if currency == USD:
-        return FxResolution(USD, as_of, Decimal(1), as_of, 0, "ok")
-    # Latest observation on/before as_of; when two sources hold the same date, the lower
+        return FxResolution(USD, as_of_date, Decimal(1), as_of_date, 0, "ok")
+    # Latest observation on/before as_of_date; when two sources hold the same date, the lower
     # fx_source_rank wins (Frankfurter over ECB over fawazahmed0) so the pick is deterministic.
     row = conn.execute(
         "SELECT as_of_date, rate FROM fx_rate "
         "WHERE base_currency = 'USD' AND quote_currency = %s AND as_of_date <= %s "
         "ORDER BY as_of_date DESC, fx_source_rank(source) ASC LIMIT 1",
-        (currency, as_of),
+        (currency, as_of_date),
     ).fetchone()
     observed_date, rate = (row[0], row[1]) if row else (None, None)
-    return classify(currency, as_of, observed_date, rate, outage_cap=outage_cap)
+    return classify(currency, as_of_date, observed_date, rate, outage_cap=outage_cap)

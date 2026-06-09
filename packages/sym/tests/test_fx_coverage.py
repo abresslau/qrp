@@ -40,7 +40,7 @@ class _Conn:
 
 
 def test_empty_fx_table_warns_not_fails():
-    r = check_fx_coverage(_Conn(["BRL", "GBP"], 0, {}), as_of=AS_OF)
+    r = check_fx_coverage(_Conn(["BRL", "GBP"], 0, {}), as_of_date=AS_OF)
     assert r.status == "warn" and r.failures == 0 and r.warnings == 2
 
 
@@ -48,17 +48,17 @@ def test_missing_needed_currency_warns():
     # Coverage gaps are completeness signals -> warn (a known source limitation), not a hard
     # fail; integrity is enforced by the fx_rate constraints, not here.
     conn = _Conn(["BRL", "GBP"], 10, {"BRL": (AS_OF, Decimal("5.4")), "GBP": None})
-    r = check_fx_coverage(conn, as_of=AS_OF)
+    r = check_fx_coverage(conn, as_of_date=AS_OF)
     assert r.status == "warn" and r.failures == 0 and r.warnings == 1  # GBP has no rate
 
 
 def test_stale_needed_currency_warns():
     conn = _Conn(["BRL"], 10, {"BRL": (date(2026, 1, 1), Decimal("5.4"))})  # ~155d old
-    r = check_fx_coverage(conn, as_of=AS_OF)
+    r = check_fx_coverage(conn, as_of_date=AS_OF)
     assert r.status == "warn" and r.warnings == 1
 
 
 def test_all_fresh_passes():
     rates = {"BRL": (AS_OF, Decimal("5.4")), "GBP": (AS_OF, Decimal("0.74"))}
-    r = check_fx_coverage(_Conn(["BRL", "GBP"], 10, rates), as_of=AS_OF)
+    r = check_fx_coverage(_Conn(["BRL", "GBP"], 10, rates), as_of_date=AS_OF)
     assert r.status == "pass" and r.failures == 0 and r.warnings == 0

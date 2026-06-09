@@ -11,7 +11,7 @@ testable without the financedatabase frame, and writes go through one
 ``conn.transaction()`` per security so a single bad row never rolls back the run.
 Data is current-only, written in slowly-changing-dimension shape: a re-run with an
 unchanged classification is a no-op; a changed one closes the prior row
-(``valid_to = as_of``) before inserting the new one (never a hard delete).
+(``valid_to = as_of_date``) before inserting the new one (never a hard delete).
 """
 
 from __future__ import annotations
@@ -245,16 +245,16 @@ def apply_classifications(
     conn: psycopg.Connection,
     plans: Sequence[GicsClassification],
     *,
-    as_of: date | None = None,
+    as_of_date: date | None = None,
 ) -> ClassificationSummary:
     """Write classifications in SCD shape, one transaction per security.
 
     Idempotent and survivorship-safe:
 
     * unchanged currently-effective row → left alone;
-    * changed **on a later day** → the prior row is closed (``valid_to = as_of``)
+    * changed **on a later day** → the prior row is closed (``valid_to = as_of_date``)
       and a new row inserted, so ``gics_scd_no_overlap`` holds and history is kept;
-    * changed **on the same day it was written** (``valid_from == as_of``) → the
+    * changed **on the same day it was written** (``valid_from == as_of_date``) → the
       row is updated **in place**. Closing it would set ``valid_to = valid_from``,
       a zero-width period that violates ``gics_scd_validity_chk`` (``valid_to >
       valid_from``); a same-day correction has no historical period to preserve.
@@ -263,7 +263,7 @@ def apply_classifications(
     rolled back, counted in ``summary.failed``, and the run continues — one bad
     row never halts the rest.
     """
-    as_of = as_of or date.today()
+    as_of_date = as_of_date or date.today()
     summary = ClassificationSummary()
     for classification in plans:
         try:
@@ -272,7 +272,7 @@ def apply_classifications(
                 if current is not None and current[0] == classification.level_names():
                     summary.unchanged += 1
                     continue
-                if current is not None and current[1] == as_of:
+                if current is not None and current[1] == as_of_date:
                     _update_in_place(conn, classification)
                     summary.rows_updated += 1
                     continue
@@ -284,10 +284,10 @@ def apply_classifications(
                          WHERE composite_figi = %s
                            AND valid_to IS NULL
                         """,
-                        (as_of, classification.composite_figi),
+                        (as_of_date, classification.composite_figi),
                     )
                     summary.rows_closed += 1
-                _insert_row(conn, classification, valid_from=as_of)
+                _insert_row(conn, classification, valid_from=as_of_date)
                 summary.rows_inserted += 1
         except psycopg.Error:
             # A single security's write failing must not abort the whole run.
@@ -362,7 +362,7 @@ def classify_universe(
     conn: psycopg.Connection,
     source: GicsSource,
     *,
-    as_of: date | None = None,
+    as_of_date: date | None = None,
 ) -> ClassificationSummary:
     """Classify every active security and report coverage against AC #2's threshold.
 
@@ -371,7 +371,7 @@ def classify_universe(
     """
     active = read_active_identities(conn)
     plans = plan_classifications(active, source)
-    summary = apply_classifications(conn, plans, as_of=as_of)
+    summary = apply_classifications(conn, plans, as_of_date=as_of_date)
     summary.active_total = len(active)
     summary.classified = len(plans)
     return summary

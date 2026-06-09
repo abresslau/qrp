@@ -173,50 +173,50 @@ def _last_on_or_before(sessions: Sequence[date], target: date) -> date | None:
     return sessions[i - 1] if i > 0 else None
 
 
-def _session_before(sessions: Sequence[date], asof: date) -> date | None:
-    i = bisect.bisect_left(sessions, asof)
+def _session_before(sessions: Sequence[date], as_of_date: date) -> date | None:
+    i = bisect.bisect_left(sessions, as_of_date)
     return sessions[i - 1] if i > 0 else None
 
 
-def _completed_period_end(window: Window, asof: date, sessions: Sequence[date]) -> date | None:
-    """Last session of the calendar period that ended just before ``asof``'s period.
+def _completed_period_end(window: Window, as_of_date: date, sessions: Sequence[date]) -> date | None:
+    """Last session of the calendar period that ended just before ``as_of_date``'s period.
 
     Shared by ``calendar`` windows (their base) and ``period`` windows (their end).
     """
-    period_start = _PERIOD_START[window.period](asof)
+    period_start = _PERIOD_START[window.period](as_of_date)
     return _last_on_or_before(sessions, period_start - timedelta(days=1))
 
 
-def base_date(window: Window, asof: date, sessions: Sequence[date]) -> date | None:
-    """The base (start) session for ``window`` as of ``asof``.
+def base_date(window: Window, as_of_date: date, sessions: Sequence[date]) -> date | None:
+    """The base (start) session for ``window`` as of ``as_of_date``.
 
     ``sessions`` is the ascending list of trading days for the security's exchange.
     Returns ``None`` when history doesn't reach the base (the NULL rule).
     """
     if window.kind == CALENDAR:
         if window.period == "day":
-            return _session_before(sessions, asof)
-        return _completed_period_end(window, asof, sessions)
+            return _session_before(sessions, as_of_date)
+        return _completed_period_end(window, as_of_date, sessions)
     if window.kind == SESSION:
-        # N sessions back from asof's position; i-1 is the prior session (matching
+        # N sessions back from as_of_date's position; i-1 is the prior session (matching
         # 1D when sessions==1), so i-N is N sessions back. None if history is short.
-        i = bisect.bisect_left(sessions, asof)
+        i = bisect.bisect_left(sessions, as_of_date)
         j = i - window.sessions
         return sessions[j] if j >= 0 else None
     if window.kind == TRAILING:
         if window.days is not None:
-            target = asof - timedelta(days=window.days)
+            target = as_of_date - timedelta(days=window.days)
         elif window.months is not None:
-            target = _minus_months(asof, window.months)
+            target = _minus_months(as_of_date, window.months)
         else:
-            target = _minus_years(asof, window.years)
+            target = _minus_years(as_of_date, window.years)
         return _last_on_or_before(sessions, target)
     if window.kind == INCEPTION:
         return sessions[0] if sessions else None
     if window.kind == PERIOD:
         # base = the close of the period BEFORE the just-completed one, so the
         # return spans exactly the completed period (e.g. PQ = Q3-end / Q2-end - 1).
-        end = _completed_period_end(window, asof, sessions)
+        end = _completed_period_end(window, as_of_date, sessions)
         if end is None:
             return None
         prior_start = _PERIOD_START[window.period](end)
@@ -224,22 +224,22 @@ def base_date(window: Window, asof: date, sessions: Sequence[date]) -> date | No
     raise ValueError(f"unknown window kind {window.kind!r}")
 
 
-def end_date(window: Window, asof: date, sessions: Sequence[date]) -> date | None:
-    """The end (numerator) session for ``window`` as of ``asof``.
+def end_date(window: Window, as_of_date: date, sessions: Sequence[date]) -> date | None:
+    """The end (numerator) session for ``window`` as of ``as_of_date``.
 
-    For nearly all kinds the return ends at ``asof`` itself (a base->as-of return).
+    For nearly all kinds the return ends at ``as_of_date`` itself (a base->as-of return).
     A ``period`` window is discrete: it ends at the last session of the just-completed
     calendar period (e.g. PQ ends at the prior quarter's last session), so both of its
     endpoints lie in the past.
     """
     if window.kind == PERIOD:
-        return _completed_period_end(window, asof, sessions)
-    return asof
+        return _completed_period_end(window, as_of_date, sessions)
+    return as_of_date
 
 
-def period_years(asof: date, base: date) -> Decimal:
-    """Actual elapsed years between base and asof (for CAGR annualization)."""
-    return Decimal((asof - base).days) / DAYS_PER_YEAR
+def period_years(as_of_date: date, base: date) -> Decimal:
+    """Actual elapsed years between base and as_of_date (for CAGR annualization)."""
+    return Decimal((as_of_date - base).days) / DAYS_PER_YEAR
 
 
 def canonical_return(

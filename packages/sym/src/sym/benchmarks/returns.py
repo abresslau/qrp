@@ -22,19 +22,19 @@ from sym.returns.windows import WINDOWS, base_date, canonical_return, end_date, 
 def index_return_rows(
     sym_id: int,
     levels: dict[date, Decimal],
-    asofs: Sequence[date],
+    as_of_dates: Sequence[date],
     sessions: Sequence[date],
 ) -> list[tuple[int, int, date, Decimal | None]]:
-    """(sym_id, window_id, as_of, ret) for one index series (pure).
+    """(sym_id, window_id, as_of_date, ret) for one index series (pure).
 
     ``ret`` is the level ratio over each window (annualized where the window is);
     insufficient history → None. ``sessions`` is the index's own level-date list.
     """
     rows: list[tuple[int, int, date, Decimal | None]] = []
-    for asof in asofs:
+    for as_of_date in as_of_dates:
         for w in WINDOWS:
-            end = end_date(w, asof, sessions)
-            base = base_date(w, asof, sessions)
+            end = end_date(w, as_of_date, sessions)
+            base = base_date(w, as_of_date, sessions)
             lvl_end = levels.get(end) if end is not None else None
             lvl_base = levels.get(base) if base is not None else None
             years = (
@@ -47,7 +47,7 @@ def index_return_rows(
                 if lvl_end is not None and lvl_base is not None
                 else None
             )
-            rows.append((sym_id, w.id, asof, ret))
+            rows.append((sym_id, w.id, as_of_date, ret))
     return rows
 
 
@@ -107,10 +107,10 @@ def recompute_index_returns(
         if not levels:
             continue
         sessions = sorted(levels)
-        asofs = [d for d in sessions if start <= d <= end]
-        if not asofs:
+        as_of_dates = [d for d in sessions if start <= d <= end]
+        if not as_of_dates:
             continue
-        rows = index_return_rows(sym_id, levels, asofs, sessions)
+        rows = index_return_rows(sym_id, levels, as_of_dates, sessions)
         _upsert(conn, rows)
         summary.series += 1
         summary.rows += len(rows)

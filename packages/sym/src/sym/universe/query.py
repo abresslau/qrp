@@ -16,15 +16,15 @@ import psycopg
 from sym.universe.registry import PitBoundaryError, UnknownUniverseError
 
 
-def assert_within_pit(as_of: date, pit_valid_from: date | None) -> None:
-    """Raise :class:`PitBoundaryError` if ``as_of`` precedes ``pit_valid_from``.
+def assert_within_pit(as_of_date: date, pit_valid_from: date | None) -> None:
+    """Raise :class:`PitBoundaryError` if ``as_of_date`` precedes ``pit_valid_from``.
 
     ``pit_valid_from`` NULL means no known boundary (history not yet pinned) →
     allowed. This is the survivorship guardrail (no silent back-projection).
     """
-    if pit_valid_from is not None and as_of < pit_valid_from:
+    if pit_valid_from is not None and as_of_date < pit_valid_from:
         raise PitBoundaryError(
-            f"as-of {as_of} precedes pit_valid_from {pit_valid_from}: membership before a "
+            f"as-of {as_of_date} precedes pit_valid_from {pit_valid_from}: membership before a "
             "universe's trustworthy history is not available (would be a back-projection)"
         )
 
@@ -38,13 +38,13 @@ def _pit_valid_from(conn: psycopg.Connection, universe_id: str) -> date | None:
     return row[0]
 
 
-def members(conn: psycopg.Connection, universe_id: str, as_of: date) -> set[str]:
-    """The CompositeFIGI set that was a member of ``universe_id`` on ``as_of``.
+def members(conn: psycopg.Connection, universe_id: str, as_of_date: date) -> set[str]:
+    """The CompositeFIGI set that was a member of ``universe_id`` on ``as_of_date``.
 
     Enforces the pit boundary first. The returned FIGIs join directly to
     ``fact_returns`` for the research cross-section.
     """
-    assert_within_pit(as_of, _pit_valid_from(conn, universe_id))
+    assert_within_pit(as_of_date, _pit_valid_from(conn, universe_id))
     rows = conn.execute(
         """
         SELECT composite_figi
@@ -53,21 +53,21 @@ def members(conn: psycopg.Connection, universe_id: str, as_of: date) -> set[str]
            AND valid_from <= %s
            AND (valid_to IS NULL OR valid_to > %s)
         """,
-        (universe_id, as_of, as_of),
+        (universe_id, as_of_date, as_of_date),
     ).fetchall()
     return {r[0] for r in rows}
 
 
-def members_overlap(conn: psycopg.Connection, a: str, b: str, as_of: date) -> set[str]:
-    """FIGIs in BOTH universes as-of ``as_of``."""
-    return members(conn, a, as_of) & members(conn, b, as_of)
+def members_overlap(conn: psycopg.Connection, a: str, b: str, as_of_date: date) -> set[str]:
+    """FIGIs in BOTH universes as-of ``as_of_date``."""
+    return members(conn, a, as_of_date) & members(conn, b, as_of_date)
 
 
-def members_in_a_not_b(conn: psycopg.Connection, a: str, b: str, as_of: date) -> set[str]:
-    """FIGIs in ``a`` but not ``b`` as-of ``as_of``."""
-    return members(conn, a, as_of) - members(conn, b, as_of)
+def members_in_a_not_b(conn: psycopg.Connection, a: str, b: str, as_of_date: date) -> set[str]:
+    """FIGIs in ``a`` but not ``b`` as-of ``as_of_date``."""
+    return members(conn, a, as_of_date) - members(conn, b, as_of_date)
 
 
-def members_union(conn: psycopg.Connection, a: str, b: str, as_of: date) -> set[str]:
-    """FIGIs in EITHER universe as-of ``as_of``."""
-    return members(conn, a, as_of) | members(conn, b, as_of)
+def members_union(conn: psycopg.Connection, a: str, b: str, as_of_date: date) -> set[str]:
+    """FIGIs in EITHER universe as-of ``as_of_date``."""
+    return members(conn, a, as_of_date) | members(conn, b, as_of_date)

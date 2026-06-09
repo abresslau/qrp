@@ -142,7 +142,7 @@ class FrankfurterSource:
         return parse_frankfurter_timeseries(payload)
 
 
-def parse_fawazahmed_day(payload: dict, wanted: set[str], as_of: date) -> list[FxObservation]:
+def parse_fawazahmed_day(payload: dict, wanted: set[str], as_of_date: date) -> list[FxObservation]:
     """Parse one fawazahmed0 ``currencies/usd.json`` day to USD-base observations (pure).
 
     Shape: ``{"date":"2026-06-05","usd":{"twd":31.5,"brl":5.06,...}}`` — the file *is* USD-base
@@ -156,7 +156,7 @@ def parse_fawazahmed_day(payload: dict, wanted: set[str], as_of: date) -> list[F
     for code in wanted:
         value = usd.get(code.lower())
         if value is not None:
-            out.append(FxObservation(code, as_of, to_usd_base(Decimal(str(value)), QUOTE_PER_USD)))
+            out.append(FxObservation(code, as_of_date, to_usd_base(Decimal(str(value)), QUOTE_PER_USD)))
     return out
 
 

@@ -24,7 +24,7 @@ formula is also caught.
 This is a manual, network-touching capture (re-run to refresh the fixture after a
 deliberate reference change). It is NOT part of the test suite.
 
-Usage:  uv run python benchmark/capture_accuracy_reference.py [--asof YYYY-MM-DD]
+Usage:  uv run python benchmark/capture_accuracy_reference.py [--as_of_date YYYY-MM-DD]
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ def _ref_return(price_asof: float, price_base: float, *, annualized: bool, years
     return ratio ** (1.0 / years) - 1.0
 
 
-def capture(asof: date) -> dict:
+def capture(as_of_date: date) -> dict:
     conn = connect()
     resolve = make_yahoo_symbol_resolver(conn)
     categories = _ticker_categories()
@@ -112,7 +112,7 @@ def capture(asof: date) -> dict:
          WHERE f.as_of_date = %s
          ORDER BY ticker
         """,
-        (asof,),
+        (as_of_date,),
     ).fetchall()
 
     names: dict[str, dict] = {}
@@ -128,9 +128,9 @@ def capture(asof: date) -> dict:
             print(f"  skip {ticker}: no Yahoo symbol")
             continue
         sessions = _calendar_sessions(conn, mic)
-        start = asof.replace(year=asof.year - 31)
+        start = as_of_date.replace(year=as_of_date.year - 31)
         try:
-            ydates, split_adj, total_adj = _yahoo_series(symbol, start, asof)
+            ydates, split_adj, total_adj = _yahoo_series(symbol, start, as_of_date)
         except Exception as exc:  # noqa: BLE001 - capture tool, log and continue
             print(f"  skip {ticker} ({symbol}): {exc}")
             continue
@@ -140,8 +140,8 @@ def capture(asof: date) -> dict:
 
         windows: dict[str, dict] = {}
         for w in WINDOWS:
-            end = end_date(w, asof, sessions)  # as-of for most windows; past for `period`
-            base = base_date(w, asof, sessions)
+            end = end_date(w, as_of_date, sessions)  # as-of for most windows; past for `period`
+            base = base_date(w, as_of_date, sessions)
             if base is None or end is None:
                 continue
             y_end = _on_or_before(ydates, end)
@@ -176,7 +176,7 @@ def capture(asof: date) -> dict:
             f"ticker/symbology format mismatch; refusing to write a degenerate fixture."
         )
     return {
-        "asof": asof.isoformat(),
+        "as_of_date": as_of_date.isoformat(),
         "source": (
             "yfinance auto_adjust=False: Close (split-adj)=PR ref, "
             "Adj Close (split+div)=TR ref"
@@ -191,17 +191,17 @@ def capture(asof: date) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--asof", type=date.fromisoformat, default=None)
+    parser.add_argument("--as_of_date", type=date.fromisoformat, default=None)
     args = parser.parse_args()
 
-    asof = args.asof
-    if asof is None:
+    as_of_date = args.as_of_date
+    if as_of_date is None:
         conn = connect()
-        asof = conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
+        as_of_date = conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
         conn.close()
-    print(f"Capturing SM-6 reference as of {asof} ...")
+    print(f"Capturing SM-6 reference as of {as_of_date} ...")
 
-    fixture = capture(asof)
+    fixture = capture(as_of_date)
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
     FIXTURE.write_text(json.dumps(fixture, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Wrote {FIXTURE} ({len(fixture['names'])} names)")

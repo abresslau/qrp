@@ -93,12 +93,12 @@ def _resolve_benchmark_figi(sym_map: dict, ticker: str, symbol: str) -> str | No
 
 @pytest.fixture(scope="module")
 def sym_returns(reference) -> dict:
-    """{ticker: {window_code: (pr, tr)}} from fact_returns at the fixture's asof."""
+    """{ticker: {window_code: (pr, tr)}} from fact_returns at the fixture's as_of_date."""
     conn = _connect()
     if conn is None:
         pytest.skip("database unavailable")
     try:
-        asof = reference["asof"]
+        as_of_date = reference["as_of_date"]
         sym_map = {
             (sv, (mic or "").strip()): figi
             for sv, mic, figi in conn.execute(
@@ -115,7 +115,7 @@ def sym_returns(reference) -> dict:
             rows = conn.execute(
                 "SELECT window_id, pr, tr FROM fact_returns "
                 "WHERE composite_figi = %s AND as_of_date = %s",
-                (figi, asof),
+                (figi, as_of_date),
             ).fetchall()
             if rows:
                 out[ticker] = {id_to_code[wid]: (pr, tr) for wid, pr, tr in rows}

@@ -98,7 +98,7 @@ def test_run_sweep_flags_divergence_without_overwriting(monkeypatch):
     )
     conn = _Conn()
     src = _Source([_bar(date(2026, 5, 1), 110)])  # 10% correction
-    summary = run_sweep(conn, src, asof=date(2026, 6, 6), sleep=lambda d: None)
+    summary = run_sweep(conn, src, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
 
     assert summary.mode == "sweep" and summary.flags == 1 and summary.run_id == 7
     assert conn.autocommit is True

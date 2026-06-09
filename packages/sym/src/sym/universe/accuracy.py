@@ -96,7 +96,7 @@ def run_accuracy_check(
     reference: set[str],
     *,
     reference_source: str,
-    as_of: date,
+    as_of_date: date,
     threshold: float = DEFAULT_THRESHOLD,
     proxy_tolerance: float = 0.0,
     sample: int = 20,
@@ -123,7 +123,7 @@ def run_accuracy_check(
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
-            universe_id, as_of, reference_source, result.maintained_count,
+            universe_id, as_of_date, reference_source, result.maintained_count,
             result.reference_count, len(result.missing), len(result.extra),
             result.divergence, result.threshold, result.alarm, Jsonb(detail),
         ),
