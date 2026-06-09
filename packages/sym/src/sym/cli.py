@@ -274,6 +274,56 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_reload(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import source_key
+    from sym.db import connect
+    from sym.ingest.pipeline import RELOAD, read_active_with_cursor, run_load
+    from sym.sources import get_source
+    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+
+    try:
+        start_date = date.fromisoformat(args.start_date)
+        end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
+    except ValueError as exc:
+        print(f"invalid date: {exc}", file=sys.stderr)
+        return 1
+    if start_date > end_date:
+        print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
+        return 1
+    try:
+        with connect() as conn:
+            # run_load requires a non-transactional connection (it sets autocommit for per-figi
+            # durability); set it before the --figi lookup so that read doesn't open a txn first.
+            conn.autocommit = True
+            resolver = make_yahoo_symbol_resolver(conn)
+            source = get_source(source_key(), symbol_for=resolver)
+            securities = None
+            if args.figi:
+                securities = [s for s in read_active_with_cursor(conn) if s[0] == args.figi]
+                if not securities:
+                    print(f"{args.figi} not in the active master", file=sys.stderr)
+                    return 1
+            summary = run_load(
+                conn, source, RELOAD,
+                as_of_date=end_date, start_date=start_date, securities=securities,
+            )
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    scope = f"figi={args.figi}" if args.figi else "active master"
+    print(
+        f"reload [{start_date} .. {end_date}] ({scope}) run #{summary.run_id} [{summary.status}]: "
+        f"attempted={summary.attempted} reloaded={summary.loaded} skipped={summary.skipped} "
+        f"errored={summary.errored} rows={summary.rows}"
+    )
+    for figi, msg in summary.errors[:10]:
+        print(f"  error {figi}: {msg[:80]}", file=sys.stderr)
+    return 2 if summary.errored else 0
+
+
 def _cmd_backup(args: argparse.Namespace) -> int:
     import subprocess
     from pathlib import Path
@@ -1011,9 +1061,21 @@ def build_parser() -> argparse.ArgumentParser:
         "recompute",
         help="Materialize the price-return matrix into fact_returns over an as_of_date range.",
     )
-    p_recompute.add_argument("--from", dest="start", help="Start as_of_date (ISO; default: 1 year back).")
-    p_recompute.add_argument("--to", dest="to", help="End as_of_date (ISO; default: today).")
+    p_recompute.add_argument(
+        "--start_date", dest="start", help="Start as_of_date (ISO; default: 1 year back)."
+    )
+    p_recompute.add_argument("--end_date", dest="to", help="End as_of_date (ISO; default: today).")
     p_recompute.set_defaults(func=_cmd_recompute)
+
+    p_reload = sub.add_parser(
+        "reload",
+        help="Re-upload raw prices for an explicit [start_date, end_date] window — REPLACES stored "
+        "bars (e.g. a provisional same-day pull, or a vendor restatement). Other dates untouched.",
+    )
+    p_reload.add_argument("--start_date", required=True, help="Window start (ISO, inclusive).")
+    p_reload.add_argument("--end_date", help="Window end (ISO, inclusive; default: today).")
+    p_reload.add_argument("--figi", help="Restrict to one composite_figi (default: active master).")
+    p_reload.set_defaults(func=_cmd_reload)
 
     p_benchmarks = sub.add_parser(
         "benchmarks",

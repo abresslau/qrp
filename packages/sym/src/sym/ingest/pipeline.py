@@ -31,6 +31,7 @@ from sym.sources.contract import OhlcvResult
 DEV = "dev"
 BACKFILL = "backfill"
 DELTA = "delta"
+RELOAD = "reload"  # explicit-window re-upload (Story 2.10): replaces stored bars in [start, end]
 SWEEP = "sweep"
 
 DEFAULT_FLOOR = date(1990, 1, 1)
@@ -49,6 +50,7 @@ def compute_window(
     end: date | None,
     dev_days: int = DEV_DAYS,
     floor_reached: date | None = None,
+    reload_start: date | None = None,
 ) -> tuple[date, date] | None:
     """The [start, end] sessions to fetch for one security, or None to skip it.
 
@@ -74,6 +76,12 @@ def compute_window(
         if is_current and reached_floor:
             return None  # already fetched down to (at least) this floor and current
         return (floor, end)
+    if mode == RELOAD:
+        # Explicit operator-chosen window; cursor-independent (we WANT to re-fetch even
+        # when current). `end` is already clamped to the latest session <= end_date.
+        if reload_start is None or reload_start > end:
+            return None
+        return (reload_start, end)
     if cursor_date is not None and cursor_date >= end:
         return None  # up-to-date -> skip (AC #1 resume, AC #4 idempotency)
     if mode == DELTA:
@@ -200,6 +208,19 @@ def _mark_error(conn: psycopg.Connection, figi: str, source: str, detail: str) -
     )
 
 
+def _delete_prices_range(conn: psycopg.Connection, figi: str, start: date, end: date) -> None:
+    """Discard stored raw bars for one figi in [start, end].
+
+    The one explicit override of the immutable ``ON CONFLICT DO NOTHING`` write (Story 2.10
+    reload), scoped to an operator-chosen window so a re-fetch can *replace* a bad bar
+    (e.g. a provisional same-day pull) instead of being skipped.
+    """
+    conn.execute(
+        "DELETE FROM prices_raw WHERE composite_figi = %s AND session_date BETWEEN %s AND %s",
+        (figi, start, end),
+    )
+
+
 def _write_run_log(
     conn: psycopg.Connection,
     summary: LoadSummary,
@@ -233,6 +254,7 @@ def run_load(
     mode: str,
     *,
     as_of_date: date,
+    start_date: date | None = None,
     floor: date = DEFAULT_FLOOR,
     dev_days: int = DEV_DAYS,
     dev_limit: int | None = None,
@@ -271,7 +293,8 @@ def run_load(
         fig_floor = (floor_for(figi) if floor_for is not None else None) or floor
         reached = floor_reached_for(conn, figi) if mode == BACKFILL else None
         window = compute_window(
-            mode, cursor, floor=fig_floor, end=end, dev_days=dev_days, floor_reached=reached
+            mode, cursor, floor=fig_floor, end=end, dev_days=dev_days,
+            floor_reached=reached, reload_start=start_date,
         )
         if window is None:
             summary.skipped += 1
@@ -282,7 +305,14 @@ def run_load(
             # write must mark one figi errored, not halt the run (AC #3).
             result = fetch_with_retry(source, figi, start, stop, sleep=sleep)
             expected = expected_trading_days(conn, mic, start, stop)
-            result_summary = ingest_result(conn, result, expected_sessions=expected)
+            if mode == RELOAD:
+                # Replace the window atomically, and only AFTER a successful fetch — a vendor
+                # failure must never leave a deleted-but-unreloaded hole (Story 2.10 AC#2).
+                with conn.transaction():
+                    _delete_prices_range(conn, figi, start, stop)
+                    result_summary = ingest_result(conn, result, expected_sessions=expected)
+            else:
+                result_summary = ingest_result(conn, result, expected_sessions=expected)
         except Exception as exc:  # noqa: BLE001 - isolate one figi's failure
             _mark_error(conn, figi, source_name, str(exc))
             summary.errored += 1
