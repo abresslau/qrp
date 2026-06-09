@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
-from backtest.db import connect, sym_conn
+from backtest.db import connect
 from backtest.gateway import DbBacktestGateway
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
 def _gateway() -> Iterator[DbBacktestGateway]:
     conn = connect()  # backtest owns its own database
-    sym = sym_conn()                          # sym package — engine reads on run
+    sym = connect("sym")                          # sym package — engine reads on run
     try:
         yield DbBacktestGateway(conn, sym)
     finally:

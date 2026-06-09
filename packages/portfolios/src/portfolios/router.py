@@ -8,7 +8,7 @@ from datetime import date
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from portfolios.db import connect, sym_conn
+from portfolios.db import connect
 from portfolios.gateway import DbPortfolioGateway
 
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 def _gateway() -> Iterator[DbPortfolioGateway]:
     conn = connect()  # portfolios owns its own database
-    sym = sym_conn()                            # sym package — labels + fact_returns (PnL), in-app
+    sym = connect("sym")                            # sym package — labels + fact_returns (PnL), in-app
     try:
         yield DbPortfolioGateway(conn, sym)
     finally:

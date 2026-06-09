@@ -67,7 +67,11 @@ claude-opus-4-8 (Claude Code), 2026-06-09
 - Verified: 19/19 modules import, gateway app builds (40 routes), 22 tests pass, dagster validate
   green; no "sym hub" framing remains outside immutable `db/spikes/` artifacts. Dependency
   structure unchanged — packages still read sym via a read-only connection (framing-only change).
-- NOT committed (awaiting owner go) — left in the working tree for review.
+- **Follow-up (design review, Option B):** dropped the `sym_conn()` wrapper entirely — a dedicated
+  per-package accessor still privileged sym at the API level. sym is now reached via the **generic
+  `connect("sym")`** (same as `connect("macro")` etc.); the generic `connect(dbname)` is the single
+  accessor, no privileged peer. Removed the wrapper from 8 `db.py`; switched 9 consumers to
+  `connect("sym")`. Verified: imports, gateway 40 routes, 22 tests, dagster validate.
 
 ### File List
 - 8 `db.py` (sym_conn def) + routers (portfolios/signals/backtest/optimiser/analytics) + engines

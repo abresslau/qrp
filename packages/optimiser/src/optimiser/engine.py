@@ -202,9 +202,9 @@ def _tickers(conn, figis) -> dict:
 
 
 if __name__ == "__main__":
-    from optimiser.db import connect, sym_conn
+    from optimiser.db import connect
 
-    sym_conn = sym_conn()
+    sym_conn = connect("sym")
     opt_conn = connect()
     try:
         for m in ("min_variance", "max_sharpe"):

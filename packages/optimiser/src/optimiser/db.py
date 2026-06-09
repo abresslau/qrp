@@ -31,8 +31,3 @@ def connect(dbname: str = _OWN) -> psycopg.Connection:
     _load_env()
     target = os.environ.get(f"{dbname.upper()}_DATABASE_URL") or f"dbname={dbname}"
     return psycopg.connect(target, connect_timeout=5)
-
-
-def sym_conn() -> psycopg.Connection:
-    """Connection to the sym package DB — a read-only upstream peer (sym is not a hub)."""
-    return connect("sym")

@@ -170,9 +170,9 @@ def compute_universe(
 
 
 if __name__ == "__main__":
-    from signals.db import connect, sym_conn
+    from signals.db import connect
 
-    sym_conn = sym_conn()              # sym DB — read-only by convention (the sym package)
+    sym_conn = connect("sym")              # sym DB — read-only by convention (the sym package)
     sig_conn = connect()  # signal DB — the derived store this package owns
     try:
         for uid in ("sp500", "ibov", "ibx"):

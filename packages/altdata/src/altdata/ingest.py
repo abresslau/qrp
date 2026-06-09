@@ -14,7 +14,7 @@ from datetime import date
 
 import psycopg
 
-from altdata.db import connect, sym_conn
+from altdata.db import connect
 
 # Curated ticker -> (en.wikipedia article, display name). Wikipedia article titles are
 # stable; the attention signal is the daily pageview count.
@@ -101,7 +101,7 @@ def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
 
 
 if __name__ == "__main__":
-    sym_conn = sym_conn()
+    sym_conn = connect("sym")
     ad_conn = connect()
     try:
         res = run_ingest(sym_conn, ad_conn)

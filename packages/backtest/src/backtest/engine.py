@@ -241,9 +241,9 @@ def run_backtest(
 
 
 if __name__ == "__main__":
-    from backtest.db import connect, sym_conn
+    from backtest.db import connect
 
-    sym_conn = sym_conn()
+    sym_conn = connect("sym")
     bt_conn = connect()
     try:
         print(json.dumps(run_backtest(sym_conn, bt_conn), indent=2, default=str))
