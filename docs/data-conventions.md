@@ -66,11 +66,14 @@ have a perfectly good immutable FIGI). So each key stays where it is the right t
 **The bridge.** `instrument_xref` is the single source of truth mapping external ids to
 `sym_id`. Every `securities` row maps 1:1 to an `instrument(kind='equity')` via a
 `composite_figi` xref — so `composite_figi` is "just one external id among many" on the
-spine, and equity ↔ index joins go through `sym_id`. The mapping is kept current by the EOD
-**`map`** step (`backfill_equity_instruments`, idempotent) and asserted every run by
-`sym validate` (the `equity_instrument_bridge` check fails if a security is unmapped or an
-equity instrument lacks its FIGI xref). Revisit Option A only if QRP grows into a true
-multi-asset book (heavy FX/rates/futures/non-FIGI instruments).
+spine, and equity ↔ index joins go through `sym_id`. The mapping is refreshed **where
+securities are created** (`run_universe_load`) and by the nightly EOD **`map`** step
+(`backfill_equity_instruments`, idempotent). `sym validate`'s `equity_instrument_bridge` check
+verifies it on every run — a hole (a security not bridged to a `kind='equity'` instrument, or
+an equity instrument missing its FIGI xref) turns the check red: a hard non-zero gate when
+`sym validate` runs standalone, and a logged `[FAIL]` within the non-critical EOD `validate`
+step. Revisit Option A only if QRP grows into a true multi-asset book (heavy
+FX/rates/futures/non-FIGI instruments).
 
 ## 4. Effective-dated history (SCD Type 2) and the half-open interval
 

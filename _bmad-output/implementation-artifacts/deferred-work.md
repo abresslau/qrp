@@ -40,3 +40,9 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 - `lineage/diagram.py` computes the output path via `Path(__file__).parents[2]`, assuming the `src/` layout — would write to the wrong place if the package is installed as a wheel.
 - `analytics/metrics` (computed, schema-less) never appears in the Mermaid field-flow even though it has `composite_figi`-bearing deps — documented in the diagram caption; revisit if a computed-node view is wanted.
 - `operate/job` asset carries `database="qrp"` but sits in group `operate` — cosmetic db-label mismatch; fold into the de-hub effort (#14).
+
+## Deferred from: code review of B7-identity-key-bridge (2026-06-09)
+
+- Add the cross-key bridge edge (securities.composite_figi → instrument_xref → instrument.sym_id) to the lineage DAG — the `instrument` asset only declares `securities` as a dep; the per-figi xref bridge is undocumented in the graph [lineage/assets.py].
+- No warn/exempt tier for delisted/suspended securities in `equity_instrument_bridge` — any unmapped security is a hard FAIL with no graceful tier (other checks downgrade expected gaps to WARN). Steady-state consistent today (backfill maps all statuses); a single legacy unmapped delisted name would pin `sym validate` red [validate/instrument_bridge.py].
+- CHAR(12)↔TEXT anti-join (`x.value = s.composite_figi`) is correct only because the figi `^[A-Z0-9]{12}$` CHECK forbids padding; no defensive `rtrim`/cast, and the dependency isn't noted. Latent false-negative/positive surface if the FIGI format is ever relaxed [validate/instrument_bridge.py:24].

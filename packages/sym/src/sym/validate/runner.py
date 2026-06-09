@@ -31,7 +31,7 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
     return [
         evaluate_completeness(conn, universe_id),       # V1
         check_referential_integrity(conn),              # V2
-        check_equity_instrument_bridge(conn),            # B1 — sym_id/composite_figi bridge 1:1
+        check_equity_instrument_bridge(conn),            # B7 — sym_id/composite_figi bridge 1:1
         check_identity_completeness(conn),              # V3
         check_ticker_collisions(conn),                  # V3
         check_price_calendar_consistency(conn),         # V4

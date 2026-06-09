@@ -17,8 +17,10 @@ Every node carries:
 
 Edges (table and column) are taken from a verified trace of the codebase — no fabricated deps.
 
-Key-space note: ``composite_figi`` (equity chain) and ``sym_id`` (instrument/index chain) are
-**disjoint** in the schema — no table bridges them — so they trace through separate sub-graphs.
+Key-space note: the equity chain keys on ``composite_figi`` and the instrument/index chain on
+``sym_id``. They are bridged by ``instrument_xref`` (a ``composite_figi`` xref per equity
+instrument; see docs/data-conventions.md §3), but that cross-key edge is not yet drawn here —
+the two key-spaces still render as separate sub-graphs in this DAG.
 """
 
 from __future__ import annotations

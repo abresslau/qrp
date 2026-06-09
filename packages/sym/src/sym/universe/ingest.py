@@ -148,6 +148,12 @@ def run_universe_load(
     """
     if ensure_securities:
         ensure_universe_securities(conn, universe_id)
+        # Map any newly-created securities onto the instrument/sym_id spine immediately — this
+        # is where securities are born, so it closes the bridge at the source (the nightly EOD
+        # `map` step is the safety net). Idempotent. See docs/data-conventions.md §3.
+        from sym.identity.instrument import backfill_equity_instruments
+
+        backfill_equity_instruments(conn)
     selection = universe_securities(conn, universe_id, as_of_date, backfill=(mode == BACKFILL))
     securities = [(figi, mic, cursor) for figi, mic, cursor, _f, _t in selection]
     cap_map = {figi: member_to for figi, _m, _c, _f, member_to in selection}
