@@ -28,14 +28,12 @@ import psycopg
 from sym.ingest.prices import expected_trading_days, ingest_result
 from sym.sources.contract import OhlcvResult
 
-DEV = "dev"
-BACKFILL = "backfill"
-DELTA = "delta"
-RELOAD = "reload"  # explicit-window re-upload (Story 2.10): replaces stored bars in [start_date, end_date]
+BACKFILL = "backfill"  # explicit floor, append, gap-aware (`load --start_date <floor>`)
+DELTA = "delta"        # incremental from each cursor, append (`load` with no --start_date)
+RELOAD = "reload"      # explicit window, REPLACE stored bars (`load --replace --start_date …`)
 SWEEP = "sweep"
 
 DEFAULT_FLOOR = date(1990, 1, 1)
-DEV_DAYS = 30
 SWEEP_LOOKBACK_DAYS = 90
 # A faithful re-fetch reproduces stored raw exactly; anything past this relative
 # gap is a genuine source-side correction, not float noise.
@@ -48,7 +46,6 @@ def compute_window(
     *,
     floor: date,
     end_date: date | None,
-    dev_days: int = DEV_DAYS,
     floor_reached: date | None = None,
     reload_start_date: date | None = None,
 ) -> tuple[date, date] | None:
@@ -84,15 +81,26 @@ def compute_window(
         return (reload_start_date, end_date)
     if cursor_date is not None and cursor_date >= end_date:
         return None  # up-to-date -> skip (AC #1 resume, AC #4 idempotency)
-    if mode == DELTA:
-        start_date = cursor_date + timedelta(days=1) if cursor_date is not None else floor
-    elif mode == DEV:
-        start_date = end_date - timedelta(days=dev_days)
-    else:
+    if mode != DELTA:
         raise ValueError(f"unknown load mode {mode!r}")
+    start_date = cursor_date + timedelta(days=1) if cursor_date is not None else floor
     if start_date > end_date:
         return None
     return (start_date, end_date)
+
+
+def plan_load(*, start_date: date | None, replace: bool) -> str:
+    """The run_load mode implied by the unified `sym load` flags.
+
+    No window → DELTA (incremental from each cursor). An explicit ``start_date`` (append) →
+    BACKFILL (gap-aware fill of ``[start_date, end_date]``). ``replace`` → RELOAD (overwrite the
+    window). ``replace`` requires an explicit ``start_date`` (the caller validates this).
+    """
+    if replace:
+        return RELOAD
+    if start_date is not None:
+        return BACKFILL
+    return DELTA
 
 
 def fetch_with_retry(
@@ -256,8 +264,7 @@ def run_load(
     as_of_date: date,
     reload_start_date: date | None = None,
     floor: date = DEFAULT_FLOOR,
-    dev_days: int = DEV_DAYS,
-    dev_limit: int | None = None,
+    limit: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
     securities: Sequence[tuple[str, str, date | None]] | None = None,
@@ -282,8 +289,8 @@ def run_load(
 
     if securities is None:
         securities = read_active_with_cursor(conn)
-    if mode == DEV and dev_limit is not None:
-        securities = securities[:dev_limit]
+    if limit is not None:
+        securities = securities[:limit]
 
     for figi, mic, cursor in securities:
         summary.attempted += 1
@@ -295,7 +302,7 @@ def run_load(
         fig_floor = (floor_for(figi) if floor_for is not None else None) or floor
         reached = floor_reached_for(conn, figi) if mode == BACKFILL else None
         window = compute_window(
-            mode, cursor, floor=fig_floor, end_date=end_date, dev_days=dev_days,
+            mode, cursor, floor=fig_floor, end_date=end_date,
             floor_reached=reached, reload_start_date=reload_start_date,
         )
         if window is None:

@@ -38,7 +38,7 @@ below is the first written down explicitly.)
   sym universe add ibov --kind index --index ibov --name "Ibovespa" \
       --source-pref b3 --pit-from 2026-06-08
   sym universe refresh ibov            # B3 -> events -> OpenFIGI resolve -> project
-  sym backfill --universe ibov         # prices (gap-aware, resumable)
+  sym load --scope universe:ibov --start_date 1990-01-01   # prices backfill (gap-aware, resumable)
   sym recompute                        # fact_returns (PR+TR)
   sym fundamentals --universe ibov     # shares / market cap (BRL->USD via fx_rate)
   sym validate --universe ibov         # integrity gate

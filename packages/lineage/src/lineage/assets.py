@@ -407,8 +407,8 @@ _RUNNABLE_SYM = [
         "prices_raw", ("sym", "prices_raw"), [("sym", "securities")],
         "True-raw OHLCV bars (split/div un-adjusted), source-stamped and immutable.",
         _md(("sym", "prices_raw"), "sym", "prices_raw",
-            "`sym backfill` / `sym delta` / `sym dev`", source="yfinance (swappable adapter)"),
-        ["delta"],
+            "`sym load` (incremental / backfill / --replace)", source="yfinance (swappable adapter)"),
+        ["load"],
     ),
     _sym_asset(
         "fx_rate", ("sym", "fx_rate"), [],

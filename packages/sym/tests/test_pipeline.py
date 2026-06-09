@@ -10,7 +10,6 @@ from sym.ingest import pipeline
 from sym.ingest.pipeline import (
     BACKFILL,
     DELTA,
-    DEV,
     LoadSummary,
     compute_window,
     fetch_with_retry,
@@ -47,10 +46,6 @@ def test_up_to_date_security_is_skipped():
     assert compute_window(BACKFILL, END, floor=FLOOR, end_date=END, floor_reached=FLOOR) is None
     # ...but a current cursor with no recorded floor still re-fetches to fill below.
     assert compute_window(BACKFILL, END, floor=FLOOR, end_date=END) == (FLOOR, END)
-
-
-def test_dev_window_is_recent():
-    assert compute_window(DEV, None, floor=FLOOR, end_date=END, dev_days=30) == (date(2024, 12, 1), END)
 
 
 def test_no_sessions_means_skip():

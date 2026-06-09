@@ -199,58 +199,105 @@ def _cmd_snapshot_calendar(_args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_load(mode: str):
-    def run(args: argparse.Namespace) -> int:
-        import psycopg
+def _cmd_load(args: argparse.Namespace) -> int:
+    """The one loader: scope + date window + append-or-replace.
 
-        from sym.config import source_key
-        from sym.db import connect
-        from sym.ingest.pipeline import run_load
-        from sym.sources import get_source
-        from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+    No ``--start_date`` → incremental from each security's cursor (the daily case).
+    ``--start_date`` → fill from that date (gap-aware). ``--replace`` → overwrite the window.
+    """
+    import psycopg
 
-        key = source_key()
-        universe = getattr(args, "universe", None)
-        dev_limit = getattr(args, "limit", None)
-        history_floor = None
-        if getattr(args, "history_floor", None):
-            try:
-                history_floor = date.fromisoformat(args.history_floor)
-            except ValueError as exc:
-                print(
-                    f"invalid --history-floor date {args.history_floor!r}: {exc}", file=sys.stderr
-                )
-                return 1
-        try:
-            with connect() as conn:
-                # symbol resolution is vendor-specific; yfinance today (EODHD in 2.7).
-                resolver = make_yahoo_symbol_resolver(conn)
-                source = get_source(key, symbol_for=resolver)
-                if universe:
-                    from sym.universe.ingest import run_universe_load
+    from sym.config import source_key
+    from sym.db import connect
+    from sym.ingest.pipeline import (
+        BACKFILL,
+        DELTA,
+        RELOAD,
+        plan_load,
+        read_active_with_cursor,
+        run_load,
+    )
+    from sym.sources import get_source
+    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
 
-                    summary = run_universe_load(
-                        conn, source, universe, mode, as_of_date=date.today(),
-                        dev_limit=dev_limit, history_floor=history_floor,
-                    )
-                else:
-                    summary = run_load(conn, source, mode, as_of_date=date.today(), dev_limit=dev_limit)
-        except psycopg.OperationalError as exc:
-            print(f"database connection failed: {exc}", file=sys.stderr)
-            return 1
+    try:
+        start_date = date.fromisoformat(args.start_date) if args.start_date else None
+        end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
+    except ValueError as exc:
+        print(f"invalid date: {exc}", file=sys.stderr)
+        return 1
+    if args.replace and start_date is None:
+        print("--replace requires --start_date (the window to overwrite)", file=sys.stderr)
+        return 1
+    if start_date is not None and start_date > end_date:
+        print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
+        return 1
 
-        scope = f"universe={universe}" if universe else "active master"
+    scope = args.scope or "all"
+    universe_id = figi = None
+    if scope == "all":
+        pass
+    elif scope.startswith("universe:"):
+        universe_id = scope[len("universe:") :]
+    elif scope.startswith("figi:"):
+        figi = scope[len("figi:") :]
+    else:
         print(
-            f"{mode} ({key}, {scope}) run #{summary.run_id} [{summary.status}]: "
-            f"attempted={summary.attempted} loaded={summary.loaded} "
-            f"skipped={summary.skipped} errored={summary.errored} "
-            f"rows={summary.rows} flags={summary.flags} gaps={summary.gaps}"
+            f"invalid --scope {scope!r}: use all | universe:<id> | figi:<COMPOSITE_FIGI>",
+            file=sys.stderr,
         )
-        for figi, msg in summary.errors[:10]:
-            print(f"  error {figi}: {msg[:80]}", file=sys.stderr)
-        return 2 if summary.errored else 0
+        return 1
 
-    return run
+    mode = plan_load(start_date=start_date, replace=args.replace)
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            resolver = make_yahoo_symbol_resolver(conn)
+            source = get_source(source_key(), symbol_for=resolver)
+            if universe_id is not None:
+                from sym.universe.ingest import run_universe_load
+
+                kwargs = {"as_of_date": end_date, "limit": args.limit}
+                if mode == RELOAD:
+                    kwargs["reload_start_date"] = start_date
+                elif mode == BACKFILL:
+                    kwargs["history_floor"] = start_date
+                summary = run_universe_load(conn, source, universe_id, mode, **kwargs)
+            else:
+                securities = None
+                if figi is not None:
+                    securities = [s for s in read_active_with_cursor(conn) if s[0] == figi]
+                    if not securities:
+                        print(f"{figi} not in the active master", file=sys.stderr)
+                        return 1
+                kwargs = {"as_of_date": end_date, "limit": args.limit, "securities": securities}
+                if mode == RELOAD:
+                    kwargs["reload_start_date"] = start_date
+                elif mode == BACKFILL:
+                    kwargs["floor"] = start_date
+                summary = run_load(conn, source, mode, **kwargs)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    verb = "load --replace" if mode == RELOAD else "load"
+    window = f"[{start_date} .. {end_date}]" if start_date else f"[cursor .. {end_date}]"
+    scope_lbl = (
+        f"universe:{universe_id}" if universe_id else (f"figi:{figi}" if figi else "all")
+    )
+    print(
+        f"{verb} {window} (scope={scope_lbl}) run #{summary.run_id} [{summary.status}]: "
+        f"attempted={summary.attempted} loaded={summary.loaded} skipped={summary.skipped} "
+        f"errored={summary.errored} rows={summary.rows}"
+    )
+    for figi_err, msg in summary.errors[:10]:
+        print(f"  error {figi_err}: {msg[:80]}", file=sys.stderr)
+    if mode == RELOAD:
+        print(
+            "  note: replaced raw prices only (corporate actions are not re-pulled). "
+            f"Run `sym recompute --start_date {start_date} --end_date {end_date}` to refresh returns."
+        )
+    return 2 if summary.errored else 0
 
 
 def _cmd_recompute(args: argparse.Namespace) -> int:
@@ -272,56 +319,6 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
         f"{summary.rows:,} fact_returns rows"
     )
     return 0
-
-
-def _cmd_reload(args: argparse.Namespace) -> int:
-    import psycopg
-
-    from sym.config import source_key
-    from sym.db import connect
-    from sym.ingest.pipeline import RELOAD, read_active_with_cursor, run_load
-    from sym.sources import get_source
-    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
-
-    try:
-        start_date = date.fromisoformat(args.start_date)
-        end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
-    except ValueError as exc:
-        print(f"invalid date: {exc}", file=sys.stderr)
-        return 1
-    if start_date > end_date:
-        print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
-        return 1
-    try:
-        with connect() as conn:
-            # run_load requires a non-transactional connection (it sets autocommit for per-figi
-            # durability); set it before the --figi lookup so that read doesn't open a txn first.
-            conn.autocommit = True
-            resolver = make_yahoo_symbol_resolver(conn)
-            source = get_source(source_key(), symbol_for=resolver)
-            securities = None
-            if args.figi:
-                securities = [s for s in read_active_with_cursor(conn) if s[0] == args.figi]
-                if not securities:
-                    print(f"{args.figi} not in the active master", file=sys.stderr)
-                    return 1
-            summary = run_load(
-                conn, source, RELOAD,
-                as_of_date=end_date, reload_start_date=start_date, securities=securities,
-            )
-    except psycopg.OperationalError as exc:
-        print(f"database connection failed: {exc}", file=sys.stderr)
-        return 1
-
-    scope = f"figi={args.figi}" if args.figi else "active master"
-    print(
-        f"reload [{start_date} .. {end_date}] ({scope}) run #{summary.run_id} [{summary.status}]: "
-        f"attempted={summary.attempted} reloaded={summary.loaded} skipped={summary.skipped} "
-        f"errored={summary.errored} rows={summary.rows}"
-    )
-    for figi, msg in summary.errors[:10]:
-        print(f"  error {figi}: {msg[:80]}", file=sys.stderr)
-    return 2 if summary.errored else 0
 
 
 def _cmd_backup(args: argparse.Namespace) -> int:
@@ -1013,36 +1010,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_snapshot_cal.set_defaults(func=_cmd_snapshot_calendar)
 
-    def _add_load_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument(
-            "--universe",
-            help="Drive ingestion from a universe's maintained membership (Story U4).",
-        )
-        p.add_argument("--limit", type=int, help="Cap the number of securities (dev/smoke).")
-        p.add_argument(
-            "--history-floor",
-            dest="history_floor",
-            help="Backfill price history from this date for all members (ISO), "
-            "overriding the membership window — for build-forward universes.",
-        )
-
-    p_backfill = sub.add_parser(
-        "backfill", help="Load full raw price history for the active universe (resumable)."
+    p_load = sub.add_parser(
+        "load",
+        help="Load or re-upload raw prices for a scope over a date window. No --start_date = "
+        "incremental from each security's cursor (daily); --start_date = fill from that date "
+        "(gap-aware); --replace = overwrite the window (re-fetch + replace stored bars).",
     )
-    _add_load_args(p_backfill)
-    p_backfill.set_defaults(func=_cmd_load("backfill"))
-
-    p_delta = sub.add_parser(
-        "delta", help="Load only sessions since each security's last success (gap from DB state)."
+    p_load.add_argument(
+        "--scope",
+        default="all",
+        help="all | universe:<id> | figi:<COMPOSITE_FIGI> (default: all = the active master).",
     )
-    _add_load_args(p_delta)
-    p_delta.set_defaults(func=_cmd_load("delta"))
-
-    p_dev = sub.add_parser(
-        "dev", help="Load a small recent window for the active universe (fast smoke load)."
+    p_load.add_argument("--start_date", help="Window start (ISO). Omit for incremental-from-cursor.")
+    p_load.add_argument("--end_date", help="Window end (ISO; default: today).")
+    p_load.add_argument(
+        "--replace",
+        action="store_true",
+        help="Overwrite the window: re-fetch and replace stored bars (requires --start_date).",
     )
-    _add_load_args(p_dev)
-    p_dev.set_defaults(func=_cmd_load("dev"))
+    p_load.add_argument("--limit", type=int, help="Cap the number of securities (smoke runs).")
+    p_load.set_defaults(func=_cmd_load)
 
     p_sweep = sub.add_parser(
         "sweep",
@@ -1066,16 +1053,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_recompute.add_argument("--end_date", dest="end_date", help="End as_of_date (ISO; default: today).")
     p_recompute.set_defaults(func=_cmd_recompute)
-
-    p_reload = sub.add_parser(
-        "reload",
-        help="Re-upload raw prices for an explicit [start_date, end_date] window — REPLACES stored "
-        "bars (e.g. a provisional same-day pull, or a vendor restatement). Other dates untouched.",
-    )
-    p_reload.add_argument("--start_date", required=True, help="Window start (ISO, inclusive).")
-    p_reload.add_argument("--end_date", help="Window end (ISO, inclusive; default: today).")
-    p_reload.add_argument("--figi", help="Restrict to one composite_figi (default: active master).")
-    p_reload.set_defaults(func=_cmd_reload)
 
     p_benchmarks = sub.add_parser(
         "benchmarks",

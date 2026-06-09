@@ -38,7 +38,7 @@ sym universe add <id> --kind index --index <key> --source-pref wikipedia
 sym universe refresh <id>                # events -> resolve -> project (resumable)
 
 # 4. Prices, fundamentals, returns
-sym backfill --universe <id>             # gap-aware, resumable
+sym load --scope universe:<id> --start_date 1990-01-01   # backfill, gap-aware, resumable
 sym classify ; sym recompute ; sym fundamentals --all
 
 # 5. Prove the rebuild
@@ -94,9 +94,9 @@ sym universe confirm <proposal_id> [--reject]
 ## 4. Price + returns (ingestion)
 
 ```
-sym backfill --universe <id>                 # full history for members (gap-aware)
-sym backfill --universe <id> --history-floor 2000-01-01   # price history below a build-forward pit
-sym delta --universe <id>                    # daily incremental (only the new tail)
+sym load --scope universe:<id> --start_date 1990-01-01   # full history for members (gap-aware)
+sym load --scope universe:<id> --start_date 2000-01-01   # price history from a build-forward floor
+sym load --scope universe:<id>               # daily incremental (only the new tail since each cursor)
 sym recompute                                # materialize fact_returns (PR + TR)
 ```
 
