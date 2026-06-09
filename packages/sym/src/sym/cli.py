@@ -233,17 +233,23 @@ def _cmd_load(args: argparse.Namespace) -> int:
         print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
         return 1
 
-    scope = args.scope or "all"
+    scope = (args.scope or "all").strip()
     universe_id = figi = None
     if scope == "all":
         pass
     elif scope.startswith("universe:"):
-        universe_id = scope[len("universe:") :]
+        universe_id = scope[len("universe:") :].strip()
     elif scope.startswith("figi:"):
-        figi = scope[len("figi:") :]
+        figi = scope[len("figi:") :].strip()
     else:
         print(
             f"invalid --scope {scope!r}: use all | universe:<id> | figi:<COMPOSITE_FIGI>",
+            file=sys.stderr,
+        )
+        return 1
+    if universe_id == "" or figi == "":
+        print(
+            f"invalid --scope {scope!r}: the id after the prefix is empty",
             file=sys.stderr,
         )
         return 1
@@ -292,6 +298,12 @@ def _cmd_load(args: argparse.Namespace) -> int:
     )
     for figi_err, msg in summary.errors[:10]:
         print(f"  error {figi_err}: {msg[:80]}", file=sys.stderr)
+    if args.limit is not None:
+        print(
+            f"  note: --limit {args.limit} capped this load to the first {summary.attempted} "
+            "securities by composite_figi (smoke run). Omit --limit for a complete load.",
+            file=sys.stderr,
+        )
     if mode == RELOAD:
         print(
             "  note: replaced raw prices only (corporate actions are not re-pulled). "

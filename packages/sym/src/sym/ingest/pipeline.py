@@ -1,13 +1,17 @@
 """Three-phase load orchestration (Story 2.5, FR-6 / AR-13).
 
 Drives the source adapter (Story 2.2) + atomic writer (Story 2.3/2.4) across the
-active universe in one of three runtime modes:
+active universe in one of three window/overwrite modes (the unified `sym load` CLI
+maps its flags onto these via :func:`plan_load` — see Story 2.11):
 
-* ``dev``      — a small recent window (fast smoke load),
-* ``backfill`` — full history from a floor (resumable: completed names skipped),
 * ``delta``    — only sessions since the last success (gap computed from DB state,
                  not the clock); up-to-date names skipped, so a second delta mutates
-                 nothing.
+                 nothing. (`sym load` with no ``--start_date``.)
+* ``backfill`` — full history from a floor (resumable: completed names skipped;
+                 gap-aware fill below the stored cursor). (`sym load --start_date`.)
+* ``reload``   — re-fetch and REPLACE the stored bars in an explicit window, other
+                 dates untouched (the empty-fetch guard skips the delete if the
+                 re-fetch is empty). (`sym load --replace --start_date`.)
 
 Each security loads in its own durable transaction (``conn.autocommit = True`` so a
 per-figi ``conn.transaction()`` is a top-level commit, never a savepoint) and a

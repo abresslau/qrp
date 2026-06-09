@@ -10,9 +10,11 @@ from sym.ingest import pipeline
 from sym.ingest.pipeline import (
     BACKFILL,
     DELTA,
+    RELOAD,
     LoadSummary,
     compute_window,
     fetch_with_retry,
+    plan_load,
     run_load,
 )
 from sym.ingest.prices import IngestSummary
@@ -50,6 +52,27 @@ def test_up_to_date_security_is_skipped():
 
 def test_no_sessions_means_skip():
     assert compute_window(BACKFILL, None, floor=FLOOR, end_date=None) is None
+
+
+# --- plan_load (the unified `sym load` flag -> mode mapping, Story 2.11) -----
+
+
+def test_plan_load_no_window_is_delta():
+    assert plan_load(start_date=None, replace=False) == DELTA
+
+
+def test_plan_load_explicit_start_is_backfill():
+    assert plan_load(start_date=date(2020, 1, 1), replace=False) == BACKFILL
+
+
+def test_plan_load_replace_is_reload():
+    assert plan_load(start_date=date(2020, 1, 1), replace=True) == RELOAD
+
+
+def test_plan_load_replace_takes_precedence_over_start():
+    # replace wins regardless of start_date presence (the CLI separately requires
+    # --start_date with --replace, but the mapping itself is replace-first).
+    assert plan_load(start_date=None, replace=True) == RELOAD
 
 
 # --- fetch_with_retry -------------------------------------------------------

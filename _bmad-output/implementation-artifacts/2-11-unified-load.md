@@ -68,3 +68,17 @@ claude-opus-4-8 (Claude Code), 2026-06-09
 - `packages/lineage/src/lineage/assets.py`, `docs/runbook.md`, `docs/universe-maintenance.md`
 - `packages/sym/tests/test_pipeline.py`
 - `_bmad-output/implementation-artifacts/2-11-unified-load.md` (this story)
+
+## Review Findings
+
+_Adversarial code review of commit `8993030` (Blind Hunter + Edge Case Hunter + Acceptance Auditor),
+2026-06-09. The Edge Case Hunter's project access dismissed the Blind Hunter's Critical/High suspects
+(the `compute_window` BACKFILL `raise` is unreachable — BACKFILL/RELOAD return before it; `floor` vs
+`history_floor` routing is correct; the Story 2.10 empty-fetch data-loss guard still fires on the only
+write path). 9 findings dismissed as noise/false-positive._
+
+- [x] [Review][Patch] Universe `--replace` silently excludes exited members (leavers) — `run_universe_load(..., RELOAD)` passes `backfill=(mode==BACKFILL)`=False to `universe_securities`, so a historical-window replace re-fetches only names still in the index as-of today; survivorship-sensitive leavers in the window are silently skipped and the run still logs `success`. **Resolved (Option 1, Andre 2026-06-09): no data gaps — RELOAD must cover all point-in-time members.** Fix: select all members for RELOAD too (`backfill=(mode in (BACKFILL, RELOAD))`). Note: V1 completeness only checks current members, so this gap is invisible to `sym validate` — the load layer is the only guard. [`universe/ingest.py:157`] (HIGH)
+- [x] [Review][Patch] Scope value not normalized/validated — empty (`universe:`) or whitespace-padded (`figi: BBG…`) ids silently no-op (universe) or false-miss (figi); strip the value and reject empty, symmetric with the figi "not in active master" guard [`cli.py:236-249`] (MED/LOW)
+- [x] [Review][Patch] `--limit` silently caps full-scope loads with no warning — generalizing `dev_limit`→`--limit` (AC #4, intended) means a stray `--limit N` on a daily/backfill run loads only the first N names by figi and still logs `success`; emit a notice when `--limit` caps a load so it is not mistaken for a complete run [`cli.py` / `pipeline.py:292-293`] (MED)
+- [x] [Review][Patch] `pipeline.py` module docstring still documents the removed `dev` mode and omits `RELOAD`/`plan_load` — contradicts AC #4 / Task 1 (doc-only) [`pipeline.py:1-16`] (LOW)
+- [x] [Review][Patch] No direct unit test for the pure `plan_load` mapper (the heart of AC #2) — mapping is only exercised indirectly; add a test [`tests/test_pipeline.py`] (LOW)
