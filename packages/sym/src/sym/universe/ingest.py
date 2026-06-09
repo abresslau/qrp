@@ -90,9 +90,9 @@ def universe_securities(
     Returns ``(composite_figi, mic, cursor, member_from, member_to)`` per member
     that resolves AND exists in ``securities``. ``member_from`` is the earliest
     membership ``valid_from`` (the backfill floor); ``member_to`` is the exit date
-    (NULL if still a member — the leaver fetch cap). Forward modes (delta/dev) take
-    only members active as-of ``as_of_date``; ``backfill`` takes all (so a name's whole
-    membership window is filled, leavers capped at their exit).
+    (NULL if still a member — the leaver fetch cap). A forward fill takes only
+    members active as-of ``as_of_date``; a gap-aware (backfill) fill or an overwrite
+    takes all (so a name's whole membership window is filled, leavers capped at their exit).
     """
     rows = conn.execute(
         """

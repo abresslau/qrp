@@ -11,7 +11,7 @@ FLOOR = date(1990, 1, 1)
 
 def test_overwrite_window_is_explicit_and_cursor_independent():
     end = date(2026, 6, 9)
-    # cursor is already current (delta would skip) — overwrite re-fetches the window anyway
+    # cursor is already current (a forward fill would skip) — overwrite re-fetches the window anyway
     w = compute_window(
         OVERWRITE, date(2026, 6, 9), floor=FLOOR, end_date=end,
         overwrite_start_date=date(2026, 6, 1),

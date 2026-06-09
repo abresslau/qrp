@@ -1,14 +1,14 @@
 """A daily schedule for sym's end-of-day pipeline — Dagster as a *trigger + observer only*.
 
 Deliberately minimal: Dagster does NOT model the EOD steps as a workflow. ``sym`` already owns the
-daily sequence (monitor → delta → benchmarks → recompute → validate); this fires the **exact same**
+daily sequence (monitor → fill → benchmarks → recompute → validate); this fires the **exact same**
 `sym eod` CLI an operator runs by hand, then retains the run log and auto-retries transient
 failures. There is no Dagster op-graph, asset-job, or sensor here — one op, one job, one schedule.
 
 **Manual running is unchanged and always available** (no Dagster needed):
 
     uv run sym eod                 # the whole pipeline
-    uv run sym eod --steps delta   # a subset
+    uv run sym eod --steps fill    # a subset
     uv run sym eod --dry-run       # just the plan
 
 …or in the Dagster UI: launch the ``sym_eod`` job, or materialize an individual sym asset (each
@@ -51,7 +51,7 @@ class EodConfig(Config):
 def sym_eod(context, config: EodConfig) -> None:
     """Run the `sym eod` CLI (sym owns the step orchestration). Manual: `uv run sym eod [--as_of_date DATE]`.
 
-    Note: `sym eod` exits non-zero only when a *critical* step (delta/recompute) fails — that is
+    Note: `sym eod` exits non-zero only when a *critical* step (fill/recompute) fails — that is
     what turns the Dagster run red and triggers the retry. Non-critical hiccups (monitor / fx /
     benchmarks / validate) still exit 0 by sym's design ("a hiccup shouldn't fail the night"), so
     their status lives in the captured run log (the `[FAIL] …` lines), not the run's red/green.

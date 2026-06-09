@@ -1,14 +1,13 @@
 """Three-phase load orchestration (Story 2.5, FR-6 / AR-13).
 
 Drives the source adapter (Story 2.2) + atomic writer (Story 2.3/2.4) across the
-active universe in one of three window/overwrite modes (the unified `sym load` CLI
-maps its flags onto these via :func:`plan_load` — see Story 2.11):
+active universe in one of two modes (the unified `sym load` CLI maps its flags onto
+these via :func:`plan_load` — see Story 2.11):
 
-* ``delta``    — only sessions since the last success (gap computed from DB state,
-                 not the clock); up-to-date names skipped, so a second delta mutates
-                 nothing. (`sym load` with no ``--start_date``.)
-* ``backfill`` — full history from a floor (resumable: completed names skipped;
-                 gap-aware fill below the stored cursor). (`sym load --start_date`.)
+* ``fill``     — add only missing bars. *Forward* (the daily case): only sessions
+                 since each cursor, so a second fill mutates nothing (`sym load`).
+                 *Gap-aware* (``gap_aware=True``): re-fetch from an explicit floor to
+                 fill history below the stored cursor too (`sym load --start_date`).
 * ``overwrite`` — re-fetch and REPLACE the stored bars in an explicit window, other
                  dates untouched (the empty-fetch guard skips the delete if the
                  re-fetch is empty). (`sym load --overwrite --start_date`.)

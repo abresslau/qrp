@@ -1093,11 +1093,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_eod = sub.add_parser(
         "eod",
-        help="Run the daily EOD pipeline (monitor->delta->benchmarks->recompute->validate); "
+        help="Run the daily EOD pipeline (monitor->fill->benchmarks->recompute->validate); "
         "scheduler-agnostic.",
     )
     p_eod.add_argument("--dry-run", action="store_true", help="Print the step plan, don't run.")
-    p_eod.add_argument("--steps", help="Comma-separated subset to run (e.g. delta,recompute).")
+    p_eod.add_argument("--steps", help="Comma-separated subset to run (e.g. fill,recompute).")
     p_eod.add_argument("--skip", help="Comma-separated steps to skip.")
     p_eod.add_argument("--as_of_date", help="Run the pipeline as of this date (YYYY-MM-DD); default today.")
     p_eod.set_defaults(func=_cmd_eod)

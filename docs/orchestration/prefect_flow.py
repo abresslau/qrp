@@ -16,7 +16,7 @@ from __future__ import annotations
 # @flow(name="sym-eod")
 # def sym_eod() -> None:
 #     m = step.submit("monitor")
-#     d = step.submit("delta", wait_for=[m])
+#     d = step.submit("fill", wait_for=[m])
 #     b = step.submit("benchmarks", wait_for=[d])
 #     r = step.submit("recompute", wait_for=[b])
 #     step.submit("validate", wait_for=[r])

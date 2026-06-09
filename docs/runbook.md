@@ -103,8 +103,8 @@ sym recompute                                # materialize fact_returns (PR + TR
 Backfill is **gap-aware + resumable**: the `pipeline_backfill_progress.floor_reached_date`
 watermark + per-figi cursor mean a completed name is *skipped before any network
 call* on a re-run — so a second backfill only touches incomplete/errored names.
-Prices are immutable (`ON CONFLICT DO NOTHING`). `delta` is the daily-ops mode
-(pulls only sessions after the cursor).
+Prices are immutable (`ON CONFLICT DO NOTHING`). A plain `sym load` (forward fill) is
+the daily-ops mode (pulls only sessions after the cursor).
 
 ### 4a. Return windows (`fact_returns` / `fact_index_returns`)
 
@@ -186,13 +186,13 @@ sym is **scheduler-agnostic** — it carries no Airflow/Prefect dependency. Run 
 daily pipeline either coarse or fine-grained:
 
 ```
-sym eod                       # coarse: monitor -> delta -> benchmarks -> recompute -> validate
+sym eod                       # coarse: monitor -> fill -> benchmarks -> recompute -> validate
 sym eod --dry-run             # print the step plan
-sym eod --steps delta,recompute   # run a subset (one task per step under an orchestrator)
+sym eod --steps fill,recompute    # run a subset (one task per step under an orchestrator)
 sym eod --skip benchmarks
 ```
 
-Each step is idempotent + error-isolated; `delta`/`recompute` are critical (a
+Each step is idempotent + error-isolated; `fill`/`recompute` are critical (a
 failure exits non-zero), `monitor`/`benchmarks`/`validate` are non-critical
 (surfaced, don't fail the night). Periodic steps run on their own cadence:
 `sym fundamentals --all` (weekly), `sym snapshot-calendar` (occasional).

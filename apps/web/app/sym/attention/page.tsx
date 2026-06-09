@@ -99,8 +99,8 @@ export default async function AttentionPage() {
       <Section title="Price gaps" count={a.price_gaps.total}>
         <div className="mb-2 text-xs text-muted">
           Showing the {a.price_gaps.recent.length} most recently detected.{" "}
-          <span className="text-fg">Fix:</span> run sym <code className="font-mono">recompute</code>/
-          <code className="font-mono">delta</code> to backfill.
+          <span className="text-fg">Fix:</span> run sym <code className="font-mono">load</code>/
+          <code className="font-mono">recompute</code> to fill.
         </div>
         <div className="overflow-hidden rounded-xl border border-border">
           <table className="w-full text-sm">

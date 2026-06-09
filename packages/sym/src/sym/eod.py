@@ -6,7 +6,7 @@ scheduler either calls each ``sym <step>`` as its own task (fine-grained retries
 or runs ``sym eod`` (one cron line). Each step is error-isolated and reports a
 short status; the run fails (non-zero exit) only if a *critical* step fails.
 
-Tiered cadence: the daily core is monitor → delta → map → benchmarks → recompute
+Tiered cadence: the daily core is monitor → fill → map → benchmarks → recompute
 → validate; ``fundamentals`` (weekly) and ``snapshot-calendar`` (occasional) run on
 their own schedules and are not in the daily default. (``map`` keeps the equity →
 ``instrument``/``sym_id`` bridge current so cross-asset joins never drop a new security.)
@@ -27,10 +27,10 @@ class EodStep:
 
 
 # The daily core, in order. monitor/benchmarks/validate are non-critical (a hiccup
-# shouldn't fail the night); delta + recompute are the critical data path.
+# shouldn't fail the night); fill + recompute are the critical data path.
 DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("monitor", "Discover index-universe membership changes", critical=False),
-    EodStep("delta", "Incremental EOD price load (since each cursor)", critical=True),
+    EodStep("fill", "Incremental EOD price fill (since each cursor)", critical=True),
     EodStep("map", "Map new securities to instrument identity (sym_id bridge)", critical=False),
     EodStep("benchmarks", "Refresh benchmark index levels + returns", critical=False),
     EodStep("fx", "Daily FX rate delta (Frankfurter)", critical=False),
@@ -131,7 +131,7 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 joiners += s.joiners
                 leavers += s.leavers
             return f"{len(uids)} index universes; joiners={joiners} leavers={leavers}"
-        if key == "delta":
+        if key == "fill":
             from sym.ingest.pipeline import FILL, run_load
 
             # The daily incremental is a forward fill (gap_aware defaults False).
