@@ -16,6 +16,10 @@ next-env.d.ts
 .env
 .env.local
 
+# Dagster (lineage) — local instance home + temp homes
+.dagster_home/
+.tmp_dagster_home*/
+
 # OS
 .DS_Store
 Thumbs.db
