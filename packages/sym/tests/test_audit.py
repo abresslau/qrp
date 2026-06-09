@@ -1,4 +1,4 @@
-"""Tests for the weekly re-fetch sweep + immutability (Story 2.8). DB-free."""
+"""Tests for the trailing re-fetch audit + immutability (Story 2.8). DB-free."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from sym.ingest import pipeline
-from sym.ingest.pipeline import detect_divergences, run_sweep
+from sym.ingest.pipeline import detect_divergences, run_audit
 from sym.sources.contract import OhlcvBar, OhlcvResult
 
 FIXED = datetime(2026, 6, 6, tzinfo=UTC)
@@ -50,7 +50,7 @@ def test_tiny_difference_within_tolerance_is_ignored():
     assert detect_divergences(stored, bars) == []
 
 
-# --- run_sweep --------------------------------------------------------------
+# --- run_audit --------------------------------------------------------------
 
 
 class _Cur:
@@ -90,7 +90,7 @@ class _Source:
                            retrieved_at=FIXED)
 
 
-def test_run_sweep_flags_divergence_without_overwriting(monkeypatch):
+def test_run_audit_flags_divergence_without_overwriting(monkeypatch):
     monkeypatch.setattr(pipeline, "read_active_with_cursor", lambda conn: [("F1", "XNAS", None)])
     monkeypatch.setattr(
         pipeline, "_read_stored_closes",
@@ -98,13 +98,13 @@ def test_run_sweep_flags_divergence_without_overwriting(monkeypatch):
     )
     conn = _Conn()
     src = _Source([_bar(date(2026, 5, 1), 110)])  # 10% correction
-    summary = run_sweep(conn, src, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
+    summary = run_audit(conn, src, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
 
-    assert summary.mode == "sweep" and summary.flags == 1 and summary.run_id == 7
+    assert summary.mode == "audit" and summary.flags == 1 and summary.run_id == 7
     assert conn.autocommit is True
     # divergence recorded as a review flag; the price itself is never updated
     assert conn.sql_for("INSERT INTO PRICES_REVIEW")
-    assert conn.sql_for("INSERT INTO PIPELINE_RUN_LOG")  # run logged (mode=sweep)
+    assert conn.sql_for("INSERT INTO PIPELINE_RUN_LOG")  # run logged (mode=audit)
     assert not any("UPDATE PRICES_RAW" in s.upper() for s, _ in conn.calls)
 
 

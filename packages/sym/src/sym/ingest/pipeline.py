@@ -32,13 +32,13 @@ import psycopg
 from sym.ingest.prices import expected_trading_days, ingest_result
 from sym.sources.contract import OhlcvResult
 
-BACKFILL = "backfill"  # explicit floor, append, gap-aware (`load --start_date <floor>`)
-DELTA = "delta"        # incremental from each cursor, append (`load` with no --start_date)
-OVERWRITE = "overwrite"  # explicit window, REPLACE stored bars (`load --overwrite --start_date …`)
-SWEEP = "sweep"
+# The two load modes. `fill` adds only missing bars (forward from each cursor for the daily
+# `load`, or gap-aware from an explicit floor for `load --start_date`); `overwrite` re-fetches
+# and REPLACES the stored bars in an explicit window (`load --overwrite --start_date …`).
+FILL = "fill"
+OVERWRITE = "overwrite"
 
 DEFAULT_FLOOR = date(1990, 1, 1)
-SWEEP_LOOKBACK_DAYS = 90
 # A faithful re-fetch reproduces stored raw exactly; anything past this relative
 # gap is a genuine source-side correction, not float noise.
 DIVERGENCE_TOLERANCE = Decimal("0.001")
@@ -50,6 +50,7 @@ def compute_window(
     *,
     floor: date,
     end_date: date | None,
+    gap_aware: bool = False,
     floor_reached: date | None = None,
     overwrite_start_date: date | None = None,
 ) -> tuple[date, date] | None:
@@ -57,19 +58,29 @@ def compute_window(
 
     ``end_date`` is the latest available session (from the calendar, not the clock).
 
-    **Backfill is gap-aware.** The forward cursor only tracks the *latest* loaded
-    session, so a name first loaded from a late start_date (e.g. an index member loaded
-    from its membership-join date) looks "complete" even though its history below
-    the earliest stored bar was never fetched. ``floor_reached`` records the
-    deepest floor a prior backfill actually requested; backfill skips a name only
+    A ``fill`` is either **forward** (the daily case: only the new tail since the
+    cursor) or **gap-aware** (a backfill from an explicit floor). The forward cursor
+    only tracks the *latest* loaded session, so a name first loaded from a late
+    start_date (e.g. an index member loaded from its membership-join date) looks
+    "complete" even though its history below the earliest stored bar was never
+    fetched — so ``gap_aware`` re-examines history. ``floor_reached`` records the
+    deepest floor a prior gap-aware fill actually requested; it skips a name only
     when ``floor_reached <= floor`` (we already asked at least this deep and got
     whatever exists — even if the data starts at a later IPO) AND the cursor is
     current. Otherwise it re-fetches ``[floor, end_date]`` and immutable ingestion
-    inserts only the missing bars. Forward mode (delta) is unchanged.
+    inserts only the missing bars.
     """
     if end_date is None:
         return None
-    if mode == BACKFILL:
+    if mode == OVERWRITE:
+        # Explicit operator-chosen window; cursor-independent (we WANT to re-fetch even
+        # when current). `end_date` is already clamped to the latest session <= end_date.
+        if overwrite_start_date is None or overwrite_start_date > end_date:
+            return None
+        return (overwrite_start_date, end_date)
+    if mode != FILL:
+        raise ValueError(f"unknown load mode {mode!r}")
+    if gap_aware:
         if floor > end_date:
             return None
         is_current = cursor_date is not None and cursor_date >= end_date
@@ -77,34 +88,26 @@ def compute_window(
         if is_current and reached_floor:
             return None  # already fetched down to (at least) this floor and current
         return (floor, end_date)
-    if mode == OVERWRITE:
-        # Explicit operator-chosen window; cursor-independent (we WANT to re-fetch even
-        # when current). `end_date` is already clamped to the latest session <= end_date.
-        if overwrite_start_date is None or overwrite_start_date > end_date:
-            return None
-        return (overwrite_start_date, end_date)
+    # Forward fill (daily): only the new tail since the cursor.
     if cursor_date is not None and cursor_date >= end_date:
-        return None  # up-to-date -> skip (AC #1 resume, AC #4 idempotency)
-    if mode != DELTA:
-        raise ValueError(f"unknown load mode {mode!r}")
+        return None  # up-to-date -> skip (resume + idempotency: a second fill mutates nothing)
     start_date = cursor_date + timedelta(days=1) if cursor_date is not None else floor
     if start_date > end_date:
         return None
     return (start_date, end_date)
 
 
-def plan_load(*, start_date: date | None, overwrite: bool) -> str:
-    """The run_load mode implied by the unified `sym load` flags.
+def plan_load(*, start_date: date | None, overwrite: bool) -> tuple[str, bool]:
+    """The ``(mode, gap_aware)`` implied by the unified `sym load` flags.
 
-    No window → DELTA (incremental from each cursor). An explicit ``start_date`` (fill) →
-    BACKFILL (gap-aware fill of ``[start_date, end_date]``). ``overwrite`` → OVERWRITE (re-fetch
-    and replace the window). ``overwrite`` requires an explicit ``start_date`` (caller-validated).
+    ``overwrite`` → ``(OVERWRITE, False)`` — re-fetch and replace the window (requires an
+    explicit ``start_date``, caller-validated). Otherwise it is a ``FILL``: an explicit
+    ``start_date`` → gap-aware backfill from that floor; no ``start_date`` → forward from
+    each cursor (the daily case).
     """
     if overwrite:
-        return OVERWRITE
-    if start_date is not None:
-        return BACKFILL
-    return DELTA
+        return OVERWRITE, False
+    return FILL, start_date is not None
 
 
 def fetch_with_retry(
@@ -266,6 +269,7 @@ def run_load(
     mode: str,
     *,
     as_of_date: date,
+    gap_aware: bool = False,
     overwrite_start_date: date | None = None,
     floor: date = DEFAULT_FLOOR,
     limit: int | None = None,
@@ -277,8 +281,10 @@ def run_load(
 ) -> LoadSummary:
     """Load a security set in ``mode``; one durable transaction per figi.
 
-    By default loads the active master (``read_active_with_cursor``). Universe-driven
-    ingestion (Story U4) passes its own ``securities`` selection plus:
+    ``gap_aware`` makes a ``FILL`` re-examine history below the cursor (a backfill);
+    omit it for the daily forward fill. By default loads the active master
+    (``read_active_with_cursor``). Universe-driven ingestion (Story U4) passes its own
+    ``securities`` selection plus:
       * ``floor_for(figi)`` — the per-figi backfill floor (a joiner's membership
         ``valid_from``, so its prior history is backfilled over its window);
       * ``end_cap_for(figi)`` — caps the fetch end_date (a leaver's exit date), so a name
@@ -304,9 +310,9 @@ def run_load(
             if cap is not None and (end_date is None or cap < end_date):
                 end_date = cap
         fig_floor = (floor_for(figi) if floor_for is not None else None) or floor
-        reached = floor_reached_for(conn, figi) if mode == BACKFILL else None
+        reached = floor_reached_for(conn, figi) if gap_aware else None
         window = compute_window(
-            mode, cursor, floor=fig_floor, end_date=end_date,
+            mode, cursor, floor=fig_floor, end_date=end_date, gap_aware=gap_aware,
             floor_reached=reached, overwrite_start_date=overwrite_start_date,
         )
         if window is None:
@@ -340,7 +346,7 @@ def run_load(
         summary.rows += result_summary.bars_written
         summary.flags += len(result_summary.flags)
         summary.gaps += len(result_summary.gaps)
-        if mode == BACKFILL:
+        if gap_aware:
             # We requested down to `start_date`; whatever Yahoo returned, that floor is
             # now covered — record it so a later same-floor backfill skips this name.
             record_floor_reached(conn, figi, start_date)
@@ -360,7 +366,7 @@ def detect_divergences(
     """Stored raw close vs re-fetched, for dates we already have.
 
     Returns (session_date, stored, fetched, relative_diff) beyond ``tolerance``.
-    A date absent from ``stored`` is new data (delta's job), not a divergence.
+    A date absent from ``stored`` is new data (a fill's job), not a divergence.
     """
     divergences: list[tuple[date, Decimal, Decimal, Decimal]] = []
     for bar in bars:
@@ -392,9 +398,11 @@ def _flag_divergence(
     divergence: tuple[date, Decimal, Decimal, Decimal],
     source: str,
 ) -> None:
-    """Record a sweep divergence as a reviewable flag (never overwrites the price)."""
+    """Record an audit divergence as a reviewable flag (never overwrites the price)."""
     session_date, stored, fetched, relative = divergence
     conn.execute(
+        # flag_type stays 'sweep_divergence': it is a DB-constrained enum value
+        # (prices_review_flag_type_chk); the operator-facing command is now `sym audit`.
         """
         INSERT INTO prices_review
             (composite_figi, session_date, flag_type, detail, pct_move, source)
@@ -404,16 +412,22 @@ def _flag_divergence(
                 pct_move = EXCLUDED.pct_move, source = EXCLUDED.source
             WHERE NOT prices_review.reviewed
         """,
-        (figi, session_date, f"sweep: stored {stored} vs re-fetched {fetched}", relative, source),
+        (figi, session_date, f"audit: stored {stored} vs re-fetched {fetched}", relative, source),
     )
 
 
-def run_sweep(
+# `sym audit` (was `sweep`): re-fetch the trailing window and flag where the vendor now
+# disagrees with stored raw — a read-only drift check, never an overwrite.
+AUDIT = "audit"
+AUDIT_LOOKBACK_DAYS = 90
+
+
+def run_audit(
     conn: psycopg.Connection,
     source: object,
     *,
     as_of_date: date,
-    lookback_days: int = SWEEP_LOOKBACK_DAYS,
+    lookback_days: int = AUDIT_LOOKBACK_DAYS,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> LoadSummary:
@@ -421,11 +435,11 @@ def run_sweep(
 
     Immutable (AR-10): stored prices are never overwritten — divergences are
     flagged in ``prices_review`` for review. One durable transaction per figi,
-    error-isolated; the run is logged (``mode='sweep'``).
+    error-isolated; the run is logged (``mode='audit'``).
     """
     conn.autocommit = True
     source_name = getattr(source, "SOURCE", "unknown")
-    summary = LoadSummary(mode=SWEEP)
+    summary = LoadSummary(mode=AUDIT)
     started_at = now()
     start_date = as_of_date - timedelta(days=lookback_days)
 

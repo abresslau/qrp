@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sym.ingest.pipeline import DELTA, OVERWRITE, compute_window
+from sym.ingest.pipeline import FILL, OVERWRITE, compute_window
 
 FLOOR = date(1990, 1, 1)
 
@@ -49,10 +49,10 @@ def test_overwrite_requires_overwrite_start():
     assert w is None
 
 
-def test_delta_ignores_overwrite_start():
+def test_fill_ignores_overwrite_start():
     end = date(2026, 6, 9)
     w = compute_window(
-        DELTA, date(2026, 6, 5), floor=FLOOR, end_date=end,
+        FILL, date(2026, 6, 5), floor=FLOOR, end_date=end,
         overwrite_start_date=date(2020, 1, 1),
     )
     assert w == (date(2026, 6, 6), end)  # still cursor+1, overwrite_start ignored

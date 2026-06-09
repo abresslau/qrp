@@ -69,6 +69,18 @@ claude-opus-4-8 (Claude Code), 2026-06-09
 - `packages/sym/tests/test_pipeline.py`
 - `_bmad-output/implementation-artifacts/2-11-unified-load.md` (this story)
 
+## Post-review naming pass (2026-06-09, Andre)
+
+Collapsed the internal load-mode vocabulary to match the user-facing model — **one word per concept**:
+- `delta` + `backfill` → a single **`fill`** mode (the fast-forward-vs-gap-aware split is now an
+  internal `gap_aware` flag on `run_load`/`compute_window`, not two mode names). `plan_load` returns
+  `(mode, gap_aware)`.
+- `sweep` → **`audit`** (`sym audit`, `run_audit`): re-fetch the trailing 90d and flag source-side
+  drift; it was never a load mode. The DB `flag_type='sweep_divergence'` value is kept (constrained
+  enum; renaming needs a migration). EOD step key `delta` and the separate `sym fx delta/backfill`
+  are left as-is (different surfaces) — possible follow-up.
+- Final load surface: `sym load` (fill) / `sym load --overwrite` (overwrite). 412 tests pass.
+
 ## Review Findings
 
 _Adversarial code review of commit `8993030` (Blind Hunter + Edge Case Hunter + Acceptance Auditor),

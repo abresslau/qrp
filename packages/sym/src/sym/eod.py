@@ -132,9 +132,10 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 leavers += s.leavers
             return f"{len(uids)} index universes; joiners={joiners} leavers={leavers}"
         if key == "delta":
-            from sym.ingest.pipeline import run_load
+            from sym.ingest.pipeline import FILL, run_load
 
-            s = run_load(conn, source(), "delta", as_of_date=as_of_date)
+            # The daily incremental is a forward fill (gap_aware defaults False).
+            s = run_load(conn, source(), FILL, as_of_date=as_of_date)
             return f"loaded={s.loaded} skipped={s.skipped} errored={s.errored} rows={s.rows}"
         if key == "map":
             from sym.identity.instrument import backfill_equity_instruments

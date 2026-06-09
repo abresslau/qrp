@@ -2,8 +2,9 @@
 
 Story 1.1 ships ``version`` and ``check-db``; Story 1.6 adds ``resolve`` (FIGI
 assignment); Story 1.7 adds ``delist``; Story 1.8 adds ``classify`` (GICS); Story
-2.1 adds ``snapshot-calendar``; Story 2.5 adds ``backfill`` / ``delta`` / ``dev``;
-Story 2.8 adds ``sweep``; Story 2.9 adds ``backup``; Story 3.4 adds ``recompute``
+2.1 adds ``snapshot-calendar``; Story 2.5 adds ``load`` (one loader: fill +
+``--overwrite``, Story 2.11); Story 2.8 adds ``audit`` (was ``sweep``: trailing
+re-fetch + drift flagging); Story 2.9 adds ``backup``; Story 3.4 adds ``recompute``
 (the deterministic returns rebuild the DR runbook depends on); Story U1.1 adds
 ``universe`` (define/list research universes — the pluggable universe layer).
 """
@@ -211,8 +212,6 @@ def _cmd_load(args: argparse.Namespace) -> int:
     from sym.config import source_key
     from sym.db import connect
     from sym.ingest.pipeline import (
-        BACKFILL,
-        DELTA,
         OVERWRITE,
         plan_load,
         read_active_with_cursor,
@@ -255,7 +254,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
         )
         return 1
 
-    mode = plan_load(start_date=start_date, overwrite=args.overwrite)
+    mode, gap_aware = plan_load(start_date=start_date, overwrite=args.overwrite)
     try:
         with connect() as conn:
             conn.autocommit = True
@@ -264,10 +263,10 @@ def _cmd_load(args: argparse.Namespace) -> int:
             if universe_id is not None:
                 from sym.universe.ingest import run_universe_load
 
-                kwargs = {"as_of_date": end_date, "limit": args.limit}
+                kwargs = {"as_of_date": end_date, "limit": args.limit, "gap_aware": gap_aware}
                 if mode == OVERWRITE:
                     kwargs["overwrite_start_date"] = start_date
-                elif mode == BACKFILL:
+                elif gap_aware:  # explicit-floor backfill
                     kwargs["history_floor"] = start_date
                 summary = run_universe_load(conn, source, universe_id, mode, **kwargs)
             else:
@@ -277,10 +276,13 @@ def _cmd_load(args: argparse.Namespace) -> int:
                     if not securities:
                         print(f"{figi} not in the active master", file=sys.stderr)
                         return 1
-                kwargs = {"as_of_date": end_date, "limit": args.limit, "securities": securities}
+                kwargs = {
+                    "as_of_date": end_date, "limit": args.limit,
+                    "securities": securities, "gap_aware": gap_aware,
+                }
                 if mode == OVERWRITE:
                     kwargs["overwrite_start_date"] = start_date
-                elif mode == BACKFILL:
+                elif gap_aware:  # explicit-floor backfill
                     kwargs["floor"] = start_date
                 summary = run_load(conn, source, mode, **kwargs)
     except psycopg.OperationalError as exc:
@@ -357,12 +359,12 @@ def _cmd_backup(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_sweep(_args: argparse.Namespace) -> int:
+def _cmd_audit(_args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.config import source_key
     from sym.db import connect
-    from sym.ingest.pipeline import run_sweep
+    from sym.ingest.pipeline import run_audit
     from sym.sources import get_source
     from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
 
@@ -371,13 +373,13 @@ def _cmd_sweep(_args: argparse.Namespace) -> int:
         with connect() as conn:
             resolver = make_yahoo_symbol_resolver(conn)
             source = get_source(key, symbol_for=resolver)
-            summary = run_sweep(conn, source, as_of_date=date.today())
+            summary = run_audit(conn, source, as_of_date=date.today())
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
 
     print(
-        f"sweep ({key}) run #{summary.run_id} [{summary.status}]: "
+        f"audit ({key}) run #{summary.run_id} [{summary.status}]: "
         f"checked={summary.loaded} divergences={summary.flags} errored={summary.errored}"
     )
     for figi, msg in summary.errors[:10]:
@@ -1044,11 +1046,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_load.add_argument("--limit", type=int, help="Cap the number of securities (smoke runs).")
     p_load.set_defaults(func=_cmd_load)
 
-    p_sweep = sub.add_parser(
-        "sweep",
-        help="Re-fetch the trailing 90 days and flag source-side corrections (no overwrite).",
+    p_audit = sub.add_parser(
+        "audit",
+        help="Re-fetch the trailing 90 days and flag where the source revised stored prices "
+        "(read-only drift check; never overwrites).",
     )
-    p_sweep.set_defaults(func=_cmd_sweep)
+    p_audit.set_defaults(func=_cmd_audit)
 
     p_backup = sub.add_parser(
         "backup",

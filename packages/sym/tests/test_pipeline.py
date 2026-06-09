@@ -8,8 +8,7 @@ import pytest
 
 from sym.ingest import pipeline
 from sym.ingest.pipeline import (
-    BACKFILL,
-    DELTA,
+    FILL,
     OVERWRITE,
     LoadSummary,
     compute_window,
@@ -28,51 +27,51 @@ END = date(2024, 12, 31)
 # --- compute_window ---------------------------------------------------------
 
 
-def test_backfill_window_is_full_from_floor():
-    assert compute_window(BACKFILL, None, floor=FLOOR, end_date=END) == (FLOOR, END)
+def test_gap_aware_fill_window_is_full_from_floor():
+    assert compute_window(FILL, None, floor=FLOOR, end_date=END, gap_aware=True) == (FLOOR, END)
 
 
-def test_delta_window_starts_after_cursor():
-    assert compute_window(DELTA, date(2024, 1, 1), floor=FLOOR, end_date=END) == (date(2024, 1, 2), END)
+def test_forward_fill_window_starts_after_cursor():
+    assert compute_window(FILL, date(2024, 1, 1), floor=FLOOR, end_date=END) == (date(2024, 1, 2), END)
 
 
-def test_delta_without_cursor_is_full():
-    assert compute_window(DELTA, None, floor=FLOOR, end_date=END) == (FLOOR, END)
+def test_forward_fill_without_cursor_is_full():
+    assert compute_window(FILL, None, floor=FLOOR, end_date=END) == (FLOOR, END)
 
 
 def test_up_to_date_security_is_skipped():
-    # cursor at (or past) the latest session -> delta is a no-op.
-    assert compute_window(DELTA, END, floor=FLOOR, end_date=END) is None
-    # Backfill is gap-aware: a current cursor only skips once the floor was reached
+    # cursor at (or past) the latest session -> a forward fill is a no-op.
+    assert compute_window(FILL, END, floor=FLOOR, end_date=END) is None
+    # A gap-aware fill: a current cursor only skips once the floor was reached
     # (else there may be unfetched history below the earliest stored bar).
-    assert compute_window(BACKFILL, END, floor=FLOOR, end_date=END, floor_reached=FLOOR) is None
+    assert compute_window(FILL, END, floor=FLOOR, end_date=END, gap_aware=True, floor_reached=FLOOR) is None
     # ...but a current cursor with no recorded floor still re-fetches to fill below.
-    assert compute_window(BACKFILL, END, floor=FLOOR, end_date=END) == (FLOOR, END)
+    assert compute_window(FILL, END, floor=FLOOR, end_date=END, gap_aware=True) == (FLOOR, END)
 
 
 def test_no_sessions_means_skip():
-    assert compute_window(BACKFILL, None, floor=FLOOR, end_date=None) is None
+    assert compute_window(FILL, None, floor=FLOOR, end_date=None, gap_aware=True) is None
 
 
-# --- plan_load (the unified `sym load` flag -> mode mapping, Story 2.11) -----
+# --- plan_load (the unified `sym load` flags -> (mode, gap_aware), Story 2.11) -----
 
 
-def test_plan_load_no_window_is_delta():
-    assert plan_load(start_date=None, overwrite=False) == DELTA
+def test_plan_load_no_window_is_forward_fill():
+    assert plan_load(start_date=None, overwrite=False) == (FILL, False)
 
 
-def test_plan_load_explicit_start_is_backfill():
-    assert plan_load(start_date=date(2020, 1, 1), overwrite=False) == BACKFILL
+def test_plan_load_explicit_start_is_gap_aware_fill():
+    assert plan_load(start_date=date(2020, 1, 1), overwrite=False) == (FILL, True)
 
 
 def test_plan_load_overwrite_is_overwrite():
-    assert plan_load(start_date=date(2020, 1, 1), overwrite=True) == OVERWRITE
+    assert plan_load(start_date=date(2020, 1, 1), overwrite=True) == (OVERWRITE, False)
 
 
 def test_plan_load_overwrite_takes_precedence_over_start():
     # overwrite wins regardless of start_date presence (the CLI separately requires
     # --start_date with --overwrite, but the mapping itself is overwrite-first).
-    assert plan_load(start_date=None, overwrite=True) == OVERWRITE
+    assert plan_load(start_date=None, overwrite=True) == (OVERWRITE, False)
 
 
 # --- fetch_with_retry -------------------------------------------------------
@@ -167,7 +166,7 @@ def _set_universe(monkeypatch, securities):
     monkeypatch.setattr(pipeline, "read_active_with_cursor", lambda conn: securities)
 
 
-def test_delta_skips_up_to_date_and_windows_from_cursor(stub_db, monkeypatch):
+def test_forward_fill_skips_up_to_date_and_windows_from_cursor(stub_db, monkeypatch):
     _set_universe(monkeypatch, [
         ("F1", "XNAS", None),               # never loaded -> full
         ("F2", "XNAS", date(2024, 1, 1)),   # behind -> window from cursor+1
@@ -175,12 +174,12 @@ def test_delta_skips_up_to_date_and_windows_from_cursor(stub_db, monkeypatch):
     ])
     conn = _Conn()
     src = _Source()
-    summary = run_load(conn, src, DELTA, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
+    summary = run_load(conn, src, FILL, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
     assert (summary.loaded, summary.skipped, summary.attempted) == (2, 1, 3)
     assert conn.autocommit is True  # per-figi durable commits (Story 2.4 finding)
     fetched = dict((f, (s, e)) for f, s, e in src.fetched)
     assert "F3" not in fetched  # up-to-date never fetched
-    assert fetched["F2"][0] == date(2024, 1, 2)  # delta window from cursor, not the clock
+    assert fetched["F2"][0] == date(2024, 1, 2)  # fill window from cursor, not the clock
     # a run-level log row is written (FR-8), success since nothing errored
     assert summary.status == "success" and summary.run_id == 1
     assert conn.sql_for("INSERT INTO PIPELINE_RUN_LOG")
@@ -191,8 +190,8 @@ def test_one_failing_figi_is_isolated(stub_db, monkeypatch):
         ("F1", "XNAS", None), ("F2", "XNAS", None), ("F3", "XNAS", None),
     ])
     conn = _Conn()
-    summary = run_load(conn, _Source(fail_figis={"F2"}), BACKFILL, as_of_date=date(2026, 6, 6),
-                       sleep=lambda d: None)
+    summary = run_load(conn, _Source(fail_figis={"F2"}), FILL, as_of_date=date(2026, 6, 6),
+                       gap_aware=True, sleep=lambda d: None)
     assert (summary.loaded, summary.errored) == (2, 1)
     assert summary.errors[0][0] == "F2"
     # F2 marked error (cursor NOT advanced) without halting the run
@@ -203,12 +202,12 @@ def test_one_failing_figi_is_isolated(stub_db, monkeypatch):
 
 
 def test_summary_is_returned():
-    assert isinstance(LoadSummary(mode="delta"), LoadSummary)
+    assert isinstance(LoadSummary(mode="fill"), LoadSummary)
 
 
 def test_load_summary_status():
-    assert LoadSummary(mode="delta").status == "success"
-    assert LoadSummary(mode="delta", errored=2).status == "partial"
+    assert LoadSummary(mode="fill").status == "success"
+    assert LoadSummary(mode="fill", errored=2).status == "partial"
 
 
 def test_write_run_log_records_the_run():
@@ -217,7 +216,7 @@ def test_write_run_log_records_the_run():
     from sym.ingest.pipeline import _write_run_log
 
     conn = _Conn()
-    summary = LoadSummary(mode="backfill", attempted=3, loaded=2, errored=1, rows=500,
+    summary = LoadSummary(mode="fill", attempted=3, loaded=2, errored=1, rows=500,
                           errors=[("F2", "boom")])
     t0 = datetime(2026, 6, 6, 9, 0, tzinfo=UTC)
     run_id = _write_run_log(conn, summary, source="yfinance", started_at=t0, finished_at=t0)
