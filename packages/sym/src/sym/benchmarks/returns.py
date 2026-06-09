@@ -97,9 +97,9 @@ def _upsert(conn: psycopg.Connection, rows: Sequence[tuple]) -> None:
 
 
 def recompute_index_returns(
-    conn: psycopg.Connection, *, start: date, end: date
+    conn: psycopg.Connection, *, start_date: date, end_date: date
 ) -> IndexReturnsSummary:
-    """Materialize benchmark index returns into ``fact_index_returns`` for [start, end]."""
+    """Materialize benchmark index returns into ``fact_index_returns`` for [start_date, end_date]."""
     conn.autocommit = True
     summary = IndexReturnsSummary()
     for sym_id in _index_series(conn):
@@ -107,7 +107,7 @@ def recompute_index_returns(
         if not levels:
             continue
         sessions = sorted(levels)
-        as_of_dates = [d for d in sessions if start <= d <= end]
+        as_of_dates = [d for d in sessions if start_date <= d <= end_date]
         if not as_of_dates:
             continue
         rows = index_return_rows(sym_id, levels, as_of_dates, sessions)

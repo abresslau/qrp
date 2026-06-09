@@ -28,33 +28,33 @@ END = date(2024, 12, 31)
 
 
 def test_backfill_window_is_full_from_floor():
-    assert compute_window(BACKFILL, None, floor=FLOOR, end=END) == (FLOOR, END)
+    assert compute_window(BACKFILL, None, floor=FLOOR, end_date=END) == (FLOOR, END)
 
 
 def test_delta_window_starts_after_cursor():
-    assert compute_window(DELTA, date(2024, 1, 1), floor=FLOOR, end=END) == (date(2024, 1, 2), END)
+    assert compute_window(DELTA, date(2024, 1, 1), floor=FLOOR, end_date=END) == (date(2024, 1, 2), END)
 
 
 def test_delta_without_cursor_is_full():
-    assert compute_window(DELTA, None, floor=FLOOR, end=END) == (FLOOR, END)
+    assert compute_window(DELTA, None, floor=FLOOR, end_date=END) == (FLOOR, END)
 
 
 def test_up_to_date_security_is_skipped():
     # cursor at (or past) the latest session -> delta is a no-op.
-    assert compute_window(DELTA, END, floor=FLOOR, end=END) is None
+    assert compute_window(DELTA, END, floor=FLOOR, end_date=END) is None
     # Backfill is gap-aware: a current cursor only skips once the floor was reached
     # (else there may be unfetched history below the earliest stored bar).
-    assert compute_window(BACKFILL, END, floor=FLOOR, end=END, floor_reached=FLOOR) is None
+    assert compute_window(BACKFILL, END, floor=FLOOR, end_date=END, floor_reached=FLOOR) is None
     # ...but a current cursor with no recorded floor still re-fetches to fill below.
-    assert compute_window(BACKFILL, END, floor=FLOOR, end=END) == (FLOOR, END)
+    assert compute_window(BACKFILL, END, floor=FLOOR, end_date=END) == (FLOOR, END)
 
 
 def test_dev_window_is_recent():
-    assert compute_window(DEV, None, floor=FLOOR, end=END, dev_days=30) == (date(2024, 12, 1), END)
+    assert compute_window(DEV, None, floor=FLOOR, end_date=END, dev_days=30) == (date(2024, 12, 1), END)
 
 
 def test_no_sessions_means_skip():
-    assert compute_window(BACKFILL, None, floor=FLOOR, end=None) is None
+    assert compute_window(BACKFILL, None, floor=FLOOR, end_date=None) is None
 
 
 # --- fetch_with_retry -------------------------------------------------------

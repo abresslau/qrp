@@ -1,6 +1,6 @@
 # Story 2.10: Explicit-range reload (re-upload any date window)
 
-Status: done
+Status: in-progress
 
 ## Story
 
@@ -58,6 +58,20 @@ everywhere outside the requested window. Reload is also the right home for vendo
   filters `read_active_with_cursor` (keeps the real MIC/calendar). (AC: #1)
 - [x] Task 4: `cli.py` — `recompute` `--from`/`--to` → `--start_date`/`--end_date` (dests unchanged). (AC: #4)
 - [x] Task 5: tests + verify — reload `2026-06-09`, confirm finals replace provisional; `sym validate`. (AC: #5,#6)
+
+### Review Findings
+_Adversarial review 2026-06-09 (bmad-code-review, 3 layers: Blind / Edge / Acceptance). 1 decision, 6 patch, 1 defer, 1 dismissed. The review caught a real **data-loss** footgun — the committed feature (8694a74) must not be relied on until these land. Status → in-progress._
+
+- [ ] [Review][Decision] **Unscoped `sym reload` (no `--figi`) mass-deletes + re-fetches the window across the ENTIRE active master (~2100 names), irreversibly, no confirmation.** A single `sym reload --start_date 2020-01-01` would delete years × 2100 names of prices_raw. What guard? [cli.py `_cmd_reload`; pipeline.py `read_active_with_cursor`]
+- [ ] [Review][Patch] **Data loss on empty/short fetch (CRITICAL).** The DELETE runs unconditionally after a *successful* fetch; if the vendor returns 0 bars for the window (gap/delisted), the range is deleted and replaced with nothing — a silent hole. AC2's guarantee only held for fetch *exceptions*. Fix: skip the delete when the fetch returns no bars (preserve existing; mark errored/skipped). [pipeline.py:305-313]
+- [ ] [Review][Patch] Reload leaves `fact_returns`/`fact_index_returns` stale (prices changed, returns not recomputed) with no hint — print a `run sym recompute --start_date … --end_date …` reminder after a reload. [cli.py `_cmd_reload`]
+- [ ] [Review][Patch] Reload replaces prices but NOT corporate actions (`ingest_result` CA insert is DO NOTHING) — a vendor split/dividend restatement silently keeps stale CA and mis-adjusts the reloaded prices. State "prices only, not corporate actions" in the command help + the post-reload note. [cli.py reload help; ingest/prices.py:117]
+- [ ] [Review][Patch] `run_load(start_date=…)` is silently ignored for delta/backfill/dev (only RELOAD reads `reload_start`) — raise `ValueError` if `start_date` is passed with a non-RELOAD mode. [pipeline.py `run_load`]
+- [ ] [Review][Patch] Story honesty: AC5's named acceptance test (reload 2026-06-09 → finals) was NOT run (substituted with a settled-window demo), yet Task 5 is checked. Mark AC5 PARTIAL and correct Task 5. [this story]
+- [ ] [Review][Patch] No automated test for the RELOAD delete+reingest path (only the pure `compute_window`) — add a `run_load` RELOAD test with a fake source covering the empty-fetch guard + replace-not-duplicate. [tests/]
+- [x] [Review][Defer] `reload_start`/`start` not snapped to a trading session while `end` is — benign (DELETE over non-session days is a no-op; `expected_trading_days` counts only sessions). Optional symmetry fix. [pipeline.py compute_window RELOAD branch]
+
+_Dismissed (1): `ingest_result`'s nested `conn.transaction()` becomes a savepoint under the outer reload txn — verified correct (the outer txn is the durable boundary; an ingest failure rolls back the delete). Not a defect._
 
 ## Dev Notes
 

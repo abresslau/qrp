@@ -236,11 +236,11 @@ class RecomputeSummary:
 def load_returns(
     conn: psycopg.Connection,
     *,
-    start: date,
-    end: date,
+    start_date: date,
+    end_date: date,
     figis: Sequence[str] | None = None,
 ) -> RecomputeSummary:
-    """Materialize PR + TR into fact_returns for as_of_dates in [start, end].
+    """Materialize PR + TR into fact_returns for as_of_dates in [start_date, end_date].
 
     Spans ALL securities including delisted (AR-8 survivorship invariant) — see
     ``_securities_for_returns``.
@@ -259,7 +259,7 @@ def load_returns(
         adj = {d: adj_close for d, _close_raw, adj_close in price_rows}
         tri = total_return_index(price_rows, _dividends(conn, figi))
         gated_dates = _unreviewed_flag_dates(conn, figi)
-        as_of_dates = [d for d in sorted(adj) if start <= d <= end]
+        as_of_dates = [d for d in sorted(adj) if start_date <= d <= end_date]
         if not as_of_dates:
             continue
         rows = compute_return_rows(

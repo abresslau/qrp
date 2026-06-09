@@ -31,7 +31,7 @@ from sym.sources.contract import OhlcvResult
 DEV = "dev"
 BACKFILL = "backfill"
 DELTA = "delta"
-RELOAD = "reload"  # explicit-window re-upload (Story 2.10): replaces stored bars in [start, end]
+RELOAD = "reload"  # explicit-window re-upload (Story 2.10): replaces stored bars in [start_date, end_date]
 SWEEP = "sweep"
 
 DEFAULT_FLOOR = date(1990, 1, 1)
@@ -47,59 +47,59 @@ def compute_window(
     cursor_date: date | None,
     *,
     floor: date,
-    end: date | None,
+    end_date: date | None,
     dev_days: int = DEV_DAYS,
     floor_reached: date | None = None,
-    reload_start: date | None = None,
+    reload_start_date: date | None = None,
 ) -> tuple[date, date] | None:
-    """The [start, end] sessions to fetch for one security, or None to skip it.
+    """The [start_date, end_date] sessions to fetch for one security, or None to skip it.
 
-    ``end`` is the latest available session (from the calendar, not the clock).
+    ``end_date`` is the latest available session (from the calendar, not the clock).
 
     **Backfill is gap-aware.** The forward cursor only tracks the *latest* loaded
-    session, so a name first loaded from a late start (e.g. an index member loaded
+    session, so a name first loaded from a late start_date (e.g. an index member loaded
     from its membership-join date) looks "complete" even though its history below
     the earliest stored bar was never fetched. ``floor_reached`` records the
     deepest floor a prior backfill actually requested; backfill skips a name only
     when ``floor_reached <= floor`` (we already asked at least this deep and got
     whatever exists — even if the data starts at a later IPO) AND the cursor is
-    current. Otherwise it re-fetches ``[floor, end]`` and immutable ingestion
+    current. Otherwise it re-fetches ``[floor, end_date]`` and immutable ingestion
     inserts only the missing bars. Forward modes (delta/dev) are unchanged.
     """
-    if end is None:
+    if end_date is None:
         return None
     if mode == BACKFILL:
-        if floor > end:
+        if floor > end_date:
             return None
-        is_current = cursor_date is not None and cursor_date >= end
+        is_current = cursor_date is not None and cursor_date >= end_date
         reached_floor = floor_reached is not None and floor_reached <= floor
         if is_current and reached_floor:
             return None  # already fetched down to (at least) this floor and current
-        return (floor, end)
+        return (floor, end_date)
     if mode == RELOAD:
         # Explicit operator-chosen window; cursor-independent (we WANT to re-fetch even
-        # when current). `end` is already clamped to the latest session <= end_date.
-        if reload_start is None or reload_start > end:
+        # when current). `end_date` is already clamped to the latest session <= end_date.
+        if reload_start_date is None or reload_start_date > end_date:
             return None
-        return (reload_start, end)
-    if cursor_date is not None and cursor_date >= end:
+        return (reload_start_date, end_date)
+    if cursor_date is not None and cursor_date >= end_date:
         return None  # up-to-date -> skip (AC #1 resume, AC #4 idempotency)
     if mode == DELTA:
-        start = cursor_date + timedelta(days=1) if cursor_date is not None else floor
+        start_date = cursor_date + timedelta(days=1) if cursor_date is not None else floor
     elif mode == DEV:
-        start = end - timedelta(days=dev_days)
+        start_date = end_date - timedelta(days=dev_days)
     else:
         raise ValueError(f"unknown load mode {mode!r}")
-    if start > end:
+    if start_date > end_date:
         return None
-    return (start, end)
+    return (start_date, end_date)
 
 
 def fetch_with_retry(
     source: object,
     figi: str,
-    start: date,
-    end: date,
+    start_date: date,
+    end_date: date,
     *,
     retries: int = 3,
     base: float = 1.0,
@@ -110,7 +110,7 @@ def fetch_with_retry(
     last: Exception | None = None
     for attempt in range(retries):
         try:
-            return source.fetch_ohlcv(figi, start, end)
+            return source.fetch_ohlcv(figi, start_date, end_date)
         except Exception as exc:  # noqa: BLE001 - transient vendor/network failures
             last = exc
             if attempt < retries - 1:
@@ -208,8 +208,8 @@ def _mark_error(conn: psycopg.Connection, figi: str, source: str, detail: str) -
     )
 
 
-def _delete_prices_range(conn: psycopg.Connection, figi: str, start: date, end: date) -> None:
-    """Discard stored raw bars for one figi in [start, end].
+def _delete_prices_range(conn: psycopg.Connection, figi: str, start_date: date, end_date: date) -> None:
+    """Discard stored raw bars for one figi in [start_date, end_date].
 
     The one explicit override of the immutable ``ON CONFLICT DO NOTHING`` write (Story 2.10
     reload), scoped to an operator-chosen window so a re-fetch can *replace* a bad bar
@@ -217,7 +217,7 @@ def _delete_prices_range(conn: psycopg.Connection, figi: str, start: date, end: 
     """
     conn.execute(
         "DELETE FROM prices_raw WHERE composite_figi = %s AND session_date BETWEEN %s AND %s",
-        (figi, start, end),
+        (figi, start_date, end_date),
     )
 
 
@@ -254,7 +254,7 @@ def run_load(
     mode: str,
     *,
     as_of_date: date,
-    start_date: date | None = None,
+    reload_start_date: date | None = None,
     floor: date = DEFAULT_FLOOR,
     dev_days: int = DEV_DAYS,
     dev_limit: int | None = None,
@@ -270,9 +270,11 @@ def run_load(
     ingestion (Story U4) passes its own ``securities`` selection plus:
       * ``floor_for(figi)`` — the per-figi backfill floor (a joiner's membership
         ``valid_from``, so its prior history is backfilled over its window);
-      * ``end_cap_for(figi)`` — caps the fetch end (a leaver's exit date), so a name
+      * ``end_cap_for(figi)`` — caps the fetch end_date (a leaver's exit date), so a name
         that left the universe stops fetching past its departure.
     """
+    if reload_start_date is not None and mode != RELOAD:
+        raise ValueError(f"reload_start_date is only valid for mode={RELOAD!r}, not {mode!r}")
     conn.autocommit = True  # per-figi commits must be top-level + durable (Story 2.4 finding)
     source_name = getattr(source, "SOURCE", "unknown")
     summary = LoadSummary(mode=mode)
@@ -285,31 +287,36 @@ def run_load(
 
     for figi, mic, cursor in securities:
         summary.attempted += 1
-        end = latest_session_for(conn, mic, as_of_date)
+        end_date = latest_session_for(conn, mic, as_of_date)
         if end_cap_for is not None:
             cap = end_cap_for(figi)
-            if cap is not None and (end is None or cap < end):
-                end = cap
+            if cap is not None and (end_date is None or cap < end_date):
+                end_date = cap
         fig_floor = (floor_for(figi) if floor_for is not None else None) or floor
         reached = floor_reached_for(conn, figi) if mode == BACKFILL else None
         window = compute_window(
-            mode, cursor, floor=fig_floor, end=end, dev_days=dev_days,
-            floor_reached=reached, reload_start=start_date,
+            mode, cursor, floor=fig_floor, end_date=end_date, dev_days=dev_days,
+            floor_reached=reached, reload_start_date=reload_start_date,
         )
         if window is None:
             summary.skipped += 1
             continue
-        start, stop = window
+        start_date, end_date = window
         try:
             # Fetch AND ingest are isolated: a constraint/currency failure in the
             # write must mark one figi errored, not halt the run (AC #3).
-            result = fetch_with_retry(source, figi, start, stop, sleep=sleep)
-            expected = expected_trading_days(conn, mic, start, stop)
+            result = fetch_with_retry(source, figi, start_date, end_date, sleep=sleep)
+            if mode == RELOAD and not result.bars:
+                # Empty fetch: do NOT delete. Replacing good stored data with nothing is the one
+                # outcome reload must never produce — a vendor gap must not destroy history.
+                summary.skipped += 1
+                continue
+            expected = expected_trading_days(conn, mic, start_date, end_date)
             if mode == RELOAD:
-                # Replace the window atomically, and only AFTER a successful fetch — a vendor
-                # failure must never leave a deleted-but-unreloaded hole (Story 2.10 AC#2).
+                # Replace the window atomically, only AFTER a non-empty fetch — so neither a vendor
+                # failure (raises) nor a gap (empty bars) leaves a deleted-but-unreloaded hole.
                 with conn.transaction():
-                    _delete_prices_range(conn, figi, start, stop)
+                    _delete_prices_range(conn, figi, start_date, end_date)
                     result_summary = ingest_result(conn, result, expected_sessions=expected)
             else:
                 result_summary = ingest_result(conn, result, expected_sessions=expected)
@@ -323,9 +330,9 @@ def run_load(
         summary.flags += len(result_summary.flags)
         summary.gaps += len(result_summary.gaps)
         if mode == BACKFILL:
-            # We requested down to `start`; whatever Yahoo returned, that floor is
+            # We requested down to `start_date`; whatever Yahoo returned, that floor is
             # now covered — record it so a later same-floor backfill skips this name.
-            record_floor_reached(conn, figi, start)
+            record_floor_reached(conn, figi, start_date)
 
     summary.run_id = _write_run_log(
         conn, summary, source=source_name, started_at=started_at, finished_at=now()
@@ -356,14 +363,14 @@ def detect_divergences(
 
 
 def _read_stored_closes(
-    conn: psycopg.Connection, figi: str, start: date, end: date
+    conn: psycopg.Connection, figi: str, start_date: date, end_date: date
 ) -> dict[date, Decimal]:
     rows = conn.execute(
         """
         SELECT session_date, close FROM prices_raw
          WHERE composite_figi = %s AND session_date BETWEEN %s AND %s
         """,
-        (figi, start, end),
+        (figi, start_date, end_date),
     ).fetchall()
     return {session_date: close for session_date, close in rows}
 
@@ -409,13 +416,13 @@ def run_sweep(
     source_name = getattr(source, "SOURCE", "unknown")
     summary = LoadSummary(mode=SWEEP)
     started_at = now()
-    start = as_of_date - timedelta(days=lookback_days)
+    start_date = as_of_date - timedelta(days=lookback_days)
 
     for figi, _mic, _cursor in read_active_with_cursor(conn):
         summary.attempted += 1
         try:
-            result = fetch_with_retry(source, figi, start, as_of_date, sleep=sleep)
-            stored = _read_stored_closes(conn, figi, start, as_of_date)
+            result = fetch_with_retry(source, figi, start_date, as_of_date, sleep=sleep)
+            stored = _read_stored_closes(conn, figi, start_date, as_of_date)
             divergences = detect_divergences(stored, result.bars)
             for divergence in divergences:
                 _flag_divergence(conn, figi, divergence, source_name)

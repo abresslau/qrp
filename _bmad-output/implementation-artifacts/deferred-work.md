@@ -46,3 +46,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 - Add the cross-key bridge edge (securities.composite_figi → instrument_xref → instrument.sym_id) to the lineage DAG — the `instrument` asset only declares `securities` as a dep; the per-figi xref bridge is undocumented in the graph [lineage/assets.py].
 - No warn/exempt tier for delisted/suspended securities in `equity_instrument_bridge` — any unmapped security is a hard FAIL with no graceful tier (other checks downgrade expected gaps to WARN). Steady-state consistent today (backfill maps all statuses); a single legacy unmapped delisted name would pin `sym validate` red [validate/instrument_bridge.py].
 - CHAR(12)↔TEXT anti-join (`x.value = s.composite_figi`) is correct only because the figi `^[A-Z0-9]{12}$` CHECK forbids padding; no defensive `rtrim`/cast, and the dependency isn't noted. Latent false-negative/positive surface if the FIGI format is ever relaxed [validate/instrument_bridge.py:24].
+
+## Deferred from: code review of 2-10-explicit-range-reload (2026-06-09)
+
+- `reload_start`/`start` is not snapped to a trading session while `end` is (via `latest_session_for`). Benign today — `DELETE … BETWEEN` over non-session days removes nothing, and `expected_trading_days` only counts real sessions — but the asymmetry is a latent inconsistency. Optional: snap `reload_start` to the first session ≥ it [pipeline.py compute_window RELOAD branch].

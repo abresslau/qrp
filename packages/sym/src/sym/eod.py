@@ -148,7 +148,7 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             from sym.returns.loader import DEFAULT_LOOKBACK
 
             lv = load_index_levels(conn, YahooIndexLevelSource())
-            recompute_index_returns(conn, start=as_of_date - DEFAULT_LOOKBACK, end=as_of_date)
+            recompute_index_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
             link_universe_benchmarks(conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
@@ -165,7 +165,7 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
         if key == "recompute":
             from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
 
-            s = load_returns(conn, start=as_of_date - DEFAULT_LOOKBACK, end=as_of_date)
+            s = load_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
             return f"securities={s.securities} rows={s.rows}"
         if key == "validate":
             from sym.validate.runner import summarize, validate

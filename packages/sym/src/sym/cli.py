@@ -259,16 +259,16 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
     from sym.db import connect
     from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
 
-    end = date.fromisoformat(args.to) if args.to else date.today()
-    start = date.fromisoformat(args.start) if args.start else end - DEFAULT_LOOKBACK
+    end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
+    start_date = date.fromisoformat(args.start_date) if args.start_date else end_date - DEFAULT_LOOKBACK
     try:
         with connect() as conn:
-            summary = load_returns(conn, start=start, end=end)
+            summary = load_returns(conn, start_date=start_date, end_date=end_date)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
     print(
-        f"recompute PR+TR [{start} .. {end}]: {summary.securities} securities, "
+        f"recompute PR+TR [{start_date} .. {end_date}]: {summary.securities} securities, "
         f"{summary.rows:,} fact_returns rows"
     )
     return 0
@@ -307,7 +307,7 @@ def _cmd_reload(args: argparse.Namespace) -> int:
                     return 1
             summary = run_load(
                 conn, source, RELOAD,
-                as_of_date=end_date, start_date=start_date, securities=securities,
+                as_of_date=end_date, reload_start_date=start_date, securities=securities,
             )
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
@@ -439,8 +439,8 @@ def _cmd_msci_import(args: argparse.Namespace) -> int:
                 conn, args.path, msci_code=args.msci_code, name=args.name,
                 currency_code=args.currency,
             )
-            end = date.today()
-            recompute_index_returns(conn, start=end - DEFAULT_LOOKBACK, end=end)
+            end_date = date.today()
+            recompute_index_returns(conn, start_date=end_date - DEFAULT_LOOKBACK, end_date=end_date)
     except ValueError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -469,8 +469,8 @@ def _cmd_benchmarks(args: argparse.Namespace) -> int:
     from sym.returns.loader import DEFAULT_LOOKBACK
 
     load_dotenv()
-    end = date.today()
-    start = end - DEFAULT_LOOKBACK
+    end_date = date.today()
+    start_date = end_date - DEFAULT_LOOKBACK
     try:
         with connect() as conn:
             conn.autocommit = True
@@ -479,7 +479,7 @@ def _cmd_benchmarks(args: argparse.Namespace) -> int:
                 print(f"figis: {attached} attached, {missing} missing (load levels first)")
                 return 0
             summary = load_index_levels(conn, YahooIndexLevelSource())
-            rets = recompute_index_returns(conn, start=start, end=end)
+            rets = recompute_index_returns(conn, start_date=start_date, end_date=end_date)
             links = link_universe_benchmarks(conn)
             attached, _ = attach_index_figis(conn)
     except psycopg.OperationalError as exc:
@@ -1062,9 +1062,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Materialize the price-return matrix into fact_returns over an as_of_date range.",
     )
     p_recompute.add_argument(
-        "--start_date", dest="start", help="Start as_of_date (ISO; default: 1 year back)."
+        "--start_date", dest="start_date", help="Start as_of_date (ISO; default: 1 year back)."
     )
-    p_recompute.add_argument("--end_date", dest="to", help="End as_of_date (ISO; default: today).")
+    p_recompute.add_argument("--end_date", dest="end_date", help="End as_of_date (ISO; default: today).")
     p_recompute.set_defaults(func=_cmd_recompute)
 
     p_reload = sub.add_parser(

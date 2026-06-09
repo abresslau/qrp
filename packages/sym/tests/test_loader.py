@@ -141,7 +141,7 @@ def test_input_hash_format_is_pinned():
     # contract -- it decides the dirty-set skip across 9M+ fact_returns rows. Any
     # reorder/rename of the payload silently re-hashes everything and forces a full
     # rewrite; this pins it so such a change fails loudly instead. (Also guards the
-    # AC#5 "windows 1-18 byte-identical" invariant: end==as_of_date for non-period windows,
+    # AC#5 "windows 1-18 byte-identical" invariant: end_date==as_of_date for non-period windows,
     # so a non-period row's hash must equal what this fixed input produces.)
     h = input_hash(
         53, date(2023, 1, 3), date(2024, 1, 4),

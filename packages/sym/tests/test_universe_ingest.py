@@ -15,21 +15,21 @@ from sym.universe.ingest import Coverage
 
 def test_backfill_fetches_full_window_when_nothing_stored():
     end = date(2026, 6, 5)
-    window = compute_window("backfill", None, floor=date(1990, 1, 1), end=end)
+    window = compute_window("backfill", None, floor=date(1990, 1, 1), end_date=end)
     assert window == (date(1990, 1, 1), end)
 
 
 def test_end_cap_for_stops_leaver_at_exit():
     # A leaver's fetch end is capped at its exit (simulated by passing the cap as end).
     exit_date = date(2020, 3, 31)
-    window = compute_window("backfill", None, floor=date(2010, 1, 1), end=exit_date)
+    window = compute_window("backfill", None, floor=date(2010, 1, 1), end_date=exit_date)
     assert window == (date(2010, 1, 1), exit_date)
 
 
 def test_delta_skips_member_already_current():
     # An up-to-date member (cursor >= end) is skipped (no forward re-fetch).
     end = date(2026, 6, 5)
-    assert compute_window("delta", end, floor=date(1990, 1, 1), end=end) is None
+    assert compute_window("delta", end, floor=date(1990, 1, 1), end_date=end) is None
 
 
 def test_backfill_skips_when_floor_already_reached_and_current():
@@ -37,7 +37,7 @@ def test_backfill_skips_when_floor_already_reached_and_current():
     end = date(2026, 6, 5)
     assert (
         compute_window(
-            "backfill", end, floor=date(1990, 1, 1), end=end, floor_reached=date(1990, 1, 1)
+            "backfill", end, floor=date(1990, 1, 1), end_date=end, floor_reached=date(1990, 1, 1)
         )
         is None
     )
@@ -48,7 +48,7 @@ def test_backfill_refetches_when_prior_floor_was_shallower():
     # (the membership-join floor) while we now request 1990 -> re-fetch to fill below.
     end = date(2026, 6, 5)
     window = compute_window(
-        "backfill", end, floor=date(1990, 1, 1), end=end, floor_reached=date(2025, 7, 23)
+        "backfill", end, floor=date(1990, 1, 1), end_date=end, floor_reached=date(2025, 7, 23)
     )
     assert window == (date(1990, 1, 1), end)
 
@@ -56,12 +56,12 @@ def test_backfill_refetches_when_prior_floor_was_shallower():
 def test_backfill_fetches_when_floor_never_recorded():
     # floor_reached unknown (NULL) and current -> still fetch (we don't know we went deep).
     end = date(2026, 6, 5)
-    window = compute_window("backfill", end, floor=date(1990, 1, 1), end=end, floor_reached=None)
+    window = compute_window("backfill", end, floor=date(1990, 1, 1), end_date=end, floor_reached=None)
     assert window == (date(1990, 1, 1), end)
 
 
 def test_backfill_no_fetch_when_floor_after_end():
-    assert compute_window("backfill", None, floor=date(2030, 1, 1), end=date(2026, 6, 5)) is None
+    assert compute_window("backfill", None, floor=date(2030, 1, 1), end_date=date(2026, 6, 5)) is None
 
 
 def test_coverage_percentages():
