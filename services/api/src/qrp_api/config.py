@@ -94,7 +94,7 @@ def package_dsn(package: str) -> str:
 
 
 def db_dsn() -> str:
-    """The sym hub database (sym is a package; its database is named ``sym``)."""
+    """The sym package's database (sym is a peer package; its database is named ``sym``)."""
     return package_dsn("sym")
 
 

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from analytics.db import connect, hub
+from analytics.db import connect, sym_conn
 from analytics.gateway import DbAnalyticsGateway
 
 router = APIRouter(tags=["analytics"])
@@ -15,7 +15,7 @@ router = APIRouter(tags=["analytics"])
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
     conn = connect("portfolios")  # portfolios DB — portfolio weights
-    sym = hub()                            # sym hub — fact_returns / index returns / instrument
+    sym = sym_conn()                            # sym package — fact_returns / index returns / instrument
     try:
         yield DbAnalyticsGateway(conn, sym)
     finally:

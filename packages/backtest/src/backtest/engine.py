@@ -143,9 +143,9 @@ def run_backtest(
     start: date | None = None,
     end: date | None = None,
 ) -> dict:
-    # sym_conn reads the hub (fact_returns/fundamentals/universe_membership); bt_conn writes
+    # sym_conn reads the sym package (fact_returns/fundamentals/universe_membership); bt_conn writes
     # runs/points to the backtest database (DB-per-package; cross-DB read via psycopg).
-    conn = sym_conn  # all reads below go to the sym hub
+    conn = sym_conn  # all reads below go to the sym package
     bt_conn.autocommit = True
     members = _members(conn, universe_id)
     rng = conn.execute(
@@ -241,9 +241,9 @@ def run_backtest(
 
 
 if __name__ == "__main__":
-    from backtest.db import connect, hub
+    from backtest.db import connect, sym_conn
 
-    sym_conn = hub()
+    sym_conn = sym_conn()
     bt_conn = connect()
     try:
         print(json.dumps(run_backtest(sym_conn, bt_conn), indent=2, default=str))

@@ -44,9 +44,10 @@ become sym-shaped packages, and `qrp` should be *only the composer*.
   "Standalone-shaped": extractable to its own repo with zero code change.
 - **P2 — qrp composes; it does not contain.** `qrp` is the shell (console) + the gateway (mounts
   each enabled package's router) + `platform.toml`. Business logic lives in the packages.
-- **P3 — Dependencies point inward to the hub.** `qrp → {sym, macro, signal, …}`; packages never
-  depend on `qrp`. Everything reads the **sym hub** through the *discipline* (`sym_id` + sym's
-  stable published views; no cross-DB FK) — not a path hack, not an SDK (solo right-sizing).
+- **P3 — Dependencies point at sym as a read-only upstream peer (not a hub).** `qrp → {sym, macro,
+  signal, …}`; packages never depend on `qrp`, and sym is one peer among equals — common to read
+  from, but not privileged. Packages that need it read sym through the *discipline* (`sym_id` +
+  sym's stable published views; no cross-DB FK) — not a path hack, not an SDK (solo right-sizing).
 - **P4 — Reversible by default.** Monorepo now; a clean polyrepo split (or a per-package service)
   is a later, mechanical move when a real driver appears (selling a package, separate cadence/team).
 
@@ -100,8 +101,8 @@ qrp/                                   the platform monorepo (one repo; uv + npm
 
 **Anatomy of a package (`macro` shown; sym is the working exemplar):**
 - `src/macro/router.py` — its FastAPI router (qrp *mounts* it; doesn't own it).
-- `src/macro/gateway.py` — its reads (own DB) + app-side enrichment from the sym hub.
-- `src/macro/ingest.py / compute.py` — its logic; reads the sym hub via a *contract* connection.
+- `src/macro/gateway.py` — its reads (own DB) + app-side enrichment from the sym package.
+- `src/macro/ingest.py / compute.py` — its logic; reads the sym package via a *contract* connection.
 - `src/macro/config.py` — its own connection config (a DSN it is *given*, not one it walks the
   filesystem to discover).
 - `db/` — its Sqitch project → its database. `pyproject.toml` — its own deps + version.

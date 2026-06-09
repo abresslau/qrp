@@ -10,7 +10,7 @@ from optimiser.engine import solve as _solve
 class DbOptimiserGateway:
     def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
         self._conn = conn          # optimiser DB — solutions/weights (read + write)
-        self._sym = sym_conn       # sym hub — the engine's read-only source (solve only)
+        self._sym = sym_conn       # sym package — the engine's read-only source (solve only)
         self._conn.autocommit = True
 
     def solve(self, universe_id: str, method: str, n: int, lookback: int) -> dict:

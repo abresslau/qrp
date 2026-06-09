@@ -63,7 +63,7 @@ def _ann_return(daily: list[float]) -> float | None:
 class DbAnalyticsGateway:
     def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
         self._conn = conn      # qrp DB — portfolio weights
-        self._sym = sym_conn    # sym hub — fact_returns / fact_index_returns / instrument / securities
+        self._sym = sym_conn    # sym package — fact_returns / fact_index_returns / instrument / securities
 
     def benchmarks(self) -> list[dict]:
         """Index instruments that have a daily (1D) return series, for the selector."""
@@ -95,7 +95,7 @@ class DbAnalyticsGateway:
             return None, {}, []
 
         # Weights from the qrp DB; the weight×return series is assembled IN-APP (cross-database:
-        # weights here, fact_returns in the sym hub) rather than a cross-DB SQL join.
+        # weights here, fact_returns in the sym package) rather than a cross-DB SQL join.
         weights = {
             f: float(w)
             for f, w in self._conn.execute(

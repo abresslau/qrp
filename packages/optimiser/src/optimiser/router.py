@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
-from optimiser.db import connect, hub
+from optimiser.db import connect, sym_conn
 from optimiser.gateway import DbOptimiserGateway
 
 router = APIRouter(prefix="/api/optimiser", tags=["optimiser"])
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/optimiser", tags=["optimiser"])
 
 def _gateway() -> Iterator[DbOptimiserGateway]:
     conn = connect()  # optimiser owns its own database
-    sym = hub()                           # sym hub — engine reads on solve
+    sym = sym_conn()                           # sym package — engine reads on solve
     try:
         yield DbOptimiserGateway(conn, sym)
     finally:

@@ -10,10 +10,10 @@ class DbSignalGateway:
         self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None
     ) -> None:
         self._conn = conn      # signal DB — this package's own factors + scores
-        self._sym = sym_conn   # sym DB (the hub) — security labels, enriched in-app
+        self._sym = sym_conn   # sym DB (the sym package) — security labels, enriched in-app
 
     def _labels(self, figis: list[str]) -> tuple[dict, dict]:
-        """Ticker + name for ``figis`` read from the sym hub and merged in Python.
+        """Ticker + name for ``figis`` read from the sym package and merged in Python.
 
         Cross-package read pattern under DB-per-package: signal owns scores in its own
         database, sym owns the labels in another — so we read each and assemble in the service
@@ -94,7 +94,7 @@ class DbSignalGateway:
             """,
             (factor_key, universe_id, as_of, limit),
         ).fetchall()
-        tickers, names = self._labels([r[0] for r in rows])  # enrich from the sym hub, in-app
+        tickers, names = self._labels([r[0] for r in rows])  # enrich from the sym package, in-app
         return {
             "factor_key": meta[0],
             "name": meta[1],

@@ -51,7 +51,7 @@ hardening) · `[PARTIAL]` (some ACs met) · `[NEW]` (not yet built).
 - **AR-R1 — DB-per-package.** Each module owns its own Postgres database (`portfolios`,
   `analytics` reads only, `backtest`, `optimiser`, `altdata`, `macro`, `signal`); `qrp` DB
   holds only the Operate job ledger. Supersedes AR-Q4. (Revision log in architecture-qrp.md.)
-- **AR-R2 — App-side cross-package reads.** A module reads sym (the hub) over a **separate
+- **AR-R2 — App-side cross-package reads.** A module reads sym (a read-only upstream peer) over a **separate
   read-only connection** and assembles cross-package data **in the service layer** (Python),
   never a cross-database SQL join. Derived computes use two connections (read sym, write own).
 - **AR-R3 — Discipline (the "contract").** `sym_id` value keys, no cross-DB FK, consumers read
@@ -90,7 +90,7 @@ database (AR-R1). **(FR-14 storage half.)**
 
 ### Story Q4.2 — Upload weights with sym_id resolution  `[BUILT]`
 As the Operator, I want to upload a weight vector and have constituents resolve to sym_id.
-**AC:** ticker/FIGI → `composite_figi` resolved against the **sym hub** over a read-only
+**AC:** ticker/FIGI → `composite_figi` resolved against the **sym package** over a read-only
 connection (AR-R2); unresolved identifiers reported, never fabricated; weights upserted by
 `(portfolio, as_of_date, figi)`. **(FR-14.)**
 
@@ -106,7 +106,7 @@ UI.)**
 
 ### Story Q4.4 — Browse & inspect portfolios  `[BUILT]`
 **AC:** list portfolios with weight counts + latest as-of; detail view shows the latest weight
-vector with ticker/name enriched **in-app** from the sym hub (AR-R2). **(FR-13 view half.)**
+vector with ticker/name enriched **in-app** from the sym package (AR-R2). **(FR-13 view half.)**
 
 ### Story Q4.5 — Weight history over time (multi-date)  `[PARTIAL]`
 As the Operator, I want a portfolio's full effective-dated weight history, not just the latest.
@@ -124,7 +124,7 @@ are NOT built; PnL is return-based only (weights-first has no notional).
 
 ### Story Q5.1 — Portfolio daily return series  `[BUILT]`
 **AC:** daily portfolio return = Σ wᵢ·rᵢ over sym 1D `fact_returns`, weights from the
-`portfolios` DB and returns from the sym hub, assembled in Python (AR-R2); dates below a 99%
+`portfolios` DB and returns from the sym package, assembled in Python (AR-R2); dates below a 99%
 coverage floor dropped (no fabricated returns). **(FR-15 basis.)**
 
 ### Story Q5.2 — Return & PnL across Return Windows  `[PARTIAL]`
@@ -154,7 +154,7 @@ benchmark drives alpha/beta/active metrics. **(FR-17.)**
 ## Epic Q6: backtest — Backtesting  `[BUILT-SPIKE]`
 **Built:** walk-forward top-quintile factor strategy (factor recomputed per rebalance, **no
 look-ahead**; coverage-gated start); equity curve vs equal-weight baseline; persisted to the
-`backtest` DB; reads sym hub over a 2nd connection (AR-R2). mom sp500 +44.7% (Sharpe 2.18)
+`backtest` DB; reads sym package over a 2nd connection (AR-R2). mom sp500 +44.7% (Sharpe 2.18)
 verified. **Gap:** only ONE strategy archetype (factor-quintile); FR-18's "defined strategy"
 implies a parameterised strategy definition; output isn't yet consumed as a Portfolio by analytics.
 
@@ -178,7 +178,7 @@ rebalance freq); reproducible from the spec. **(FR-18 "defined strategy".)**
 ### Story Q6.4 — Backtest output as a paper Portfolio (analytics-consumable)  `[BUILT 2026-06-08]`
 **AC (met):** a backtest with `save_portfolio=true` materialises its equal-weight holdings-over-time
 as a `portfolios` Portfolio (persisted via the portfolios package's own writer — ownership
-respected; sym hub reused for figi resolution); `analytics` then measures it vs a benchmark.
+respected; sym package reused for figi resolution); `analytics` then measures it vs a benchmark.
 Console: a "Save as portfolio" checkbox + link. Verified: mom_12_1/sp500 → portfolio #3 (12
 rebalances) → analytics computes. **First research-loop link closed (backtest→portfolios→analytics).**
 **Refinement:** analytics uses the latest weight vector held constant; time-varying-weight
@@ -229,7 +229,7 @@ source attribution + as-of dating; empty series dropped (never faked); read API 
 
 ### Story Q8.2 — Alt-data series store + ingest (sym_id-joined)  `[BUILT]`
 **AC:** `altdata.wiki_map` (figi↔article) + `altdata.pageview` (own DB); ingest resolves figis
-from the sym hub over a 2nd connection (AR-R2); read API + sparkline + 7d/30d attention spike.
+from the sym package over a 2nd connection (AR-R2); read API + sparkline + 7d/30d attention spike.
 **(FR-19.)**
 
 ### Story Q8.3 — Broaden alt-data sources  `[NEW]`
@@ -247,7 +247,7 @@ env-blocked at spike time.)**
 
 ## Epic Q9: signal — Signal Identification  `[BUILT-SPIKE]`
 **Built:** `signal` DB; 3 cross-sectional factors (12-1 momentum, 1Y volatility, size) over
-sp500/ibov/ibx, winsorised 1/99; z-score/rank/percentile; compute reads the sym hub, writes the
+sp500/ibov/ibx, winsorised 1/99; z-score/rank/percentile; compute reads the sym package, writes the
 signal DB (AR-R2). AAPL 12-1 momentum hand-verified. **Gap:** signals derive **only from sym**
 — FR-21's defining feature is signals from **sym + macro + altdata**, and consumption by
 optimiser/backtest. Neither is wired yet.
@@ -288,7 +288,7 @@ EOD engine with the price source swapped; labelled live/delayed, not persisted. 
 deferred until a source exists on deploy.)**
 
 ### Story QH.3 — Read-only DB role for sym reads  `[NEW]`
-**AC:** consumer reads of the sym hub use a least-privilege **read-only** Postgres role (the
+**AC:** consumer reads of the sym package use a least-privilege **read-only** Postgres role (the
 DuckDB `READ_ONLY` attach proved the pattern; the API still uses full creds per package). **(NFR
 hardening; architecture-qrp dual-credential follow-up.)**
 

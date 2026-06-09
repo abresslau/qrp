@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from signals.db import connect, hub
+from signals.db import connect, sym_conn
 from signals.gateway import DbSignalGateway
 
 router = APIRouter(prefix="/api/signals", tags=["signals"])
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 
 def _gateway() -> Iterator[DbSignalGateway]:
     conn = connect()  # signal owns its own database (DB-per-package topology)
-    sym = hub()               # sym hub — security labels, enriched in-app by the gateway
+    sym = sym_conn()               # sym package — security labels, enriched in-app by the gateway
     try:
         yield DbSignalGateway(conn, sym)
     finally:

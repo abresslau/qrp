@@ -12,7 +12,7 @@ from backtest.engine import run_backtest
 class DbBacktestGateway:
     def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
         self._conn = conn          # backtest DB — runs/points (read + write)
-        self._sym = sym_conn       # sym hub — the engine's read-only source (run only)
+        self._sym = sym_conn       # sym package — the engine's read-only source (run only)
         self._conn.autocommit = True
 
     def run(self, factor: str, universe_id: str, top_pct: float, portfolios_gw=None) -> dict:

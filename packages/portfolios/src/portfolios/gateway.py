@@ -18,11 +18,11 @@ import psycopg
 class DbPortfolioGateway:
     def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
         self._conn = conn      # qrp DB — portfolio / portfolio_weight (read + write)
-        self._sym = sym_conn   # sym hub — securities / labels / fact_returns (read-only)
+        self._sym = sym_conn   # sym package — securities / labels / fact_returns (read-only)
         self._conn.autocommit = True  # portfolios are small interactive writes
 
     def _labels(self, figis: list[str]) -> tuple[dict, dict]:
-        """Ticker + name for ``figis`` from the sym hub, merged in-app (cross-package read)."""
+        """Ticker + name for ``figis`` from the sym package, merged in-app (cross-package read)."""
         if not self._sym or not figis:
             return {}, {}
         tickers = dict(
@@ -142,7 +142,7 @@ class DbPortfolioGateway:
                 (pid, latest),
             ).fetchall()
             figis = [r[0] for r in wrows]
-            tickers, names = self._labels(figis)  # enrich from the sym hub, in-app
+            tickers, names = self._labels(figis)  # enrich from the sym package, in-app
             weights = [
                 {"figi": f, "ticker": tickers.get(f, f), "name": names.get(f), "weight": float(w)}
                 for f, w in wrows
@@ -180,7 +180,7 @@ class DbPortfolioGateway:
         stored = 0
         unresolved: list[str] = []
         for ident, weight in items:
-            figi = self._resolve_figi(ident)  # resolved against the sym hub
+            figi = self._resolve_figi(ident)  # resolved against the sym package
             if not figi:
                 unresolved.append(ident)
                 continue
@@ -198,7 +198,7 @@ class DbPortfolioGateway:
         asof = self._conn.execute(
             "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
-        # return_window is a sym reference table; resolve the window id from the hub.
+        # return_window is a sym reference table; resolve the window id from the sym package.
         wrow = self._sym.execute(
             "SELECT window_id, code FROM return_window WHERE code = %s", (window_code,)
         ).fetchone()

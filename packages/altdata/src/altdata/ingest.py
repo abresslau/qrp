@@ -14,7 +14,7 @@ from datetime import date
 
 import psycopg
 
-from altdata.db import connect, hub
+from altdata.db import connect, sym_conn
 
 # Curated ticker -> (en.wikipedia article, display name). Wikipedia article titles are
 # stable; the attention signal is the daily pageview count.
@@ -64,7 +64,7 @@ def _fetch_pageviews(article: str, start: date, end: date) -> list[tuple[date, i
 
 def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
                start: date | None = None, end: date | None = None) -> dict:
-    # sym_conn resolves figis from the hub (security_symbology); ad_conn writes altdata
+    # sym_conn resolves figis from the sym package (security_symbology); ad_conn writes altdata
     # (DB-per-package; cross-DB read via psycopg).
     ad_conn.autocommit = True
     end = end or date(2026, 6, 5)
@@ -101,7 +101,7 @@ def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
 
 
 if __name__ == "__main__":
-    sym_conn = hub()
+    sym_conn = sym_conn()
     ad_conn = connect()
     try:
         res = run_ingest(sym_conn, ad_conn)

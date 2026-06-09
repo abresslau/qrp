@@ -135,9 +135,9 @@ def _stats(w, mean, cov):
 
 def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
           universe_id="sp500", method="min_variance", n=40, lookback=252) -> dict:
-    # sym_conn reads the hub (universe/fundamentals/fact_returns/symbology); opt_conn writes
+    # sym_conn reads the sym package (universe/fundamentals/fact_returns/symbology); opt_conn writes
     # solutions/weights to the optimiser database (DB-per-package; cross-DB read via psycopg).
-    conn = sym_conn  # all reads below go to the sym hub
+    conn = sym_conn  # all reads below go to the sym package
     opt_conn.autocommit = True
     names = _select_names(conn, universe_id, n)
     if len(names) < 5:
@@ -202,9 +202,9 @@ def _tickers(conn, figis) -> dict:
 
 
 if __name__ == "__main__":
-    from optimiser.db import connect, hub
+    from optimiser.db import connect, sym_conn
 
-    sym_conn = hub()
+    sym_conn = sym_conn()
     opt_conn = connect()
     try:
         for m in ("min_variance", "max_sharpe"):

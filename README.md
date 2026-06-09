@@ -1,7 +1,9 @@
 # QRP — Quant Research Platform
 
-A console + API over the existing **sym** warehouse. Owner-operated; a *consumer* of sym
-(reads via views, triggers sym's idempotent ops out-of-process; never mutates sym's schema).
+A console + API composing QRP's standalone packages (sym, macro, signals, …). Owner-operated.
+**sym** is a peer package (security master · prices · returns · FX) — a common read-only *upstream*,
+not a hub; packages that need it read via stable views over a read-only connection, never mutating
+another package's schema.
 The platform name is config-driven — change `platform.toml` and the API title + console
 follow. Planning artifacts live in the sym repo under
 `_bmad-output/planning-artifacts/` (`prd-qrp-*`, `epics-qrp.md`, `architecture-qrp.md`).
@@ -13,7 +15,7 @@ qrp/
 ├─ platform.toml          # brand + enabled-modules (single source of truth)
 ├─ apps/web/              # Next.js 16 + Tailwind v4 console (:3000)
 ├─ services/api/          # FastAPI (uv) — per-module routers over sym (:8001)
-├─ packages/sym/          # reserved fold-in slot (sym joins here later)
+├─ packages/sym/          # sym package (folded in 2026-06-08) — a peer, not a hub
 ├─ sqitch.conf            # Sqitch config (project=qrp, engine=pg)
 ├─ db/                    # QRP's own schemas as Sqitch migrations (deploy/revert/verify)
 └─ scripts/dev.mjs        # runs API + console together

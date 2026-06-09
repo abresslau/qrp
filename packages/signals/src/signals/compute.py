@@ -152,7 +152,7 @@ def compute_universe(
 ) -> dict:
     """Read sym (``sym_conn``, read-only) to compute factors; write scores to the signal
     database (``sig_conn``). The two connections are separate databases under the
-    DB-per-package topology — sym is the hub, signal owns its derived store."""
+    DB-per-package topology — sym is a read-only upstream peer, signal owns its derived store."""
     sig_conn.autocommit = True
     _ensure_catalog(sig_conn)
     if as_of is None:
@@ -170,9 +170,9 @@ def compute_universe(
 
 
 if __name__ == "__main__":
-    from signals.db import connect, hub
+    from signals.db import connect, sym_conn
 
-    sym_conn = hub()              # sym DB — read-only by convention (the hub)
+    sym_conn = sym_conn()              # sym DB — read-only by convention (the sym package)
     sig_conn = connect()  # signal DB — the derived store this package owns
     try:
         for uid in ("sp500", "ibov", "ibx"):

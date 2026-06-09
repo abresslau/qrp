@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
-from backtest.db import connect, hub
+from backtest.db import connect, sym_conn
 from backtest.gateway import DbBacktestGateway
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
 def _gateway() -> Iterator[DbBacktestGateway]:
     conn = connect()  # backtest owns its own database
-    sym = hub()                          # sym hub — engine reads on run
+    sym = sym_conn()                          # sym package — engine reads on run
     try:
         yield DbBacktestGateway(conn, sym)
     finally:
@@ -86,7 +86,7 @@ def run_backtest_ep(
         from portfolios.gateway import DbPortfolioGateway
 
         pconn = connect("portfolios")   # write the paper portfolio to its own DB
-        pgw = DbPortfolioGateway(pconn, gw._sym)      # reuse the sym hub for figi resolution
+        pgw = DbPortfolioGateway(pconn, gw._sym)      # reuse the sym package for figi resolution
     try:
         res = gw.run(body.factor, body.universe, body.top_pct, portfolios_gw=pgw)
     finally:

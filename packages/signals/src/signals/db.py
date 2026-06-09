@@ -33,6 +33,6 @@ def connect(dbname: str = _OWN) -> psycopg.Connection:
     return psycopg.connect(target, connect_timeout=5)
 
 
-def hub() -> psycopg.Connection:
-    """The sym hub — read-only by convention."""
+def sym_conn() -> psycopg.Connection:
+    """Connection to the sym package DB — a read-only upstream peer (sym is not a hub)."""
     return connect("sym")
