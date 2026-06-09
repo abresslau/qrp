@@ -74,7 +74,7 @@ so Wikipedia is the live default.
 
 ```
 sym universe refresh <id>          # provider -> append events -> resolve -> project
-sym universe members <id> --asof 2010-06-01
+sym universe members <id> --as_of_date 2010-06-01
 sym universe coverage <id>
 ```
 

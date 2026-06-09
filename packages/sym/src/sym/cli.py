@@ -452,11 +452,11 @@ def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
     from sym.universe.registry import UniverseError
 
     as_of = date.today()
-    if args.asof:
+    if args.as_of_date:
         try:
-            as_of = date.fromisoformat(args.asof)
+            as_of = date.fromisoformat(args.as_of_date)
         except ValueError as exc:
-            print(f"invalid --asof date {args.asof!r}: {exc}", file=sys.stderr)
+            print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
         with connect() as conn:
@@ -478,21 +478,30 @@ def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
 def _cmd_eod(args: argparse.Namespace) -> int:
     import psycopg
 
+    from datetime import date
+
     from sym.config import load_dotenv
     from sym.db import connect
     from sym.eod import run_eod
 
     load_dotenv()
+    as_of_date = date.today()
+    if getattr(args, "as_of_date", None):
+        try:
+            as_of_date = date.fromisoformat(args.as_of_date)
+        except ValueError as exc:
+            print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
+            return 1
     only = [s.strip() for s in args.steps.split(",")] if args.steps else None
     skip = [s.strip() for s in args.skip.split(",")] if args.skip else None
     try:
         with connect() as conn:
             conn.autocommit = True
-            summary = run_eod(conn, only=only, skip=skip, dry_run=args.dry_run)
+            summary = run_eod(conn, as_of_date=as_of_date, only=only, skip=skip, dry_run=args.dry_run)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
-    label = "eod plan" if args.dry_run else "eod run"
+    label = f"eod {'plan' if args.dry_run else 'run'} (as_of_date {as_of_date.isoformat()})"
     print(f"{label}:")
     for r in summary.results:
         marker = {"planned": "plan", "ok": " ok ", "error": "FAIL"}.get(r.status, "?")
@@ -609,7 +618,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "convert":
                 from sym.fx.convert import convert
 
-                as_of = date.fromisoformat(args.asof) if args.asof else today
+                as_of = date.fromisoformat(args.as_of_date) if args.as_of_date else today
                 out = convert(conn, args.amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of)
                 if out is None:
                     print(f"convert: unavailable ({args.from_ccy.upper()}->"
@@ -629,7 +638,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "returns":
                 from sym.fx.restate import returns_in_currency
 
-                as_of = date.fromisoformat(args.asof) if args.asof else today
+                as_of = date.fromisoformat(args.as_of_date) if args.as_of_date else today
                 res = returns_in_currency(conn, args.figi, as_of, args.ccy.upper())
                 if not res:
                     print(f"returns: none for {args.figi} as-of {as_of}")
@@ -778,11 +787,11 @@ def _cmd_universe_members(args: argparse.Namespace) -> int:
     from sym.universe.registry import UniverseError
 
     as_of = date.today()
-    if args.asof:
+    if args.as_of_date:
         try:
-            as_of = date.fromisoformat(args.asof)
+            as_of = date.fromisoformat(args.as_of_date)
         except ValueError as exc:
-            print(f"invalid --asof date {args.asof!r}: {exc}", file=sys.stderr)
+            print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
         with connect() as conn:
@@ -839,11 +848,11 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
     from sym.universe.registry import UniverseError
 
     as_of = date.today()
-    if args.asof:
+    if args.as_of_date:
         try:
-            as_of = date.fromisoformat(args.asof)
+            as_of = date.fromisoformat(args.as_of_date)
         except ValueError as exc:
-            print(f"invalid --asof date {args.asof!r}: {exc}", file=sys.stderr)
+            print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
         with connect() as conn:
@@ -1035,6 +1044,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eod.add_argument("--dry-run", action="store_true", help="Print the step plan, don't run.")
     p_eod.add_argument("--steps", help="Comma-separated subset to run (e.g. delta,recompute).")
     p_eod.add_argument("--skip", help="Comma-separated steps to skip.")
+    p_eod.add_argument("--as_of_date", help="Run the pipeline as of this date (YYYY-MM-DD); default today.")
     p_eod.set_defaults(func=_cmd_eod)
 
     p_validate = sub.add_parser(
@@ -1079,7 +1089,7 @@ def build_parser() -> argparse.ArgumentParser:
     fx_cv.add_argument("amount", help="Amount to convert (e.g. 1000000).")
     fx_cv.add_argument("from_ccy", metavar="from", help="Source currency (e.g. BRL).")
     fx_cv.add_argument("to_ccy", metavar="to", help="Target currency (e.g. USD).")
-    fx_cv.add_argument("--asof", help="As-of date (ISO; default: today).")
+    fx_cv.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
     fx_cv.set_defaults(func=_cmd_fx)
     fx_px = fx_sub.add_parser("px", help="A security's adjusted close folded to a currency.")
     fx_px.add_argument("figi", help="CompositeFIGI.")
@@ -1089,7 +1099,7 @@ def build_parser() -> argparse.ArgumentParser:
     fx_ret = fx_sub.add_parser("returns", help="Return windows restated to a currency.")
     fx_ret.add_argument("figi", help="CompositeFIGI.")
     fx_ret.add_argument("ccy", help="Target currency (e.g. USD).")
-    fx_ret.add_argument("--asof", help="As-of date (ISO; default: today).")
+    fx_ret.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
     fx_ret.set_defaults(func=_cmd_fx)
     fx_mc = fx_sub.add_parser("mcap", help="Derived market cap (price x shares) in LCY or a ccy.")
     fx_mc.add_argument("figi", help="CompositeFIGI.")
@@ -1141,7 +1151,7 @@ def build_parser() -> argparse.ArgumentParser:
     u_refresh.set_defaults(func=_cmd_universe_refresh)
     u_members = u_sub.add_parser("members", help="List a universe's members as-of a date.")
     u_members.add_argument("universe_id", help="The universe slug.")
-    u_members.add_argument("--asof", help="As-of date (ISO; default: today).")
+    u_members.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
     u_members.set_defaults(func=_cmd_universe_members)
     u_monitor = u_sub.add_parser(
         "monitor", help="Run the maintenance monitor for a universe (discover + append changes)."
@@ -1156,13 +1166,13 @@ def build_parser() -> argparse.ArgumentParser:
         "coverage", help="Report a universe's resolution + pricing coverage."
     )
     u_coverage.add_argument("universe_id", help="The universe slug.")
-    u_coverage.add_argument("--asof", help="As-of date (ISO; default: today).")
+    u_coverage.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
     u_coverage.set_defaults(func=_cmd_universe_coverage)
     u_bench = u_sub.add_parser(
         "benchmark", help="Show a universe's constituents count + linked benchmark level as-of."
     )
     u_bench.add_argument("universe_id", help="The universe slug.")
-    u_bench.add_argument("--asof", help="As-of date (ISO; default: today).")
+    u_bench.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
     u_bench.set_defaults(func=_cmd_universe_benchmark)
     u_confirm = u_sub.add_parser(
         "confirm", help="Confirm (or --reject) a pending gated membership-change proposal."

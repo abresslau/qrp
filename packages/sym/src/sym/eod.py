@@ -71,7 +71,7 @@ def select_steps(
 def run_eod(
     conn: object,
     *,
-    today: date | None = None,
+    as_of_date: date | None = None,
     only: list[str] | None = None,
     skip: list[str] | None = None,
     dry_run: bool = False,
@@ -88,7 +88,7 @@ def run_eod(
     if dry_run:
         summary.results = [StepResult(s.key, "planned", True, s.description) for s in steps]
         return summary
-    run = runner or _default_runner(conn, today or date.today())
+    run = runner or _default_runner(conn, as_of_date or date.today())
     crit = {s.key: s.critical for s in steps}
     for step in steps:
         try:
@@ -100,7 +100,7 @@ def run_eod(
     return summary
 
 
-def _default_runner(conn: object, today: date) -> Callable[[str], str]:
+def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
     """Map a step key to the real sym implementation (lazy imports; builds the source once)."""
     source_box: list[object] = []
 
@@ -132,7 +132,7 @@ def _default_runner(conn: object, today: date) -> Callable[[str], str]:
         if key == "delta":
             from sym.ingest.pipeline import run_load
 
-            s = run_load(conn, source(), "delta", asof=today)
+            s = run_load(conn, source(), "delta", asof=as_of_date)
             return f"loaded={s.loaded} skipped={s.skipped} errored={s.errored} rows={s.rows}"
         if key == "benchmarks":
             from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels
@@ -141,7 +141,7 @@ def _default_runner(conn: object, today: date) -> Callable[[str], str]:
             from sym.returns.loader import DEFAULT_LOOKBACK
 
             lv = load_index_levels(conn, YahooIndexLevelSource())
-            recompute_index_returns(conn, start=today - DEFAULT_LOOKBACK, end=today)
+            recompute_index_returns(conn, start=as_of_date - DEFAULT_LOOKBACK, end=as_of_date)
             link_universe_benchmarks(conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
@@ -149,7 +149,7 @@ def _default_runner(conn: object, today: date) -> Callable[[str], str]:
             from sym.fx.source import FrankfurterSource
             from sym.universe.fundamentals import recompute_market_cap_usd
 
-            s = delta_fx(conn, FrankfurterSource(), end=today)
+            s = delta_fx(conn, FrankfurterSource(), end=as_of_date)
             usd = recompute_market_cap_usd(conn) if s.inserted else 0
             return (
                 f"inserted={s.inserted} skipped={s.skipped_existing} "
@@ -158,7 +158,7 @@ def _default_runner(conn: object, today: date) -> Callable[[str], str]:
         if key == "recompute":
             from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
 
-            s = load_returns(conn, start=today - DEFAULT_LOOKBACK, end=today)
+            s = load_returns(conn, start=as_of_date - DEFAULT_LOOKBACK, end=as_of_date)
             return f"securities={s.securities} rows={s.rows}"
         if key == "validate":
             from sym.validate.runner import summarize, validate

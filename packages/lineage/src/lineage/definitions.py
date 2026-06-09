@@ -14,5 +14,11 @@ from __future__ import annotations
 from dagster import Definitions, in_process_executor
 
 from .assets import all_assets
+from .schedules import sym_eod_daily, sym_eod_job
 
-defs = Definitions(assets=all_assets(), executor=in_process_executor)
+defs = Definitions(
+    assets=all_assets(),
+    jobs=[sym_eod_job],
+    schedules=[sym_eod_daily],
+    executor=in_process_executor,
+)
