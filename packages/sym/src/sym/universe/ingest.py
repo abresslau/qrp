@@ -20,7 +20,7 @@ import psycopg
 
 from sym.identity.symbology import ExchangeLookupError, write_security
 from sym.identity.universe import TICKER, SeedSecurity
-from sym.ingest.pipeline import BACKFILL, RELOAD, LoadSummary, run_load
+from sym.ingest.pipeline import BACKFILL, OVERWRITE, LoadSummary, run_load
 from sym.universe.registry import InvalidMemberIdentifierError
 from sym.universe.resolution import _parse_token
 
@@ -155,10 +155,10 @@ def run_universe_load(
 
         backfill_equity_instruments(conn)
     # Forward (DELTA) modes follow current membership and skip leavers. History modes —
-    # BACKFILL and RELOAD — must cover every point-in-time member in the window, or a
+    # BACKFILL and OVERWRITE — must cover every point-in-time member in the window, or a
     # historical re-fetch silently leaves leavers' bars untouched (survivorship gap, and
     # invisible to `sym validate`, whose completeness check only sees current members).
-    select_all_members = mode in (BACKFILL, RELOAD)
+    select_all_members = mode in (BACKFILL, OVERWRITE)
     selection = universe_securities(conn, universe_id, as_of_date, backfill=select_all_members)
     securities = [(figi, mic, cursor) for figi, mic, cursor, _f, _t in selection]
     cap_map = {figi: member_to for figi, _m, _c, _f, member_to in selection}

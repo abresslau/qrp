@@ -9,9 +9,9 @@ maps its flags onto these via :func:`plan_load` — see Story 2.11):
                  nothing. (`sym load` with no ``--start_date``.)
 * ``backfill`` — full history from a floor (resumable: completed names skipped;
                  gap-aware fill below the stored cursor). (`sym load --start_date`.)
-* ``reload``   — re-fetch and REPLACE the stored bars in an explicit window, other
+* ``overwrite`` — re-fetch and REPLACE the stored bars in an explicit window, other
                  dates untouched (the empty-fetch guard skips the delete if the
-                 re-fetch is empty). (`sym load --replace --start_date`.)
+                 re-fetch is empty). (`sym load --overwrite --start_date`.)
 
 Each security loads in its own durable transaction (``conn.autocommit = True`` so a
 per-figi ``conn.transaction()`` is a top-level commit, never a savepoint) and a
@@ -34,7 +34,7 @@ from sym.sources.contract import OhlcvResult
 
 BACKFILL = "backfill"  # explicit floor, append, gap-aware (`load --start_date <floor>`)
 DELTA = "delta"        # incremental from each cursor, append (`load` with no --start_date)
-RELOAD = "reload"      # explicit window, REPLACE stored bars (`load --replace --start_date …`)
+OVERWRITE = "overwrite"  # explicit window, REPLACE stored bars (`load --overwrite --start_date …`)
 SWEEP = "sweep"
 
 DEFAULT_FLOOR = date(1990, 1, 1)
@@ -51,7 +51,7 @@ def compute_window(
     floor: date,
     end_date: date | None,
     floor_reached: date | None = None,
-    reload_start_date: date | None = None,
+    overwrite_start_date: date | None = None,
 ) -> tuple[date, date] | None:
     """The [start_date, end_date] sessions to fetch for one security, or None to skip it.
 
@@ -65,7 +65,7 @@ def compute_window(
     when ``floor_reached <= floor`` (we already asked at least this deep and got
     whatever exists — even if the data starts at a later IPO) AND the cursor is
     current. Otherwise it re-fetches ``[floor, end_date]`` and immutable ingestion
-    inserts only the missing bars. Forward modes (delta/dev) are unchanged.
+    inserts only the missing bars. Forward mode (delta) is unchanged.
     """
     if end_date is None:
         return None
@@ -77,12 +77,12 @@ def compute_window(
         if is_current and reached_floor:
             return None  # already fetched down to (at least) this floor and current
         return (floor, end_date)
-    if mode == RELOAD:
+    if mode == OVERWRITE:
         # Explicit operator-chosen window; cursor-independent (we WANT to re-fetch even
         # when current). `end_date` is already clamped to the latest session <= end_date.
-        if reload_start_date is None or reload_start_date > end_date:
+        if overwrite_start_date is None or overwrite_start_date > end_date:
             return None
-        return (reload_start_date, end_date)
+        return (overwrite_start_date, end_date)
     if cursor_date is not None and cursor_date >= end_date:
         return None  # up-to-date -> skip (AC #1 resume, AC #4 idempotency)
     if mode != DELTA:
@@ -93,15 +93,15 @@ def compute_window(
     return (start_date, end_date)
 
 
-def plan_load(*, start_date: date | None, replace: bool) -> str:
+def plan_load(*, start_date: date | None, overwrite: bool) -> str:
     """The run_load mode implied by the unified `sym load` flags.
 
-    No window → DELTA (incremental from each cursor). An explicit ``start_date`` (append) →
-    BACKFILL (gap-aware fill of ``[start_date, end_date]``). ``replace`` → RELOAD (overwrite the
-    window). ``replace`` requires an explicit ``start_date`` (the caller validates this).
+    No window → DELTA (incremental from each cursor). An explicit ``start_date`` (fill) →
+    BACKFILL (gap-aware fill of ``[start_date, end_date]``). ``overwrite`` → OVERWRITE (re-fetch
+    and replace the window). ``overwrite`` requires an explicit ``start_date`` (caller-validated).
     """
-    if replace:
-        return RELOAD
+    if overwrite:
+        return OVERWRITE
     if start_date is not None:
         return BACKFILL
     return DELTA
@@ -224,7 +224,7 @@ def _delete_prices_range(conn: psycopg.Connection, figi: str, start_date: date, 
     """Discard stored raw bars for one figi in [start_date, end_date].
 
     The one explicit override of the immutable ``ON CONFLICT DO NOTHING`` write (Story 2.10
-    reload), scoped to an operator-chosen window so a re-fetch can *replace* a bad bar
+    overwrite), scoped to an operator-chosen window so a re-fetch can *replace* a bad bar
     (e.g. a provisional same-day pull) instead of being skipped.
     """
     conn.execute(
@@ -266,7 +266,7 @@ def run_load(
     mode: str,
     *,
     as_of_date: date,
-    reload_start_date: date | None = None,
+    overwrite_start_date: date | None = None,
     floor: date = DEFAULT_FLOOR,
     limit: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
@@ -284,8 +284,8 @@ def run_load(
       * ``end_cap_for(figi)`` — caps the fetch end_date (a leaver's exit date), so a name
         that left the universe stops fetching past its departure.
     """
-    if reload_start_date is not None and mode != RELOAD:
-        raise ValueError(f"reload_start_date is only valid for mode={RELOAD!r}, not {mode!r}")
+    if overwrite_start_date is not None and mode != OVERWRITE:
+        raise ValueError(f"overwrite_start_date is only valid for mode={OVERWRITE!r}, not {mode!r}")
     conn.autocommit = True  # per-figi commits must be top-level + durable (Story 2.4 finding)
     source_name = getattr(source, "SOURCE", "unknown")
     summary = LoadSummary(mode=mode)
@@ -307,7 +307,7 @@ def run_load(
         reached = floor_reached_for(conn, figi) if mode == BACKFILL else None
         window = compute_window(
             mode, cursor, floor=fig_floor, end_date=end_date,
-            floor_reached=reached, reload_start_date=reload_start_date,
+            floor_reached=reached, overwrite_start_date=overwrite_start_date,
         )
         if window is None:
             summary.skipped += 1
@@ -317,13 +317,13 @@ def run_load(
             # Fetch AND ingest are isolated: a constraint/currency failure in the
             # write must mark one figi errored, not halt the run (AC #3).
             result = fetch_with_retry(source, figi, start_date, end_date, sleep=sleep)
-            if mode == RELOAD and not result.bars:
+            if mode == OVERWRITE and not result.bars:
                 # Empty fetch: do NOT delete. Replacing good stored data with nothing is the one
-                # outcome reload must never produce — a vendor gap must not destroy history.
+                # outcome overwrite must never produce — a vendor gap must not destroy history.
                 summary.skipped += 1
                 continue
             expected = expected_trading_days(conn, mic, start_date, end_date)
-            if mode == RELOAD:
+            if mode == OVERWRITE:
                 # Replace the window atomically, only AFTER a non-empty fetch — so neither a vendor
                 # failure (raises) nor a gap (empty bars) leaves a deleted-but-unreloaded hole.
                 with conn.transaction():

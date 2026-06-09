@@ -200,10 +200,11 @@ def _cmd_snapshot_calendar(_args: argparse.Namespace) -> int:
 
 
 def _cmd_load(args: argparse.Namespace) -> int:
-    """The one loader: scope + date window + append-or-replace.
+    """The one loader: scope + date window + fill-or-overwrite.
 
     No ``--start_date`` → incremental from each security's cursor (the daily case).
-    ``--start_date`` → fill from that date (gap-aware). ``--replace`` → overwrite the window.
+    ``--start_date`` → fill from that date (gap-aware). ``--overwrite`` → re-fetch and
+    replace the window.
     """
     import psycopg
 
@@ -212,7 +213,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
     from sym.ingest.pipeline import (
         BACKFILL,
         DELTA,
-        RELOAD,
+        OVERWRITE,
         plan_load,
         read_active_with_cursor,
         run_load,
@@ -226,8 +227,8 @@ def _cmd_load(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"invalid date: {exc}", file=sys.stderr)
         return 1
-    if args.replace and start_date is None:
-        print("--replace requires --start_date (the window to overwrite)", file=sys.stderr)
+    if args.overwrite and start_date is None:
+        print("--overwrite requires --start_date (the window to overwrite)", file=sys.stderr)
         return 1
     if start_date is not None and start_date > end_date:
         print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
@@ -254,7 +255,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
         )
         return 1
 
-    mode = plan_load(start_date=start_date, replace=args.replace)
+    mode = plan_load(start_date=start_date, overwrite=args.overwrite)
     try:
         with connect() as conn:
             conn.autocommit = True
@@ -264,8 +265,8 @@ def _cmd_load(args: argparse.Namespace) -> int:
                 from sym.universe.ingest import run_universe_load
 
                 kwargs = {"as_of_date": end_date, "limit": args.limit}
-                if mode == RELOAD:
-                    kwargs["reload_start_date"] = start_date
+                if mode == OVERWRITE:
+                    kwargs["overwrite_start_date"] = start_date
                 elif mode == BACKFILL:
                     kwargs["history_floor"] = start_date
                 summary = run_universe_load(conn, source, universe_id, mode, **kwargs)
@@ -277,8 +278,8 @@ def _cmd_load(args: argparse.Namespace) -> int:
                         print(f"{figi} not in the active master", file=sys.stderr)
                         return 1
                 kwargs = {"as_of_date": end_date, "limit": args.limit, "securities": securities}
-                if mode == RELOAD:
-                    kwargs["reload_start_date"] = start_date
+                if mode == OVERWRITE:
+                    kwargs["overwrite_start_date"] = start_date
                 elif mode == BACKFILL:
                     kwargs["floor"] = start_date
                 summary = run_load(conn, source, mode, **kwargs)
@@ -286,7 +287,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
 
-    verb = "load --replace" if mode == RELOAD else "load"
+    verb = "load --overwrite" if mode == OVERWRITE else "load"
     window = f"[{start_date} .. {end_date}]" if start_date else f"[cursor .. {end_date}]"
     scope_lbl = (
         f"universe:{universe_id}" if universe_id else (f"figi:{figi}" if figi else "all")
@@ -304,7 +305,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
             "securities by composite_figi (smoke run). Omit --limit for a complete load.",
             file=sys.stderr,
         )
-    if mode == RELOAD:
+    if mode == OVERWRITE:
         print(
             "  note: replaced raw prices only (corporate actions are not re-pulled). "
             f"Run `sym recompute --start_date {start_date} --end_date {end_date}` to refresh returns."
@@ -1026,7 +1027,7 @@ def build_parser() -> argparse.ArgumentParser:
         "load",
         help="Load or re-upload raw prices for a scope over a date window. No --start_date = "
         "incremental from each security's cursor (daily); --start_date = fill from that date "
-        "(gap-aware); --replace = overwrite the window (re-fetch + replace stored bars).",
+        "(gap-aware); --overwrite = re-fetch + replace the stored bars in the window.",
     )
     p_load.add_argument(
         "--scope",
@@ -1036,7 +1037,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_load.add_argument("--start_date", help="Window start (ISO). Omit for incremental-from-cursor.")
     p_load.add_argument("--end_date", help="Window end (ISO; default: today).")
     p_load.add_argument(
-        "--replace",
+        "--overwrite",
         action="store_true",
         help="Overwrite the window: re-fetch and replace stored bars (requires --start_date).",
     )

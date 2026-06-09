@@ -10,7 +10,7 @@ from sym.ingest import pipeline
 from sym.ingest.pipeline import (
     BACKFILL,
     DELTA,
-    RELOAD,
+    OVERWRITE,
     LoadSummary,
     compute_window,
     fetch_with_retry,
@@ -58,21 +58,21 @@ def test_no_sessions_means_skip():
 
 
 def test_plan_load_no_window_is_delta():
-    assert plan_load(start_date=None, replace=False) == DELTA
+    assert plan_load(start_date=None, overwrite=False) == DELTA
 
 
 def test_plan_load_explicit_start_is_backfill():
-    assert plan_load(start_date=date(2020, 1, 1), replace=False) == BACKFILL
+    assert plan_load(start_date=date(2020, 1, 1), overwrite=False) == BACKFILL
 
 
-def test_plan_load_replace_is_reload():
-    assert plan_load(start_date=date(2020, 1, 1), replace=True) == RELOAD
+def test_plan_load_overwrite_is_overwrite():
+    assert plan_load(start_date=date(2020, 1, 1), overwrite=True) == OVERWRITE
 
 
-def test_plan_load_replace_takes_precedence_over_start():
-    # replace wins regardless of start_date presence (the CLI separately requires
-    # --start_date with --replace, but the mapping itself is replace-first).
-    assert plan_load(start_date=None, replace=True) == RELOAD
+def test_plan_load_overwrite_takes_precedence_over_start():
+    # overwrite wins regardless of start_date presence (the CLI separately requires
+    # --start_date with --overwrite, but the mapping itself is overwrite-first).
+    assert plan_load(start_date=None, overwrite=True) == OVERWRITE
 
 
 # --- fetch_with_retry -------------------------------------------------------
