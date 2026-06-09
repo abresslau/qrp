@@ -94,7 +94,7 @@ class DbPortfolioGateway:
             SELECT p.portfolio_id, p.name, coalesce(c.name, '') AS client, p.base_currency,
                    p.created_at,
                    count(w.composite_figi) AS n_weights,
-                   max(w.as_of_date) AS latest_as_of
+                   max(w.as_of_date) AS latest_as_of_date
               FROM portfolios.portfolio p
               LEFT JOIN portfolios.client c ON c.client_id = p.client_id
               LEFT JOIN portfolios.portfolio_weight w USING (portfolio_id)
@@ -110,7 +110,7 @@ class DbPortfolioGateway:
                 "base_currency": ccy,
                 "created_at": ca.isoformat() if ca else None,
                 "n_weights": n,
-                "latest_as_of": la.isoformat() if la else None,
+                "latest_as_of_date": la.isoformat() if la else None,
             }
             for pid, name, client, ccy, ca, n, la in rows
         ]
@@ -154,7 +154,7 @@ class DbPortfolioGateway:
             "base_currency": meta[3],
             "created_at": meta[4].isoformat() if meta[4] else None,
             "as_of_dates": dates,
-            "latest_as_of": latest,
+            "latest_as_of_date": latest,
             "weights": weights,
         }
 
@@ -176,7 +176,7 @@ class DbPortfolioGateway:
         ).fetchone()
         return row[0] if row else None
 
-    def upload_weights(self, pid: int, as_of: date, items: list[tuple[str, float]]) -> dict:
+    def upload_weights(self, pid: int, as_of_date: date, items: list[tuple[str, float]]) -> dict:
         stored = 0
         unresolved: list[str] = []
         for ident, weight in items:
@@ -188,14 +188,14 @@ class DbPortfolioGateway:
                 "INSERT INTO portfolios.portfolio_weight (portfolio_id, as_of_date, composite_figi, weight) "
                 "VALUES (%s, %s, %s, %s) "
                 "ON CONFLICT (portfolio_id, as_of_date, composite_figi) DO UPDATE SET weight = EXCLUDED.weight",
-                (pid, as_of, figi, weight),
+                (pid, as_of_date, figi, weight),
             )
             stored += 1
-        return {"stored": stored, "unresolved": unresolved, "as_of": as_of.isoformat()}
+        return {"stored": stored, "unresolved": unresolved, "as_of_date": as_of_date.isoformat()}
 
     # ---- returns / PnL engine ----
     def returns(self, pid: int, window_code: str) -> dict:
-        asof = self._conn.execute(
+        as_of_date = self._conn.execute(
             "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
         # return_window is a sym reference table; resolve the window id from the sym package.
@@ -207,16 +207,16 @@ class DbPortfolioGateway:
                 "SELECT window_id, code FROM return_window WHERE code = 'YTD'"
             ).fetchone()
         window_id, window = wrow
-        empty = {"window": window, "as_of": None, "constituents": [], "n_constituents": 0,
+        empty = {"window": window, "as_of_date": None, "constituents": [], "n_constituents": 0,
                  "n_with_return": 0, "total_weight": 0.0, "covered_weight": 0.0,
                  "portfolio_return": None, "portfolio_return_normalized": None}
-        if asof is None:
+        if as_of_date is None:
             return empty
 
         wrows = self._conn.execute(
             "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
             "WHERE portfolio_id = %s AND as_of_date = %s",
-            (pid, asof),
+            (pid, as_of_date),
         ).fetchall()
         figis = [r[0] for r in wrows]
         # weight×return is a cross-database join — assemble in-app: returns + labels from sym.
@@ -253,7 +253,7 @@ class DbPortfolioGateway:
         )
         return {
             "window": window,
-            "as_of": asof.isoformat(),
+            "as_of_date": as_of_date.isoformat(),
             "n_constituents": len(wrows),
             "n_with_return": n_with_return,
             "total_weight": total_w,

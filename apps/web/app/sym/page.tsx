@@ -2,7 +2,7 @@ import { apiGet } from "@/lib/api";
 
 type Freshness = {
   area: string;
-  as_of: string | null;
+  as_of_date: string | null;
   days_behind: number | null;
   status: "ok" | "stale" | "unknown";
 };
@@ -86,7 +86,7 @@ export default async function SymOverviewPage() {
             {o.freshness.map((f) => (
               <tr key={f.area} className="hover:bg-fg/5">
                 <td className="px-4 py-3 capitalize text-fg">{f.area}</td>
-                <td className="px-4 py-3 tabular-nums text-muted">{f.as_of ?? "—"}</td>
+                <td className="px-4 py-3 tabular-nums text-muted">{f.as_of_date ?? "—"}</td>
                 <td className="px-4 py-3 tabular-nums text-muted">
                   {f.days_behind === null ? "" : `${f.days_behind}d behind`}
                 </td>

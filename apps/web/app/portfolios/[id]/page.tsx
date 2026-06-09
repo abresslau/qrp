@@ -94,7 +94,7 @@ export default function PortfolioDetail() {
           <h1 className="text-2xl font-semibold tracking-tight text-fg">{p.name}</h1>
           <p className="mt-1 text-sm text-muted">
             {p.client ? `${p.client} · ` : ""}{p.base_currency} · {p.weights.length} holdings
-            {p.latest_as_of ? ` · as of ${p.latest_as_of}` : ""}
+            {p.latest_as_of_date ? ` · as of ${p.latest_as_of_date}` : ""}
           </p>
         </div>
       </div>
@@ -118,7 +118,7 @@ export default function PortfolioDetail() {
         </div>
         {ret && (
           <div className="mt-1 text-xs text-muted">
-            {ret.window} · weights as of {ret.as_of ?? "—"} · coverage{" "}
+            {ret.window} · weights as of {ret.as_of_date ?? "—"} · coverage{" "}
             {(ret.covered_weight * 100).toFixed(0)}% of weight ({ret.n_with_return}/{ret.n_constituents}{" "}
             with returns)
             {ret.covered_weight > 0 && ret.covered_weight < 0.999

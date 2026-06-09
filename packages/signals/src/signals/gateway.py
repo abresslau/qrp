@@ -45,7 +45,7 @@ class DbSignalGateway:
             """
             SELECT f.factor_key, f.name, f.description, f.direction,
                    count(DISTINCT s.universe_id) AS universes,
-                   count(*) AS scores, max(s.as_of_date) AS as_of
+                   count(*) AS scores, max(s.as_of_date) AS as_of_date
               FROM signals.factor f
               LEFT JOIN signals.score s USING (factor_key)
              GROUP BY f.factor_key, f.name, f.description, f.direction
@@ -60,7 +60,7 @@ class DbSignalGateway:
                 "direction": direction,
                 "universes": u,
                 "scores": sc,
-                "as_of": ao.isoformat() if ao else None,
+                "as_of_date": ao.isoformat() if ao else None,
             }
             for k, name, desc, direction, u, sc, ao in rows
         ]
@@ -79,7 +79,7 @@ class DbSignalGateway:
         ).fetchone()
         if not meta:
             return None
-        as_of = self._conn.execute(
+        as_of_date = self._conn.execute(
             "SELECT max(as_of_date) FROM signals.score WHERE factor_key=%s AND universe_id=%s",
             (factor_key, universe_id),
         ).fetchone()[0]
@@ -92,7 +92,7 @@ class DbSignalGateway:
              ORDER BY rank {order}
              LIMIT %s
             """,
-            (factor_key, universe_id, as_of, limit),
+            (factor_key, universe_id, as_of_date, limit),
         ).fetchall()
         tickers, names = self._labels([r[0] for r in rows])  # enrich from the sym package, in-app
         return {
@@ -101,7 +101,7 @@ class DbSignalGateway:
             "description": meta[2],
             "direction": meta[3],
             "universe_id": universe_id,
-            "as_of": as_of.isoformat() if as_of else None,
+            "as_of_date": as_of_date.isoformat() if as_of_date else None,
             "bottom": bottom,
             "constituents": [
                 {

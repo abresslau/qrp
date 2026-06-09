@@ -673,8 +673,8 @@ export interface components {
         };
         /** Analytics */
         Analytics: {
-            /** As Of */
-            as_of: string | null;
+            /** As Of Date */
+            as_of_date: string | null;
             /** Window */
             window: string;
             benchmark: components["schemas"]["Benchmark"] | null;
@@ -810,8 +810,8 @@ export interface components {
             direction: string;
             /** Universe Id */
             universe_id: string;
-            /** As Of */
-            as_of: string | null;
+            /** As Of Date */
+            as_of_date: string | null;
             /** Bottom */
             bottom: boolean;
             /** Constituents */
@@ -831,8 +831,8 @@ export interface components {
             universes: number;
             /** Scores */
             scores: number;
-            /** As Of */
-            as_of: string | null;
+            /** As Of Date */
+            as_of_date: string | null;
         };
         /** FieldFlow */
         FieldFlow: {
@@ -1075,8 +1075,8 @@ export interface components {
             created_at: string | null;
             /** As Of Dates */
             as_of_dates: string[];
-            /** Latest As Of */
-            latest_as_of: string | null;
+            /** Latest As Of Date */
+            latest_as_of_date: string | null;
             /** Weights */
             weights: components["schemas"]["Weight"][];
         };
@@ -1084,8 +1084,8 @@ export interface components {
         PortfolioReturns: {
             /** Window */
             window: string;
-            /** As Of */
-            as_of: string | null;
+            /** As Of Date */
+            as_of_date: string | null;
             /** N Constituents */
             n_constituents: number;
             /** N With Return */
@@ -1115,8 +1115,8 @@ export interface components {
             created_at: string | null;
             /** N Weights */
             n_weights: number;
-            /** Latest As Of */
-            latest_as_of: string | null;
+            /** Latest As Of Date */
+            latest_as_of_date: string | null;
         };
         /** RetConstituent */
         RetConstituent: {
@@ -1278,8 +1278,8 @@ export interface components {
             stored: number;
             /** Unresolved */
             unresolved: string[];
-            /** As Of */
-            as_of: string;
+            /** As Of Date */
+            as_of_date: string;
         };
         /** UploadWeights */
         UploadWeights: {

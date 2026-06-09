@@ -49,7 +49,7 @@ class PortfolioSummary(BaseModel):
     base_currency: str
     created_at: str | None
     n_weights: int
-    latest_as_of: str | None
+    latest_as_of_date: str | None
 
 
 class CreatedPortfolio(BaseModel):
@@ -85,14 +85,14 @@ class PortfolioDetail(BaseModel):
     base_currency: str
     created_at: str | None
     as_of_dates: list[str]
-    latest_as_of: str | None
+    latest_as_of_date: str | None
     weights: list[Weight]
 
 
 class UploadResult(BaseModel):
     stored: int
     unresolved: list[str]
-    as_of: str
+    as_of_date: str
 
 
 class RetConstituent(BaseModel):
@@ -104,7 +104,7 @@ class RetConstituent(BaseModel):
 
 class PortfolioReturns(BaseModel):
     window: str
-    as_of: str | None
+    as_of_date: str | None
     n_constituents: int
     n_with_return: int
     total_weight: float

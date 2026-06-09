@@ -48,7 +48,7 @@ class Metrics(BaseModel):
 
 
 class Analytics(BaseModel):
-    as_of: str | None
+    as_of_date: str | None
     window: str
     benchmark: Benchmark | None
     portfolio_currencies: list[str]

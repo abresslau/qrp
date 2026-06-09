@@ -357,7 +357,7 @@ class DbSymGateway:
                 "market_cap_usd": float(fund[1]) if fund and fund[1] is not None else None,
                 "shares_outstanding": float(fund[2]) if fund and fund[2] is not None else None,
                 "currency": fund[3] if fund else None,
-                "as_of": fund[4].isoformat() if fund and fund[4] else None,
+                "as_of_date": fund[4].isoformat() if fund and fund[4] else None,
             }
             if fund
             else None,
@@ -367,9 +367,9 @@ class DbSymGateway:
                     "label": label,
                     "pr": float(pr) if pr is not None else None,
                     "tr": float(tr) if tr is not None else None,
-                    "as_of": asof.isoformat() if asof else None,
+                    "as_of_date": as_of_date.isoformat() if as_of_date else None,
                 }
-                for _wid, code, label, pr, tr, asof in sorted(rets, key=lambda r: r[0])
+                for _wid, code, label, pr, tr, as_of_date in sorted(rets, key=lambda r: r[0])
             ],
         }
 

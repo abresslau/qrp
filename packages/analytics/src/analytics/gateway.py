@@ -85,13 +85,13 @@ class DbAnalyticsGateway:
     def _portfolio_daily(self, pid: int) -> tuple[date | None, dict[date, float], list[str]]:
         """Daily portfolio return series under the latest stored weights.
 
-        Returns (as_of of the weights, {date: portfolio_return}, currencies held).
+        Returns (as_of_date of the weights, {date: portfolio_return}, currencies held).
         A date is included only when >= COVERAGE_FLOOR of weight is priced that day.
         """
-        asof = self._conn.execute(
+        as_of_date = self._conn.execute(
             "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
-        if asof is None:
+        if as_of_date is None:
             return None, {}, []
 
         # Weights from the qrp DB; the weight×return series is assembled IN-APP (cross-database:
@@ -101,13 +101,13 @@ class DbAnalyticsGateway:
             for f, w in self._conn.execute(
                 "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s",
-                (pid, asof),
+                (pid, as_of_date),
             ).fetchall()
         }
         figis = list(weights)
         total_w = sum(weights.values())
         if not figis or total_w <= 0:
-            return asof, {}, []
+            return as_of_date, {}, []
 
         currencies = [
             r[0]
@@ -136,7 +136,7 @@ class DbAnalyticsGateway:
         for d, (port_ret, covered_w) in agg.items():
             if covered_w / total_w >= COVERAGE_FLOOR:
                 series[d] = port_ret / covered_w  # normalise by covered weight
-        return asof, series, sorted(c for c in currencies if c)
+        return as_of_date, series, sorted(c for c in currencies if c)
 
     def _benchmark_daily(self, benchmark_id: int) -> tuple[dict | None, dict[date, float]]:
         meta = self._sym.execute(
@@ -156,11 +156,11 @@ class DbAnalyticsGateway:
         )
 
     def analytics(self, pid: int, benchmark_id: int, window: str) -> dict:
-        asof, port_series, currencies = self._portfolio_daily(pid)
+        as_of_date, port_series, currencies = self._portfolio_daily(pid)
         bench_meta, bench_series = self._benchmark_daily(benchmark_id)
 
         result: dict = {
-            "as_of": asof.isoformat() if asof else None,
+            "as_of_date": as_of_date.isoformat() if as_of_date else None,
             "window": (window or "ALL").upper(),
             "benchmark": bench_meta,
             "portfolio_currencies": currencies,
@@ -170,7 +170,7 @@ class DbAnalyticsGateway:
             "metrics": None,
             "warning": None,
         }
-        if asof is None:
+        if as_of_date is None:
             result["warning"] = "no weights stored for this portfolio"
             return result
         if bench_meta is None:

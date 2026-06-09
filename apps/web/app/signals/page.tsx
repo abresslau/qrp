@@ -87,7 +87,7 @@ export default function SignalPage() {
         <p className="mt-2 text-xs text-muted">
           {meta.description} · favourable end:{" "}
           <span className="font-medium">{meta.direction === "high" ? "higher" : "lower"}</span> raw
-          {data?.as_of ? ` · as of ${data.as_of}` : ""}
+          {data?.as_of_date ? ` · as of ${data.as_of_date}` : ""}
         </p>
       )}
 

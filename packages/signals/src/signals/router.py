@@ -30,7 +30,7 @@ class FactorSummary(BaseModel):
     direction: str
     universes: int
     scores: int
-    as_of: str | None
+    as_of_date: str | None
 
 
 class FactorConstituent(BaseModel):
@@ -48,7 +48,7 @@ class FactorRanking(BaseModel):
     description: str | None
     direction: str
     universe_id: str
-    as_of: str | None
+    as_of_date: str | None
     bottom: bool
     constituents: list[FactorConstituent]
 

@@ -47,7 +47,7 @@ def _ensure_catalog(conn: psycopg.Connection) -> None:
         )
 
 
-def _members(conn: psycopg.Connection, universe_id: str, as_of: date) -> list[str]:
+def _members(conn: psycopg.Connection, universe_id: str, as_of_date: date) -> list[str]:
     # Current roster (valid_to IS NULL) — decoupled from the data as-of so build-forward
     # universes (e.g. B3 ibov/ibx, valid_from = refresh date) still score against the latest
     # available fact_returns date.
@@ -59,7 +59,7 @@ def _members(conn: psycopg.Connection, universe_id: str, as_of: date) -> list[st
     return [r[0] for r in rows]
 
 
-def _raw_momentum(conn, members, as_of) -> dict[str, float]:
+def _raw_momentum(conn, members, as_of_date) -> dict[str, float]:
     rows = conn.execute(
         """
         SELECT a.composite_figi, (1 + a.pr) / NULLIF(1 + b.pr, 0) - 1
@@ -69,13 +69,13 @@ def _raw_momentum(conn, members, as_of) -> dict[str, float]:
          WHERE a.window_id = %s AND b.window_id = %s AND a.as_of_date = %s
            AND a.pr IS NOT NULL AND b.pr IS NOT NULL AND a.composite_figi = ANY(%s)
         """,
-        (_W_1Y, _W_1M, as_of, members),
+        (_W_1Y, _W_1M, as_of_date, members),
     ).fetchall()
     return {f: float(v) for f, v in rows if v is not None}
 
 
-def _raw_vol(conn, members, as_of) -> dict[str, float]:
-    start = as_of - timedelta(days=365)
+def _raw_vol(conn, members, as_of_date) -> dict[str, float]:
+    start = as_of_date - timedelta(days=365)
     rows = conn.execute(
         """
         SELECT composite_figi, stddev_samp(pr) * sqrt(252)
@@ -115,7 +115,7 @@ def _winsorize(raw: dict[str, float], lo: float = 0.01, hi: float = 0.99) -> dic
     return {f: min(max(v, plo), phi) for f, v in raw.items()}
 
 
-def _store(conn, universe_id, as_of, factor_key, direction, raw: dict[str, float]) -> int:
+def _store(conn, universe_id, as_of_date, factor_key, direction, raw: dict[str, float]) -> int:
     if not raw:
         return 0
     raw = _winsorize(raw)  # cap extremes before scaling/ranking (e.g. SNDK momentum +3495%)
@@ -139,7 +139,7 @@ def _store(conn, universe_id, as_of, factor_key, direction, raw: dict[str, float
             DO UPDATE SET raw=EXCLUDED.raw, zscore=EXCLUDED.zscore, rank=EXCLUDED.rank,
                           pctile=EXCLUDED.pctile
             """,
-            (universe_id, as_of, factor_key, figi, val, z, rank, pctile),
+            (universe_id, as_of_date, factor_key, figi, val, z, rank, pctile),
         )
     return n
 
@@ -148,24 +148,24 @@ def compute_universe(
     sym_conn: psycopg.Connection,
     sig_conn: psycopg.Connection,
     universe_id: str,
-    as_of: date | None = None,
+    as_of_date: date | None = None,
 ) -> dict:
     """Read sym (``sym_conn``, read-only) to compute factors; write scores to the signal
     database (``sig_conn``). The two connections are separate databases under the
     DB-per-package topology — sym is a read-only upstream peer, signal owns its derived store."""
     sig_conn.autocommit = True
     _ensure_catalog(sig_conn)
-    if as_of is None:
-        as_of = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
-    members = _members(sym_conn, universe_id, as_of)
+    if as_of_date is None:
+        as_of_date = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
+    members = _members(sym_conn, universe_id, as_of_date)
     counts = {
-        "mom_12_1": _store(sig_conn, universe_id, as_of, "mom_12_1", "high",
-                           _raw_momentum(sym_conn, members, as_of)),
-        "vol_1y": _store(sig_conn, universe_id, as_of, "vol_1y", "low",
-                         _raw_vol(sym_conn, members, as_of)),
-        "size": _store(sig_conn, universe_id, as_of, "size", "low", _raw_size(sym_conn, members)),
+        "mom_12_1": _store(sig_conn, universe_id, as_of_date, "mom_12_1", "high",
+                           _raw_momentum(sym_conn, members, as_of_date)),
+        "vol_1y": _store(sig_conn, universe_id, as_of_date, "vol_1y", "low",
+                         _raw_vol(sym_conn, members, as_of_date)),
+        "size": _store(sig_conn, universe_id, as_of_date, "size", "low", _raw_size(sym_conn, members)),
     }
-    return {"universe_id": universe_id, "as_of": as_of.isoformat(), "members": len(members),
+    return {"universe_id": universe_id, "as_of_date": as_of_date.isoformat(), "members": len(members),
             "scored": counts}
 
 

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
 
-type Ret = { code: string; label: string; pr: number | null; tr: number | null; as_of: string | null };
+type Ret = { code: string; label: string; pr: number | null; tr: number | null; as_of_date: string | null };
 type Detail = {
   figi: string;
   ticker: string;
@@ -19,7 +19,7 @@ type Detail = {
     market_cap_usd: number | null;
     shares_outstanding: number | null;
     currency: string | null;
-    as_of: string | null;
+    as_of_date: string | null;
   } | null;
   returns: Ret[];
 };
@@ -98,7 +98,7 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
           <div className="mt-1 text-2xl font-semibold tabular-nums text-fg">
             {f ? `$${fmtCap(f.market_cap_usd)}` : "—"}
           </div>
-          <div className="mt-1 text-xs text-muted">{f?.as_of ?? "—"}</div>
+          <div className="mt-1 text-xs text-muted">{f?.as_of_date ?? "—"}</div>
         </div>
         <div className="rounded-xl border border-border bg-surface p-4">
           <div className="text-xs uppercase tracking-wide text-muted">Market cap ({f?.currency ?? "LCY"})</div>
@@ -135,7 +135,7 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
                 </td>
                 <td className={`px-4 py-2 text-right tabular-nums ${retClass(r.pr)}`}>{pct(r.pr)}</td>
                 <td className={`px-4 py-2 text-right tabular-nums ${retClass(r.tr)}`}>{pct(r.tr)}</td>
-                <td className="px-4 py-2 text-right tabular-nums text-muted">{r.as_of ?? "—"}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-muted">{r.as_of_date ?? "—"}</td>
               </tr>
             ))}
             {d.returns.length === 0 && (

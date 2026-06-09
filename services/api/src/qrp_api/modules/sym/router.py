@@ -36,7 +36,7 @@ def overview(gw: DbSymGateway = Depends(_gateway)) -> dict:
         "freshness": [
             {
                 "area": f.area,
-                "as_of": f.as_of.isoformat() if f.as_of else None,
+                "as_of_date": f.as_of_date.isoformat() if f.as_of_date else None,
                 "days_behind": f.days_behind,
                 "status": f.status,
             }

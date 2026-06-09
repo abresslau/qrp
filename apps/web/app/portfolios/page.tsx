@@ -169,7 +169,7 @@ export default function PortfoliosPage() {
                 <td className="px-4 py-2 text-muted">{p.client || "—"}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">{p.n_weights}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">
-                  {p.latest_as_of ?? "—"}
+                  {p.latest_as_of_date ?? "—"}
                 </td>
               </tr>
             ))}

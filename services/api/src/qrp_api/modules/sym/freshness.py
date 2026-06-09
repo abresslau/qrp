@@ -1,7 +1,7 @@
 """Freshness classification for sym data areas.
 
 Honest 3-state vocabulary (matches the console status system): ``ok`` / ``stale`` /
-``unknown``. Each area reports its own ``as_of`` date and how many days it sits behind the
+``unknown``. Each area reports its own ``as_of_date`` date and how many days it sits behind the
 latest trading session we have prices for (the best "current" proxy QRP has without
 recomputing sym's calendar logic).
 
@@ -23,16 +23,16 @@ STALE_AFTER_DAYS = 4
 @dataclass(frozen=True)
 class AreaFreshness:
     area: str
-    as_of: date | None
+    as_of_date: date | None
     days_behind: int | None  # vs the latest session; None when unknown
     status: str  # "ok" | "stale" | "unknown"
 
 
-def classify(area: str, as_of: date | None, latest_session: date | None) -> AreaFreshness:
-    if as_of is None:
+def classify(area: str, as_of_date: date | None, latest_session: date | None) -> AreaFreshness:
+    if as_of_date is None:
         return AreaFreshness(area, None, None, "unknown")
     if latest_session is None:
-        return AreaFreshness(area, as_of, None, "unknown")
-    days_behind = max(0, (latest_session - as_of).days)
+        return AreaFreshness(area, as_of_date, None, "unknown")
+    days_behind = max(0, (latest_session - as_of_date).days)
     status = "stale" if days_behind > STALE_AFTER_DAYS else "ok"
-    return AreaFreshness(area, as_of, days_behind, status)
+    return AreaFreshness(area, as_of_date, days_behind, status)
