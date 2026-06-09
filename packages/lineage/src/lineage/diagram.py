@@ -24,17 +24,21 @@ def _node(table: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", table)  # Mermaid-safe node id
 
 
-def flowchart(key: str) -> str:
-    """A Mermaid flowchart for one join key's propagation across the tables that carry it."""
+def mermaid_for(key: str) -> str:
+    """Raw Mermaid `flowchart` source for one join key's propagation (no markdown fences)."""
     tables = key_tables(key)
     es = sorted({(f, t) for (f, t, _b) in edges() if f in tables and t in tables and f != t})
-    lines = [f"### `{key}` field flow", "", "```mermaid", "flowchart LR"]
+    lines = ["flowchart LR"]
     for t in sorted(tables):
         lines.append(f"    {_node(t)}[{t}]")
     for f, t in es:
         lines.append(f"    {_node(f)} --> {_node(t)}")
-    lines += ["```", ""]
     return "\n".join(lines)
+
+
+def flowchart(key: str) -> str:
+    """A Mermaid flowchart for one join key, wrapped as a Markdown section (fenced)."""
+    return f"### `{key}` field flow\n\n```mermaid\n{mermaid_for(key)}\n```\n"
 
 
 def render() -> str:

@@ -72,6 +72,10 @@ def create_app() -> FastAPI:
         from altdata.router import router as altdata_router
 
         app.include_router(altdata_router)
+    if "lineage" in enabled:  # gateway-resident; lazy-imports lineage.* (dagster) inside handlers
+        from qrp_api.modules.lineage.router import router as lineage_router
+
+        app.include_router(lineage_router)
 
     return app
 

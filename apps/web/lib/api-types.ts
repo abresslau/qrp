@@ -584,6 +584,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/lineage/graph": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Graph
+         * @description Table-level lineage edges (declared + auto-derived + FK referential) with group + stats.
+         */
+        get: operations["graph_api_lineage_graph_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/lineage/field-flow": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Field Flow
+         * @description Mermaid `flowchart` source for each join key's propagation (composite_figi, sym_id).
+         */
+        get: operations["field_flow_api_lineage_field_flow_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -794,6 +834,20 @@ export interface components {
             /** As Of */
             as_of: string | null;
         };
+        /** FieldFlow */
+        FieldFlow: {
+            /** Key */
+            key: string;
+            /** Mermaid */
+            mermaid: string;
+        };
+        /** FieldFlows */
+        FieldFlows: {
+            /** Flows */
+            flows: components["schemas"]["FieldFlow"][];
+            /** Dagster Url */
+            dagster_url: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -821,6 +875,38 @@ export interface components {
             started_at: string | null;
             /** Finished At */
             finished_at: string | null;
+        };
+        /** LineageEdge */
+        LineageEdge: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Basis */
+            basis: string;
+            /** Source Group */
+            source_group?: string | null;
+            /** Target Group */
+            target_group?: string | null;
+        };
+        /** LineageGraph */
+        LineageGraph: {
+            /** Edges */
+            edges: components["schemas"]["LineageEdge"][];
+            stats: components["schemas"]["LineageStats"];
+            /** Dagster Url */
+            dagster_url: string;
+        };
+        /** LineageStats */
+        LineageStats: {
+            /** Assets */
+            assets: number;
+            /** Edges */
+            edges: number;
+            /** By Basis */
+            by_basis: {
+                [key: string]: number;
+            };
         };
         /** Metrics */
         Metrics: {
@@ -2223,6 +2309,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    graph_api_lineage_graph_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LineageGraph"];
+                };
+            };
+        };
+    };
+    field_flow_api_lineage_field_flow_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FieldFlows"];
                 };
             };
         };

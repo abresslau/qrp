@@ -1,7 +1,7 @@
 [project]
 name = "qrp-api"
 version = "0.1.0"
-description = "QRP API — FastAPI, per-module routers over the sym warehouse (consumer of sym)."
+description = "QRP API — FastAPI gateway mounting each enabled package's router (sym is a peer)."
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115",
@@ -16,6 +16,7 @@ dependencies = [
     "altdata",
     "analytics",
     "operate",
+    "lineage",
 ]
 
 [tool.uv.sources]
@@ -27,6 +28,7 @@ backtest = { workspace = true }
 altdata = { workspace = true }
 analytics = { workspace = true }
 operate = { workspace = true }
+lineage = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

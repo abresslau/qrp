@@ -55,3 +55,9 @@ key = "analytics"
 name = "analytics"
 description = "Portfolio analytics"
 enabled = true
+
+[[modules]]
+key = "lineage"
+name = "lineage"
+description = "Data lineage & catalog (Dagster) — what feeds what, across packages"
+enabled = true
