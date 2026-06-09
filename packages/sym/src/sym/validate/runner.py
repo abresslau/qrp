@@ -13,6 +13,7 @@ from psycopg.types.json import Jsonb
 
 from sym.validate.completeness import evaluate_completeness
 from sym.validate.fx import check_fx_coverage
+from sym.validate.instrument_bridge import check_equity_instrument_bridge
 from sym.validate.integrity import check_referential_integrity
 from sym.validate.prices import (
     check_calendar_coverage,
@@ -30,6 +31,7 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
     return [
         evaluate_completeness(conn, universe_id),       # V1
         check_referential_integrity(conn),              # V2
+        check_equity_instrument_bridge(conn),            # B1 — sym_id/composite_figi bridge 1:1
         check_identity_completeness(conn),              # V3
         check_ticker_collisions(conn),                  # V3
         check_price_calendar_consistency(conn),         # V4

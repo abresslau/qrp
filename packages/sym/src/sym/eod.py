@@ -6,9 +6,10 @@ scheduler either calls each ``sym <step>`` as its own task (fine-grained retries
 or runs ``sym eod`` (one cron line). Each step is error-isolated and reports a
 short status; the run fails (non-zero exit) only if a *critical* step fails.
 
-Tiered cadence: the daily core is monitor → delta → benchmarks → recompute →
-validate; ``fundamentals`` (weekly) and ``snapshot-calendar`` (occasional) run on
-their own schedules and are not in the daily default.
+Tiered cadence: the daily core is monitor → delta → map → benchmarks → recompute
+→ validate; ``fundamentals`` (weekly) and ``snapshot-calendar`` (occasional) run on
+their own schedules and are not in the daily default. (``map`` keeps the equity →
+``instrument``/``sym_id`` bridge current so cross-asset joins never drop a new security.)
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ class EodStep:
 DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("monitor", "Discover index-universe membership changes", critical=False),
     EodStep("delta", "Incremental EOD price load (since each cursor)", critical=True),
+    EodStep("map", "Map new securities to instrument identity (sym_id bridge)", critical=False),
     EodStep("benchmarks", "Refresh benchmark index levels + returns", critical=False),
     EodStep("fx", "Daily FX rate delta (Frankfurter)", critical=False),
     EodStep("recompute", "Materialize fact_returns (PR + TR)", critical=True),
@@ -134,6 +136,11 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
             s = run_load(conn, source(), "delta", as_of_date=as_of_date)
             return f"loaded={s.loaded} skipped={s.skipped} errored={s.errored} rows={s.rows}"
+        if key == "map":
+            from sym.identity.instrument import backfill_equity_instruments
+
+            b = backfill_equity_instruments(conn)
+            return f"mapped new={b.created} existing={b.existed}"
         if key == "benchmarks":
             from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels
             from sym.benchmarks.links import link_universe_benchmarks

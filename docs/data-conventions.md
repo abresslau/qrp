@@ -43,7 +43,36 @@ calendar.
   (lowercase) → Snowflake/BigQuery (uppercase). This is the single most important
   portability rule.
 
-## 3. Effective-dated history (SCD Type 2) and the half-open interval
+## 3. Identity keys: `composite_figi` vs `sym_id` (two keys, by design)
+
+sym deliberately runs **two** instrument identity keys. This is a decision (Option A,
+2026-06-09), not drift:
+
+| Key | Type | Scope | Role |
+| --- | --- | --- | --- |
+| **`composite_figi`** | `CHAR(12)` | the **equity warehouse** | Natural key. Immutable across ticker/exchange changes, human-readable, and the way vendor data (prices, corporate actions, fundamentals, symbology) naturally lands. PK/FK of `securities`, `prices_raw`, `corporate_actions`, `fact_returns`, `fundamentals`, `gics_scd`, `security_symbology`, `security_names`. |
+| **`sym_id`** | `BIGINT` identity | the **cross-asset spine** | Vendor-neutral internal surrogate spanning all instrument kinds. Required because **indexes have no FIGI** (and future FX/rates won't either) — they cannot key on `composite_figi`. PK/FK of `instrument`, `instrument_xref`, `index_levels`, `fact_index_returns`, `universe_benchmark`. |
+
+**Why not one key?** `composite_figi` *cannot* span the platform (no FIGI for an MSCI index),
+and migrating the entire equity warehouse onto `sym_id` buys nothing for equities (which all
+have a perfectly good immutable FIGI). So each key stays where it is the right tool.
+
+**The rule for new tables:**
+- A table of **single-equity, vendor-sourced facts** (prices, returns, fundamentals,
+  symbology, corporate actions) → key on **`composite_figi`**.
+- A table that must **span instrument kinds or be vendor-neutral** (indexes, cross-asset
+  analytics, mixed-instrument portfolios) → key on **`sym_id`**.
+
+**The bridge.** `instrument_xref` is the single source of truth mapping external ids to
+`sym_id`. Every `securities` row maps 1:1 to an `instrument(kind='equity')` via a
+`composite_figi` xref — so `composite_figi` is "just one external id among many" on the
+spine, and equity ↔ index joins go through `sym_id`. The mapping is kept current by the EOD
+**`map`** step (`backfill_equity_instruments`, idempotent) and asserted every run by
+`sym validate` (the `equity_instrument_bridge` check fails if a security is unmapped or an
+equity instrument lacks its FIGI xref). Revisit Option A only if QRP grows into a true
+multi-asset book (heavy FX/rates/futures/non-FIGI instruments).
+
+## 4. Effective-dated history (SCD Type 2) and the half-open interval
 
 Slowly-changing attributes — symbology, company names, GICS, universe membership
 — are stored **SCD Type 2**: a change closes the old row and opens a new one,
