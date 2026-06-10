@@ -157,8 +157,8 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             from sym.fx.source import FrankfurterSource
             from sym.universe.fundamentals import recompute_market_cap_usd
 
-            # Daily forward fill (start=None -> tail since the latest stored date).
-            s = fill_fx(conn, FrankfurterSource(), end=as_of_date)
+            # Daily forward fill (start_date=None -> tail since the latest stored date).
+            s = fill_fx(conn, FrankfurterSource(), end_date=as_of_date)
             usd = recompute_market_cap_usd(conn) if s.inserted else 0
             return (
                 f"inserted={s.inserted} skipped={s.skipped_existing} "

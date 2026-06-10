@@ -618,13 +618,18 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             if args.fx_command == "load":
                 from sym.fx.ingest import fill_fx
 
-                start = date.fromisoformat(args.start_date) if args.start_date else None
-                end = date.fromisoformat(args.end_date) if args.end_date else today
+                start_date = date.fromisoformat(args.start_date) if args.start_date else None
+                end_date = date.fromisoformat(args.end_date) if args.end_date else today
+                if start_date is not None and start_date > end_date:
+                    print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
+                    return 1
                 s = fill_fx(
-                    conn, _fx_source(args.source), end=end, start=start,
+                    conn, _fx_source(args.source), end_date=end_date, start_date=start_date,
                     currencies=_fx_currencies(args),
                 )
-                window = f"[{start} .. {end}]" if start else f"[tail .. {end}]"
+                window = (
+                    f"[{start_date} .. {end_date}]" if start_date else f"[tail .. {end_date}]"
+                )
                 print(
                     f"fx load {window}: {s.currencies} currencies, inserted={s.inserted}, "
                     f"skipped={s.skipped_existing}, implausible={s.implausible}"

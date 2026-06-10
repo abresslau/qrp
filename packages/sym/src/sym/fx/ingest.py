@@ -5,8 +5,8 @@ plausibility band (catches a decimal shift / inverted feed / 10x without per-cur
 magic numbers), and inserts them as ``(base='USD', quote=ccy, …)`` with
 ``ON CONFLICT DO NOTHING`` (immutable; resumable — a re-run inserts only missing rows).
 
-One loader, :func:`fill_fx`, mirrors `sym load`: no ``start`` → the tail after the latest
-stored date (the daily case); an explicit ``start`` → fill from that floor (e.g. the
+One loader, :func:`fill_fx`, mirrors `sym load`: no ``start_date`` → the tail after the latest
+stored date (the daily case); an explicit ``start_date`` → fill from that floor (e.g. the
 ECB-inception ``DEFAULT_FX_FLOOR``, a full-history backfill). Stored rates are never
 overwritten; corrections are out of scope (v1), so there is no overwrite mode.
 """
@@ -73,15 +73,15 @@ def load_fx(
     conn: psycopg.Connection,
     source: FxSource,
     *,
-    start: date,
-    end: date,
+    start_date: date,
+    end_date: date,
     currencies: Sequence[str] | None = None,
 ) -> FxLoadSummary:
-    """Fetch USD-base rates for ``[start, end]``, plausibility-filter, immutable-insert."""
+    """Fetch USD-base rates for ``[start_date, end_date]``, plausibility-filter, immutable-insert."""
     conn.autocommit = True
     ccys = list(currencies) if currencies is not None else _default_currencies(conn)
     summary = FxLoadSummary()
-    obs = source.fetch(ccys, start, end)
+    obs = source.fetch(ccys, start_date, end_date)
     by_ccy: dict[str, list[FxObservation]] = {}
     for o in obs:
         by_ccy.setdefault(o.currency, []).append(o)
@@ -110,22 +110,22 @@ def fill_fx(
     conn: psycopg.Connection,
     source: FxSource,
     *,
-    end: date,
-    start: date | None = None,
+    end_date: date,
+    start_date: date | None = None,
     currencies: Iterable[str] | None = None,
 ) -> FxLoadSummary:
     """Add missing USD-base rates (immutable insert; skips existing) — the one FX loader.
 
-    Forward (``start=None``): only the tail after the latest stored date for this source
-    (the daily case). Gap-aware (explicit ``start``): fill from that floor — e.g.
+    Forward (``start_date=None``): only the tail after the latest stored date for this source
+    (the daily case). Gap-aware (explicit ``start_date``): fill from that floor — e.g.
     ``DEFAULT_FX_FLOOR`` for a full-history backfill. Mirrors `sym load` (fill).
     """
-    if start is None:
+    if start_date is None:
         last = _max_stored_date(conn, source.SOURCE)
-        start = (last + timedelta(days=1)) if last is not None else DEFAULT_FX_FLOOR
-    if start > end:
+        start_date = (last + timedelta(days=1)) if last is not None else DEFAULT_FX_FLOOR
+    if start_date > end_date:
         return FxLoadSummary()
     return load_fx(
-        conn, source, start=start, end=end,
+        conn, source, start_date=start_date, end_date=end_date,
         currencies=list(currencies) if currencies is not None else None,
     )
