@@ -11,9 +11,18 @@ declares its full current member set (`last_snapshot_tokens`); `run_monitor` der
 leaves by diffing it against currently-open members, stages every discovery as a
 `membership_proposal` (churn above 10% gates the whole run for review), and promotes
 proposals to the append-only log only after 2-day persistence or second-source
-corroboration. `sym universe accuracy <id>` cross-checks membership against the
-configured `config.accuracy_reference` source (exit 2 on alarm); `sym universe
-reverse` appends a corrective event for a wrongly-recorded change.
+corroboration. A churn-gated run earns nothing toward persistence and counts as
+ALIVE for the staleness alarm (a gated monitor is working, not frozen); an
+operator-rejected change re-sighted within 30 days re-stages operator-only
+(`rejected_resight`, never auto-promoted). `sym universe accuracy <id>`
+cross-checks membership against the configured `config.accuracy_reference` source
+(exit 2 on alarm); `sym universe reverse` appends a corrective event for a
+wrongly-recorded change.
+
+Rebuilding an environment: `config.calendar_mic` (stated per plan below) is data,
+not code — re-apply with
+`UPDATE universe SET config = config || jsonb_build_object('calendar_mic', '<MIC>'::text) WHERE universe_id = '<id>';`
+the `maintenance_plan_coverage` check fails until every populated universe has it.
 
 ## ibov — Ibovespa (B3)
 
@@ -93,6 +102,11 @@ page. Shared posture (stated once, referenced per-universe):
   is an operational follow-up (deferred-work ledger).
 - **Prices / returns:** yfinance via the resolver's MIC→Yahoo-suffix mapping;
   returns via `sym recompute`; integrity via `sym validate --universe <id>`.
+- **Token-MIC convention:** member tokens carry the SPEC's MIC, not the
+  member's listing venue — every S&P constituent is `ticker:*@XNYS` even when
+  NASDAQ-listed (AAPL, MSFT, …). The token is an opaque identifier;
+  OpenFIGI/symbology resolution prefers the named MIC and deterministically
+  falls back across listings, so this is a labeling convention, not a defect.
 
 ## sp500 — S&P 500
 
@@ -169,7 +183,9 @@ page. Shared posture (stated once, referenced per-universe):
   (index targets 20 — watch the completeness check).
 - **PIT boundary:** **build-forward**, `pit_valid_from=2026-06-07`.
 - **Rebalance cadence:** annual September review.
-- **Monitor / gating:** shared mechanics above; `calendar_mic=XSWX`.
+- **Monitor / gating:** shared mechanics above; `calendar_mic=XSWX`. (SIX blue
+  chips historically traded under the segment MIC XVTX; XSWX is the token and
+  calendar MIC — the session calendar is identical.)
 
 ## estoxx50 — EURO STOXX 50
 

@@ -127,3 +127,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of U3-5-wire-safety-machinery round 2 (2026-06-10)
 
 - Gated-streak alert: a universe whose monitor is churn-gated every run for weeks reads as ALIVE (liveness counts gated runs — correct) while its membership is silently frozen pending review; the only surface is the review digest's pending pane. A "gated N consecutive runs" alarm in `stale_monitors`/digest is a design follow-up.
+
+## Deferred from: code review of U3-6-maintenance-plans (2026-06-10)
+
+- Wikipedia membership completeness for ftse100 (92 of ~100), smi (19 of 20), estoxx50 (49 of 50): the plans note the shortfalls but no remediation exists — investigate whether the pages are genuinely short, the parser drops rows, or the indexes' real counts differ; until then the completeness check is the watchdog.

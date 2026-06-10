@@ -1,6 +1,6 @@
 # Story U3.6: Maintenance plans for every populated index universe (ledger D4)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -19,7 +19,7 @@ The standing index-maintenance rule (memory + `docs/universe-maintenance.md` hea
 ## Acceptance Criteria
 
 1. **Plans written:** `docs/universe-maintenance.md` carries a maintenance-plan section per populated index universe (sp500, sp400, sp600, dax, cac40, ftse100, ibex35, ftsemib, aex, smi, estoxx50, ibx — ibov already done), each covering the four mandatory fields: **source** (provider/archetype, source nature snapshot-vs-dated), **monitor cadence**, **gating** (live U3.5 behavior restated, corroboration posture stated honestly — all 12 are single-source wikipedia-primary with NO independent `accuracy_reference` available yet), and **PIT boundary** (sp500 1994-09-30 / sp400 2012-01-13 / sp600 2019-12-17 from the Wikipedia changes-table backfill; Europeans + ibx build-forward at inception). The stale "ibx — planned, not yet populated" section is replaced.
-2. **Calendar alignment configured:** every index universe gets `config.calendar_mic` (XNYS for the S&Ps; XETR/XPAR/XLON/XMAD/XMIL/XAMS/XSWX for dax/cac40/ftse100/ibex35/ftsemib/aex/estoxx50→XETR/smi; BVMF for ibov/ibx), and the plans state it. estoxx50's pan-European membership aligns on XETR (its token MIC) — noted in its plan.
+2. **Calendar alignment configured:** every index universe gets `config.calendar_mic`, and the plans state it: sp500/sp400/sp600=XNYS, dax=XETR, cac40=XPAR, ftse100=XLON, ibex35=XMAD, ftsemib=XMIL, aex=XAMS, smi=XSWX, estoxx50=XETR, ibov=BVMF, ibx=BVMF. estoxx50's pan-European membership aligns on XETR (its token MIC) — noted in its plan.
 3. **ibx brought into maintenance:** at least one successful monitor run recorded for ibx (liveness no longer NULL); its plan documents the same cadence as ibov.
 4. **Populate-gate enforced:** a new `sym validate` check `maintenance_plan_coverage` FAILs when a populated index universe (≥1 open member) has no `## <universe_id>` section in `docs/universe-maintenance.md`, and WARNs (not crashes) when the doc file cannot be located. Wired into `run_all` and error-isolated like every other check.
 5. **Tests:** DB-free tests for the new check (covered universe passes, uncovered fails, missing doc warns, unpopulated universe ignored). Full suite green.
@@ -42,6 +42,23 @@ The standing index-maintenance rule (memory + `docs/universe-maintenance.md` hea
 - [x] Task 5: Ledger + validate run (AC: 6)
   - [x] D4 → done; `sym validate`: `maintenance_plan_coverage` PASS (13 universes), suite overall FAIL only on pre-existing GICS/unpriced data-quality findings
 
+### Review Findings (code review 2026-06-10, commits 431feeb+215b89a — ALL RESOLVED)
+
+- [x] [Review][Patch] Inert-config recurrence — the check now FAILs any populated index universe without `config.calendar_mic` (doc-independent) [validate/plans.py]
+- [x] [Review][Patch] Stub sections — each plan section must mention all four mandatory field keywords (source/monitor/gating/pit) or it FAILs [validate/plans.py]
+- [x] [Review][Patch] Fenced code blocks stripped before heading parse; section boundaries are ANY `##` heading; heading convention documented in the module docstring [validate/plans.py]
+- [x] [Review][Patch] Real-doc integration test added — 13 slugs × 4 fields asserted against the actual `docs/universe-maintenance.md` [tests]
+- [x] [Review][Patch] `populated` now counts membership rows EVER (a fully-emptied universe keeps needing its plan — it carries PIT history) [validate/plans.py]
+- [x] [Review][Patch] Unreadable/non-UTF-8 doc degrades to WARN (OSError/UnicodeDecodeError wrapped) [validate/plans.py]
+- [x] [Review][Patch] Token-MIC convention caveat added to shared mechanics (NASDAQ names carry @XNYS by spec-MIC; resolver falls back across listings) [docs]
+- [x] [Review][Patch] smi XVTX segment-MIC caveat added [docs]
+- [x] [Review][Patch] Gating description completed: 30-day rejected-resight cooldown + gated-runs-count-as-alive liveness semantics [docs]
+- [x] [Review][Patch] Story dev-notes fixed (11 wikipedia + ibx=b3; AC2 mapping rewritten as an explicit list) [story file]
+- [x] [Review][Patch] Test fake SQL assert made meaningful (`"kind = 'index'" in sql`) [tests]
+- [x] [Review][Patch] Reproducibility: re-apply one-liner in the doc header; the calendar_mic enforcement makes a wiped env fail validate until reconfigured [docs]
+- [x] [Review][Defer] ftse100 (92/100), smi (19/20), estoxx50 (49/50) plans bless known-incomplete membership with "watch the completeness check" — source-completeness investigation deferred to ledger
+- Dismissed (4): "populate gate is post-hoc" (sym validate IS the project's gate; the operator finisher sequence runs it); doc-path environment-dependence (WARN degradation is the correct behavior for this owner-operated layout); `--universe X` failing on another universe's missing plan (consistent with every other global check); cwd-fallback false-positive doc (hypothetical).
+
 ## Dev Notes
 
 ### Per-universe facts (queried 2026-06-10)
@@ -62,7 +79,7 @@ The standing index-maintenance rule (memory + `docs/universe-maintenance.md` hea
 | ibov | 78 | 2026-06-08 | 2026-06-10 | (b3) | BVMF |
 | ibx | 99 | 2026-06-08 | **NEVER** | (b3) | BVMF |
 
-`trading_calendar` current-version coverage confirmed for all 9 MICs (≥9,400 sessions each, through 2027-12-30/31). All 12 undocumented universes are `source_pref=['wikipedia']`; ibov/ibx are `['b3']`.
+`trading_calendar` current-version coverage confirmed for all 9 MICs (≥9,400 sessions each, through 2027-12-30/31). Of the 12 undocumented universes, 11 are `source_pref=['wikipedia']` and ibx is `['b3']` (like ibov, which was already documented).
 
 ### Rebalance cadences (for the plans; daily monitoring regardless)
 
@@ -128,3 +145,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor for the co
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-5); suite 465 → 470 green; `maintenance_plan_coverage` live and passing for all 13 universes. Status → review.
+- 2026-06-10: Code review (3 adversarial layers; Auditor verified data changes against the live DB — all 6 ACs confirmed) — 12 patches applied, 1 deferred (wikipedia membership shortfalls for ftse100/smi/estoxx50 → ledger), 4 dismissed. The check now enforces calendar_mic + non-stub sections + ever-populated scope, with a real-doc integration test. Suite 470 → 474 green. Status → done.
