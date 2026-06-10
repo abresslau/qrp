@@ -76,12 +76,12 @@ def find_divergences(
     source_a: str = "frankfurter",
     source_b: str = "ecb",
     threshold: Decimal = DEFAULT_DIVERGENCE,
-    start: date | None = None,
+    start_date: date | None = None,
     currencies: Sequence[str] | None = None,
 ) -> DivergenceReport:
     """Compare ``source_a`` vs ``source_b`` on every overlapping USD-base ``(ccy, date)``.
 
-    ``source_b`` is the reference (denominator). Optionally bound by ``start`` date and a
+    ``source_b`` is the reference (denominator). Optionally bound by ``start_date`` and a
     ``currencies`` subset. Returns counts + the worst offenders (the caller decides how many
     to print)."""
     sql = [
@@ -92,9 +92,9 @@ def find_divergences(
         " WHERE a.source = %s AND b.source = %s",
     ]
     params: list[object] = [source_a, source_b]
-    if start is not None:
+    if start_date is not None:
         sql.append("   AND a.as_of_date >= %s")
-        params.append(start)
+        params.append(start_date)
     if currencies:
         sql.append("   AND a.quote_currency = ANY(%s)")
         params.append([c.upper() for c in currencies])

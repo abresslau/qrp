@@ -30,7 +30,9 @@ class _Conn:
         if "FROM securities" in sql:
             return _Cur((self.local,) if self.local else None)
         if "FROM v_prices_adjusted" in sql:
-            return _Cur((self.close_raw,) if self.close_raw is not None else None)
+            # (close_raw, session_date) — the date feeds the staleness bound; the fake
+            # prices on the as-of date itself (params[1]) so existing tests stay fresh.
+            return _Cur((self.close_raw, params[1]) if self.close_raw is not None else None)
         if "FROM fundamentals" in sql:
             return _Cur((self.shares, self.shares_as_of_date) if self.shares is not None else None)
         if "SELECT as_of_date, rate FROM fx_rate" in sql:  # convert -> fx_rate resolver

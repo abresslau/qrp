@@ -41,15 +41,23 @@ class DbConfig:
     password: str | None
 
     def conninfo(self) -> str:
-        """Return a libpq connection string for psycopg."""
+        """Return a libpq connection string for psycopg.
+
+        Every value is libpq-quoted: a password (or host path) containing a space
+        or quote would otherwise produce a malformed conninfo at startup.
+        """
+
+        def q(value: str) -> str:
+            return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
         parts = [
-            f"host={self.host}",
-            f"port={self.port}",
-            f"dbname={self.dbname}",
-            f"user={self.user}",
+            f"host={q(self.host)}",
+            f"port={q(self.port)}",
+            f"dbname={q(self.dbname)}",
+            f"user={q(self.user)}",
         ]
         if self.password:
-            parts.append(f"password={self.password}")
+            parts.append(f"password={q(self.password)}")
         return " ".join(parts)
 
 
@@ -71,7 +79,9 @@ def load_dotenv() -> None:
     path = _find_dotenv()
     if path is None:
         return
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    # utf-8-sig: a BOM'd .env (common from Windows editors) would otherwise prefix
+    # the first key with ﻿ and silently never set it.
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -84,8 +94,9 @@ def load_dotenv() -> None:
 def load_db_config() -> str:
     """Resolve the database connection string from the environment.
 
-    ``SYM_DATABASE_URL`` wins if set; otherwise the discrete ``SYM_DB_*``
-    variables are assembled (falling back to local-development defaults).
+    Precedence: ``SYM_DATABASE_URL`` wins outright; otherwise the libpq-standard
+    ``PG*`` variables (PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD), then the legacy
+    ``SYM_DB_*`` variables, then local-development defaults.
     """
     load_dotenv()
     url = os.environ.get("SYM_DATABASE_URL")
@@ -95,7 +106,9 @@ def load_db_config() -> str:
     cfg = DbConfig(
         host=os.environ.get("PGHOST") or os.environ.get("SYM_DB_HOST", DEFAULT_HOST),
         port=os.environ.get("PGPORT") or os.environ.get("SYM_DB_PORT", DEFAULT_PORT),
-        dbname=os.environ.get("SYM_DB_NAME", DEFAULT_DBNAME),
+        # PGDATABASE honored like its PG* siblings (dbname is always emitted, so the
+        # libpq default that would have read PGDATABASE never applies otherwise).
+        dbname=os.environ.get("PGDATABASE") or os.environ.get("SYM_DB_NAME", DEFAULT_DBNAME),
         user=os.environ.get("PGUSER") or os.environ.get("SYM_DB_USER", DEFAULT_USER),
         password=os.environ.get("PGPASSWORD") or os.environ.get("SYM_DB_PASSWORD"),
     )
