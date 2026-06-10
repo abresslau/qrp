@@ -79,8 +79,9 @@ Collapsed the internal load-mode vocabulary to match the user-facing model — *
   drift; it was never a load mode. The DB `flag_type='sweep_divergence'` value is kept (constrained
   enum; renaming needs a migration).
 - EOD step key `delta` → **`fill`** (`sym eod --steps fill`; DAILY_STEPS, runner, schedule, docs,
-  orchestration examples, web attention page all updated). The separate `sym fx delta/backfill`
-  FX loader keeps its own verbs (different surface).
+  orchestration examples, web attention page all updated). The separate FX loader was later
+  brought into line too: `sym fx load` (commit 6df3ea3 superseded the original
+  keep-its-own-verbs call here).
 - Final load surface: `sym load` (fill) / `sym load --overwrite` (overwrite). 412 tests pass.
 
 ## Review Findings

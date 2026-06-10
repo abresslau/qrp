@@ -1,4 +1,12 @@
 
+## Deferred from: code review of orchestration + lineage, chunk 5 of project-wide review (2026-06-10)
+
+- Backup verification + rotation: no `pg_restore --list` sanity, no dump-size floor, no retention policy. (Partial-dump cleanup, numeric pg_dump version sort, and PGPASSWORD-via-env were fixed in-review.)
+- `fact_index_returns` backup-exclusion review: recomputable like `fact_returns` but deliberately kept in the dump (small/conservative) — revisit if dump size matters.
+- QL-1 story-status housekeeping: still "in-progress" with delivered AC task boxes unchecked.
+- Schedule evaluation knobs: the `sym_eod` op derives as_of_date from the scheduled tick now; finer control (skip-holidays, catch-up policy for missed ticks) undesigned.
+- Yahoo symbol normalization asymmetry (carried from chunk 4's ledger; surfaced again here via the resolver): HK zero re-padding + indiscriminate '.'->'-'.
+
 ## Deferred from: code review of sym identity & integrity, chunk 4 of project-wide review (2026-06-10)
 
 Backlogged by decision (D1/D2, accepted recommendations):
