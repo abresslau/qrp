@@ -78,3 +78,49 @@ def check_ticker_collisions(conn: psycopg.Connection) -> CheckResult:
         failures=failures,
         detail=f"{len(rows)} current symbology rows; {len(collisions)} true collision(s)",
     )
+
+
+def check_symbology_transitions(conn: psycopg.Connection) -> CheckResult:
+    """SCD transition integrity (Story 1.10 — the V3 AC restored).
+
+    One OPEN row per (figi, symbol_type): duplicates mean a rename ran without
+    closing the predecessor (the pre-1.10 failure mode) — FAIL. A CLOSED row on a
+    non-delisted security should have a successor starting exactly at its
+    ``valid_to`` (the boundary-day handoff) — a gap is a WARN: the identifier
+    history has a hole the as-of query answers with nothing.
+    """
+    duplicate_open = conn.execute(
+        """
+        SELECT composite_figi, symbol_type, count(*)
+          FROM security_symbology
+         WHERE valid_to IS NULL
+         GROUP BY composite_figi, symbol_type
+        HAVING count(*) > 1
+        """
+    ).fetchall()
+    failures = [f"{figi}/{stype}: {n} open rows" for figi, stype, n in duplicate_open]
+    orphans = conn.execute(
+        """
+        SELECT c.composite_figi, c.symbol_type, c.symbol_value, c.valid_to
+          FROM security_symbology c
+          JOIN securities s USING (composite_figi)
+         WHERE c.valid_to IS NOT NULL AND s.status = 'active'
+           AND NOT EXISTS (
+               SELECT 1 FROM security_symbology n
+                WHERE n.composite_figi = c.composite_figi
+                  AND n.symbol_type = c.symbol_type
+                  AND n.valid_from = c.valid_to
+           )
+        """
+    ).fetchall()
+    warnings = [
+        f"{figi}/{stype} {value!r} closed {closed} with no successor"
+        for figi, stype, value, closed in orphans
+    ]
+    return CheckResult.from_items(
+        "symbology_transitions",
+        checked=len(duplicate_open) + len(orphans),
+        failures=failures,
+        warnings=warnings,
+        detail=f"{len(duplicate_open)} duplicate-open, {len(orphans)} closed-without-successor",
+    )

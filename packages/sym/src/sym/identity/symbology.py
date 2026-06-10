@@ -35,7 +35,7 @@ def _exchange_facts(conn: psycopg.Connection, mic: str) -> tuple[str, str]:
     return row[0], row[1]
 
 
-def _insert_symbology(
+def _reconcile_symbology(
     conn: psycopg.Connection,
     *,
     composite_figi: str,
@@ -45,8 +45,17 @@ def _insert_symbology(
     country_iso: str | None,
     valid_from: date,
 ) -> None:
-    # Guard against re-inserting an identical currently-effective row (the
-    # EXCLUDE constraint would otherwise reject the overlap on a re-run).
+    """Make ``(symbol_value, mic)`` the security's ONE current identifier of this type.
+
+    The SCD transition (Story 1.10 — the data-conventions §4 SQ→XYZ semantics,
+    finally implemented): a differing open row is CLOSED at ``valid_from``
+    (exclusive end — the boundary day belongs to the successor) and the new row
+    opened from it; a SAME-DAY change updates the row in place (close+insert
+    would violate the ``valid_to > valid_from`` CHECK); an identical open row is
+    the idempotent no-op it always was. Collisions take precedence: a value held
+    by a DIFFERENT figi refuses loudly and changes nothing — transitions never
+    steal identifiers.
+    """
     # A RECYCLED identifier — the open (type, value, mic) row belonging to a
     # DIFFERENT figi — must be loud, not a silent skip: the new security would
     # quietly end up with no symbology row and no breadcrumb to why.
@@ -67,6 +76,30 @@ def _insert_symbology(
                 "(recycled identifier — close the old row first)"
             )
         return  # identical open row — idempotent re-run
+    # Same-day change: rewrite in place (the CHECK forbids a zero-length close).
+    rewritten = conn.execute(
+        """
+        UPDATE security_symbology
+           SET symbol_value = %s, mic = %s, country_iso = %s
+         WHERE composite_figi = %s AND symbol_type = %s
+           AND valid_from = %s AND valid_to IS NULL
+        RETURNING composite_figi
+        """,
+        (symbol_value, mic, country_iso, composite_figi, symbol_type, valid_from),
+    ).fetchall()
+    # Close EVERY earlier differing open row of this type (defensive plural:
+    # pre-1.10 data may carry duplicate opens — see the symbology_transitions check).
+    conn.execute(
+        """
+        UPDATE security_symbology
+           SET valid_to = %s
+         WHERE composite_figi = %s AND symbol_type = %s
+           AND valid_to IS NULL AND valid_from < %s
+        """,
+        (valid_from, composite_figi, symbol_type, valid_from),
+    )
+    if rewritten:
+        return
     conn.execute(
         """
         INSERT INTO security_symbology
@@ -105,7 +138,7 @@ def write_security(
     ).fetchone()
 
     if seed.ticker:
-        _insert_symbology(
+        _reconcile_symbology(
             conn,
             composite_figi=composite_figi,
             symbol_type="ticker",
@@ -115,7 +148,7 @@ def write_security(
             valid_from=valid_from,
         )
     if seed.isin:
-        _insert_symbology(
+        _reconcile_symbology(
             conn,
             composite_figi=composite_figi,
             symbol_type="isin",

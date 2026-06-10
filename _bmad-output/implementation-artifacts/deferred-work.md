@@ -12,7 +12,7 @@
 Backlogged by decision (D1/D2, accepted recommendations):
 
 - **D1 — review-queue gating story — ✅ DONE (Story 1.9, 2026-06-10):** the queue gates `resolve_universe` (a seed any of whose input keys has an OPEN row is skipped — no OpenFIGI query, no assignment, counted on `skipped_queued`); `sym review list` / `sym review resolve <id> [--figi ...]` give the steward the close path (assignment via `write_security`; dismissal re-admits the input, the freed key re-queues a recurrence). Live: the 5 real queued names (TWTR/ATVI/LEHMQ/ENE/CSGN) now skip every run. Story 1.4 AC2/AC3 hold.
-- **D2 — symbology SCD transition story:** no writer ever closes a `security_symbology` row (a ticker rename leaves two open ticker rows); the data-conventions SQ→XYZ worked example describes unimplemented behavior; the V3 overlap/closed-without-successor AC was dropped. Mitigation applied in-review: a recycled identifier held by a different FIGI now raises `SymbologyCollisionError` (was a silent skip with no breadcrumb).
+- **D2 — symbology SCD transition story — ✅ DONE (Story 1.10, 2026-06-10):** `write_security` now reconciles per identifier type — a rename CLOSES the old row at the new `valid_from` (same-day changes update in place per the SCD rule; collisions still refuse first); the §4 SQ→XYZ worked example is implemented behavior; the dropped V3 AC is restored as the `symbology_transitions` check (FAIL duplicate-open, WARN closed-without-successor). NEW scope-out recorded: a relisting transitions the ticker row but `securities.mic`/`currency_code` stay stale (price-currency cascade — needs its own design).
 
 Deferred findings:
 

@@ -24,7 +24,11 @@ from sym.validate.prices import (
 from sym.validate.projection import check_projection_reconciliation
 from sym.validate.readiness import check_universe_readiness
 from sym.validate.results import FAIL, PASS, WARN, CheckResult, worst
-from sym.validate.symbology import check_identity_completeness, check_ticker_collisions
+from sym.validate.symbology import (
+    check_identity_completeness,
+    check_symbology_transitions,
+    check_ticker_collisions,
+)
 
 
 def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[CheckResult]:
@@ -41,6 +45,8 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
          lambda: check_equity_instrument_bridge(conn)),
         ("identity_completeness", lambda: check_identity_completeness(conn)),  # V3
         ("ticker_collisions", lambda: check_ticker_collisions(conn)),          # V3
+        ("symbology_transitions",                                              # V3 — 1.10
+         lambda: check_symbology_transitions(conn)),
         ("price_calendar_consistency",                                          # V4
          lambda: check_price_calendar_consistency(conn)),
         ("calendar_coverage", lambda: check_calendar_coverage(conn)),          # V4

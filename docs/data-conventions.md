@@ -126,6 +126,14 @@ change day (inclusive `valid_from`), and SQ's effective last day is 2025-07-22
 and no overlap. The FIGI is unchanged throughout, so prices and returns keyed on
 `composite_figi` span the rename seamlessly.
 
+This transition is IMPLEMENTED by the write path (Story 1.10):
+`write_security` reconciles each identifier type — a differing open row is
+closed at the new row's `valid_from` (a same-day change updates in place, per
+the same-day SCD rule), and the `symbology_transitions` check in `sym validate`
+audits the invariant (one open row per security per type; closed rows need a
+successor). A relisting's `securities.mic`/`currency_code` staleness is a known
+scope-out (deferred-work ledger).
+
 ## 5. Membership-event correction semantics (`change='correct'`)
 
 The `membership_event` log is append-only — a wrong event is never edited or
