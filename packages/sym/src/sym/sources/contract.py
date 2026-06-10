@@ -106,7 +106,8 @@ def actions_agree(left: OhlcvResult, right: OhlcvResult) -> bool:
     """Whether two vendors' corporate actions agree for the same name (AC #4).
 
     Splits must match exactly (ex-date and ratio); dividends must share ex-dates
-    exactly and agree on amount within max(0.5%, $0.005).
+    exactly and agree on amount within max(0.5%, $0.005). The tolerance is taken
+    from the LARGER amount so the comparison is commutative.
     """
     if {(s.ex_date, s.ratio) for s in left.splits} != {(s.ex_date, s.ratio) for s in right.splits}:
         return False
@@ -115,24 +116,41 @@ def actions_agree(left: OhlcvResult, right: OhlcvResult) -> bool:
     if left_div.keys() != right_div.keys():
         return False
     return all(
-        abs(left_div[ex] - right_div[ex]) <= _dividend_tolerance(left_div[ex])
+        abs(left_div[ex] - right_div[ex])
+        <= _dividend_tolerance(max(left_div[ex], right_div[ex], key=abs))
         for ex in left_div
     )
 
 
+class ContractViolation(SourceError):
+    """An adapter result that breaks the OhlcvResult contract."""
+
+
 def assert_ohlcv_contract(result: OhlcvResult) -> None:
-    """Assert an adapter result honours the contract (reusable conformance check)."""
-    assert result.source, "source must be stamped"
-    assert isinstance(result.retrieved_at, datetime), "retrieved_at must be stamped"
-    assert result.currency, "currency must be explicit"
+    """Check an adapter result honours the contract (reusable conformance check).
+
+    Raises :class:`ContractViolation` — real exceptions, not ``assert`` statements,
+    which silently vanish under ``python -O``.
+    """
+
+    def check(cond: bool, message: str) -> None:
+        if not cond:
+            raise ContractViolation(message)
+
+    check(bool(result.source), "source must be stamped")
+    check(isinstance(result.retrieved_at, datetime), "retrieved_at must be stamped")
+    check(bool(result.currency), "currency must be explicit")
     for bar in result.bars:
-        assert isinstance(bar.close, Decimal), "prices must be Decimal"
-        assert bar.close >= 0 and bar.open >= 0, "prices must be non-negative"
+        check(isinstance(bar.close, Decimal), "prices must be Decimal")
+        check(bar.close >= 0 and bar.open >= 0, "prices must be non-negative")
+        check(bar.high >= bar.low, "high must be >= low")
     for split in result.splits:
-        assert isinstance(split.ratio, Decimal) and split.ratio > 0, "split ratio Decimal > 0"
+        check(isinstance(split.ratio, Decimal) and split.ratio > 0, "split ratio Decimal > 0")
     for dividend in result.dividends:
-        assert isinstance(dividend.amount, Decimal), "dividend amount must be Decimal"
+        check(isinstance(dividend.amount, Decimal), "dividend amount must be Decimal")
     split_dates = [s.ex_date for s in result.splits]
     div_dates = [d.ex_date for d in result.dividends]
-    assert len(split_dates) == len(set(split_dates)), "splits must be ex-date keyed (unique)"
-    assert len(div_dates) == len(set(div_dates)), "dividends must be ex-date keyed (unique)"
+    bar_dates = [b.date for b in result.bars]
+    check(len(split_dates) == len(set(split_dates)), "splits must be ex-date keyed (unique)")
+    check(len(div_dates) == len(set(div_dates)), "dividends must be ex-date keyed (unique)")
+    check(len(bar_dates) == len(set(bar_dates)), "bars must be date-unique")

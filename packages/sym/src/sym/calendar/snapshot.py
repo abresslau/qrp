@@ -123,13 +123,16 @@ class ExchangeCalendarsSource:
         lo = start_ts if bound_min is None else max(start_ts, bound_min)
         hi = end_ts if bound_max is None else min(end_ts, bound_max)
         # Try the bound-clamped window; if a bound still trips, relax the offending
-        # side via the library default rather than collapsing to the 20-year window.
-        for kwargs in ({"start": lo, "end": hi}, {"start": lo}, {"end": hi}, {}):
+        # side. NEVER fall back to the bare 20-year default ({}): a truncated
+        # calendar hashes differently and would be minted as a NEW current version,
+        # silently demoting the full-history one. Total failure -> None (recorded
+        # as a failed MIC), per this docstring's own promise.
+        for kwargs in ({"start": lo, "end": hi}, {"start": lo}, {"end": hi}):
             try:
                 return get(mic, **kwargs)
             except ValueError:
                 continue
-        return default
+        return None
 
 
 @dataclass(frozen=True)
@@ -239,6 +242,13 @@ def apply_snapshot(
             continue
         try:
             with conn.transaction():
+                # Serialize per MIC: when no prior version row exists there is nothing
+                # for the UPDATE to lock, and two concurrent first snapshots would both
+                # insert is_current=TRUE (every is_current join then becomes ambiguous).
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('calendar_snapshot_' || %s))",
+                    (plan.mic,),
+                )
                 conn.execute(
                     """
                     UPDATE trading_calendar_version

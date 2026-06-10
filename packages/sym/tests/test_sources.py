@@ -12,6 +12,7 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
+from sym.sources.contract import ContractViolation
 from sym.sources import (
     DividendEvent,
     OhlcvBar,
@@ -227,5 +228,5 @@ def test_assert_ohlcv_contract_rejects_duplicate_ex_dates():
         bars=[OhlcvBar(date(2020, 1, 2), *([Decimal("1")] * 4), 1)],
         source="v", retrieved_at=FIXED_NOW, dividends=bad.dividends,
     )
-    with pytest.raises(AssertionError):
+    with pytest.raises(ContractViolation):  # real exception, not assert (python -O safe)
         assert_ohlcv_contract(bad)

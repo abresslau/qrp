@@ -1,7 +1,9 @@
-"""Source-abstraction contract and per-vendor adapters (yfinance, EODHD).
+"""Source-abstraction contract and per-vendor adapters (yfinance only, today).
 
 Importing this package registers the bundled adapters so they are selectable by
-config key via :func:`sym.sources.registry.get_source`.
+config key via :func:`sym.sources.registry.get_source`. A second vendor (EODHD
+was the Story 2.7 candidate) was never implemented — the cross-vendor comparator
+(``actions_agree``) is ready for one.
 """
 
 # Import adapters for their self-registration side effect.

@@ -1088,7 +1088,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_eod = sub.add_parser(
         "eod",
-        help="Run the daily EOD pipeline (monitor->fill->benchmarks->recompute->validate); "
+        help="Run the daily EOD pipeline (monitor->fill->map->benchmarks->fx->recompute->validate); "
         "scheduler-agnostic.",
     )
     p_eod.add_argument("--dry-run", action="store_true", help="Print the step plan, don't run.")

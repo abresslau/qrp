@@ -47,24 +47,31 @@ def parse_history(frame: Any) -> tuple[list[OhlcvBar], list[SplitEvent], list[Di
     dividend-adjusted) is ignored entirely. ``Stock Splits``/``Dividends`` are 0 on
     non-event days; non-zero rows are the ex-date events.
     """
+    import math
+
+    def _bad(value: Any) -> bool:
+        return value is None or (isinstance(value, float) and math.isnan(value))
+
     splits: list[SplitEvent] = []
     dividends: list[DividendEvent] = []
     for index, row in frame.iterrows():
         ex_date = index.date()
         split_ratio = row.get("Stock Splits", 0) or 0
-        if split_ratio:
+        if split_ratio and not _bad(split_ratio):
             splits.append(SplitEvent(ex_date=ex_date, ratio=_dec(split_ratio)))
         dividend = row.get("Dividends", 0) or 0
-        if dividend:
+        if dividend and not _bad(dividend):
             dividends.append(DividendEvent(ex_date=ex_date, amount=_dec(dividend)))
 
     bars: list[OhlcvBar] = []
     for index, row in frame.iterrows():
-        ex_date = index.date()
-        factor = cumulative_split_factor(splits, ex_date)  # >1 before a later split
+        session_date = index.date()
+        if any(_bad(row.get(c)) for c in ("Open", "High", "Low", "Close", "Volume")):
+            continue  # NaN cells would mint Decimal('NaN') bars into the warehouse
+        factor = cumulative_split_factor(splits, session_date)  # >1 before a later split
         bars.append(
             OhlcvBar(
-                date=ex_date,
+                date=session_date,
                 open=_dec(row["Open"]) * factor,
                 high=_dec(row["High"]) * factor,
                 low=_dec(row["Low"]) * factor,
@@ -115,7 +122,13 @@ def _yf_history(symbol: str, start: date, end: date) -> Any:
 def _yf_currency(symbol: str) -> str:
     import yfinance as yf
 
-    return yf.Ticker(symbol).fast_info["currency"]
+    try:
+        currency = yf.Ticker(symbol).fast_info["currency"]
+    except Exception as exc:  # noqa: BLE001 — vendor lookup failure is a source error
+        raise UnknownSymbolError(f"no currency metadata for {symbol!r}: {exc}") from exc
+    if not currency:
+        raise UnknownSymbolError(f"yfinance returned empty currency for {symbol!r}")
+    return currency
 
 
 class YFinanceSource:
@@ -142,8 +155,19 @@ class YFinanceSource:
         symbol = self._symbol_for(figi)
         if not symbol:
             raise UnknownSymbolError(f"no yfinance symbol for {figi}")
-        frame = self._history(symbol, start, end)
+        # ALWAYS fetch through to today: Yahoo split-adjusts as of FETCH time, so a
+        # window ending before a later split (e.g. a leaver's end-capped fetch) would
+        # come back still divided by that split, with the split event absent from the
+        # frame — silently under-adjusted "raw". Bars are sliced back to [start, end];
+        # splits are kept in full (v_prices_adjusted needs the post-window split to
+        # adjust the un-adjusted raw correctly).
+        today = self._clock().date()
+        fetch_end = max(end, today)
+        frame = self._history(symbol, start, fetch_end)
         bars, splits, dividends = parse_history(frame)
+        if fetch_end != end:
+            bars = [b for b in bars if b.date <= end]
+            dividends = [d for d in dividends if d.ex_date <= end]
         currency, bars, dividends = _normalize_minor_units(
             self._currency_for(symbol), bars, dividends
         )
