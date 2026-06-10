@@ -332,12 +332,17 @@ system, command palette (FR-2), SSE, any auth, CI beyond lint/type/test/gen-type
 - **REST**, FastAPI, **per-module routers** mounted by feature toggle.
 - **Type contract:** `openapi-typescript@7.13.x` (types-only); explicit `response_model=` +
   unique `operation_id` per route; `gen:types` committed + CI freshness check.
-- **Execution topology (ADR-1):** sym ops run **OUT of the web process**. Prefer
-  **library-first in a separate worker process**; **subprocess fallback** if the sym
-  import-boundary probe fails. *(Mechanism finalized by the Q3.1 spike/probe.)*
-- **Concurrency (ADR-2):** a **Postgres advisory lock per op-key**. To prevent collisions
-  with sym's own scheduled runs, sym must take the same lock; else QRP prevents only its own
-  concurrent runs (document the residual risk).
+- **Execution topology (ADR-1):** sym ops run **OUT of the web process**.
+  **FINALIZED (2026-06-10, Story O.2): the subprocess arm is the chosen mechanism** —
+  `uv run sym <op>` under a supervising thread with heartbeat + timeout; process isolation,
+  the tested CLI as the contract, and output capture outweigh in-proc reuse for op
+  EXECUTION. **Library-first remains the rule for data-ACCESS gateways** (module routers
+  read via psycopg/gateways in-process); the two are different layers, not a contradiction.
+- **Concurrency (ADR-2):** a **Postgres advisory lock per op-key**. **Deviation recorded
+  (Story O.2): the key is per (op + args)** — deliberately finer than the spec's
+  per-Operation, so e.g. two universes can monitor concurrently while identical runs still
+  exclude each other. Residual risk unchanged: sym's own scheduled runs don't take the
+  lock, so QRP prevents only its own concurrent runs.
 - **Progress transport (ADR-5):** **client polling** of `pipeline_run_log` + a QRP job
   heartbeat ("RUNNING · elapsed · last-completed op"); no "% complete". SSE deferred.
 - **Errors:** structured error responses; failed-op errors surfaced to the console.

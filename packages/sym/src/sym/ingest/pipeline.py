@@ -20,6 +20,7 @@ rows, and one bad name never halts the run.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -255,14 +256,17 @@ def _write_run_log(
         """
         INSERT INTO pipeline_run_log
             (mode, source, started_at, finished_at, attempted, loaded, skipped,
-             errored, rows_written, anomaly_flags, gaps, status, detail)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             errored, rows_written, anomaly_flags, gaps, status, detail, triggered_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING run_id
         """,
         (
             summary.mode, source, started_at, finished_at, summary.attempted,
             summary.loaded, summary.skipped, summary.errored, summary.rows,
             summary.flags, summary.gaps, summary.status, detail,
+            # WHO caused this run (Story O.2): the Operate executor sets
+            # SYM_TRIGGERED_BY=qrp-job:<id>; NULL = a manual CLI run.
+            os.environ.get("SYM_TRIGGERED_BY"),
         ),
     ).fetchone()
     return row[0]

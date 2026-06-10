@@ -224,3 +224,25 @@ def test_write_run_log_records_the_run():
     sql, params = conn.calls[-1]
     assert "INSERT INTO PIPELINE_RUN_LOG" in sql.upper()
     assert "partial" in params  # status derived from errored>0
+
+
+def test_write_run_log_stamps_triggered_by_from_env(monkeypatch):
+    # Provenance (Story O.2): the Operate executor sets SYM_TRIGGERED_BY on the
+    # child env; manual CLI runs leave it unset -> NULL.
+    from datetime import UTC, datetime
+
+    from sym.ingest.pipeline import _write_run_log
+
+    monkeypatch.setenv("SYM_TRIGGERED_BY", "qrp-job:7")
+    conn = _Conn()
+    t0 = datetime(2026, 6, 10, 9, 0, tzinfo=UTC)
+    _write_run_log(conn, LoadSummary(mode="fill"), source="yfinance",
+                   started_at=t0, finished_at=t0)
+    sql, params = conn.calls[-1]
+    assert "triggered_by" in sql
+    assert params[-1] == "qrp-job:7"
+
+    monkeypatch.delenv("SYM_TRIGGERED_BY")
+    _write_run_log(conn, LoadSummary(mode="fill"), source="yfinance",
+                   started_at=t0, finished_at=t0)
+    assert conn.calls[-1][1][-1] is None

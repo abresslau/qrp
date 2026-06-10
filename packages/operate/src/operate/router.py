@@ -7,8 +7,10 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+import psycopg
+
 from operate.db import connect
-from operate.gateway import DbOperateGateway
+from operate.gateway import DbOperateGateway, run_history
 
 router = APIRouter(prefix="/api/operate", tags=["operate"])
 
@@ -26,6 +28,7 @@ class OpDef(BaseModel):
     label: str
     writes: bool
     takes_universe: bool
+    takes_scope: bool
     note: str
 
 
@@ -53,6 +56,22 @@ class Job(BaseModel):
     created_at: str | None
     started_at: str | None
     finished_at: str | None
+    heartbeat_at: str | None
+
+
+class RunHistoryRow(BaseModel):
+    run_id: int
+    mode: str
+    source: str
+    started_at: str | None
+    finished_at: str | None
+    attempted: int
+    loaded: int
+    skipped: int
+    errored: int
+    rows_written: int
+    status: str
+    triggered_by: str | None
 
 
 @router.get("/ops", response_model=list[OpDef])
@@ -73,6 +92,19 @@ def get_job(job_id: int, gw: DbOperateGateway = Depends(_gateway)) -> dict:
     if j is None:
         raise HTTPException(status_code=404, detail="job not found")
     return j
+
+
+@router.get("/history", response_model=list[RunHistoryRow])
+def pipeline_history(limit: int = Query(default=50, ge=1, le=500)) -> list[dict]:
+    """Recent sym pipeline runs (FR-6) with qrp-job correlation via triggered_by."""
+    try:
+        conn = connect("sym")
+    except psycopg.OperationalError as exc:
+        raise HTTPException(status_code=503, detail=f"sym database unreachable: {exc}") from exc
+    try:
+        return run_history(conn, limit)
+    finally:
+        conn.close()
 
 
 @router.post("/run", response_model=RunResult)

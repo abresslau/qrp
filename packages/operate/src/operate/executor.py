@@ -13,8 +13,10 @@ their own writes, and sym's pipeline_run_log/validation_run_log stay the system-
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -22,6 +24,10 @@ from operate.db import connect
 
 # Tail of combined stdout/stderr kept on the job row (chars).
 _OUTPUT_TAIL = 12000
+# Child-process budget and heartbeat cadence (Story O.2). The gateway's orphan
+# window is 3x the beat — keep them in step.
+_TIMEOUT_S = 1800
+_BEAT_S = 10.0
 
 
 @dataclass(frozen=True)
@@ -31,6 +37,7 @@ class Op:
     argv: tuple[str, ...]          # base sym CLI args (before any user args)
     writes: bool                   # mutates sym DATA (never schema) -> needs confirm
     takes_universe: bool = False   # appends a universe_id arg
+    takes_scope: bool = False      # appends a load scope arg (universe:<id>)
     note: str = ""
 
 
@@ -52,6 +59,28 @@ OPS: dict[str, Op] = {
     "recompute": Op(
         "recompute", "Recompute returns", ("recompute",), writes=True,
         note="Materializes fact_returns across the lookback (writes; can be long).",
+    ),
+    "universe_review": Op(
+        "universe_review", "Universe review digest", ("universe", "review"), writes=False,
+        note="Operator digest: pending proposals, stale monitors, accuracy alarms.",
+    ),
+    "universe_accuracy": Op(
+        "universe_accuracy", "Universe accuracy gate", ("universe", "accuracy"),
+        writes=False, takes_universe=True,
+        note="Cross-checks membership vs the configured reference; exit 2 = alarm.",
+    ),
+    "eod": Op(
+        "eod", "EOD pipeline", ("eod",), writes=True,
+        note="Full daily pipeline (monitor->fill->map->benchmarks->fx->recompute->validate).",
+    ),
+    "fx_load": Op(
+        "fx_load", "FX load (fill)", ("fx", "load"), writes=True,
+        note="Fill missing FX rates since the last observation.",
+    ),
+    "load_fill": Op(
+        "load_fill", "Price load (fill)", ("load", "--scope"), writes=True,
+        takes_scope=True,
+        note="Gap-aware price fill for a universe scope (e.g. universe:ibov).",
     ),
 }
 
@@ -93,13 +122,20 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
                 (_now(), job_id),
             )
             argv = ["uv", "run", "sym", *op.argv, *args]
+            # Provenance: sym stamps pipeline_run_log.triggered_by from this env
+            # var, correlating the qrp job with the sym run(s) it caused (O.2).
+            env = {**os.environ, "SYM_TRIGGERED_BY": f"qrp-job:{job_id}"}
             try:
-                proc = subprocess.run(
+                # Popen + poll (not subprocess.run): the supervisor must HEARTBEAT
+                # while the child runs — a dead supervisor then reads as a stale
+                # beat (-> orphaned), not as 'running' forever (ADR-5's heartbeat).
+                proc = subprocess.Popen(
                     argv,
                     cwd=None,  # sym is a workspace member; `uv run sym` resolves from the qrp env
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
                     text=True,
-                    timeout=1800,
+                    env=env,
                 )
             except FileNotFoundError as exc:
                 conn.execute(
@@ -107,19 +143,42 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
                     (f"could not launch op: {exc}", _now(), job_id),
                 )
                 return
-            except subprocess.TimeoutExpired:
+            # Drain stdout on a side thread — an unread PIPE fills and deadlocks
+            # a chatty child; the poll loop below must never block on output.
+            chunks: list[str] = []
+
+            def _drain() -> None:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    chunks.append(line)
+
+            reader = threading.Thread(target=_drain, daemon=True)
+            reader.start()
+            deadline = time.monotonic() + _TIMEOUT_S
+            while True:
                 conn.execute(
-                    "UPDATE qrp.job SET status='failed', error=%s, finished_at=%s WHERE job_id=%s",
-                    ("op timed out after 1800s", _now(), job_id),
+                    "UPDATE qrp.job SET heartbeat_at=%s WHERE job_id=%s", (_now(), job_id)
                 )
-                return
-            combined = (proc.stdout or "") + (proc.stderr or "")
-            tail = combined[-_OUTPUT_TAIL:]
-            status = "success" if proc.returncode == 0 else "failed"
+                returncode = proc.poll()
+                if returncode is not None:
+                    break
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    proc.wait(timeout=30)
+                    conn.execute(
+                        "UPDATE qrp.job SET status='failed', error=%s, finished_at=%s "
+                        "WHERE job_id=%s",
+                        (f"op timed out after {_TIMEOUT_S}s", _now(), job_id),
+                    )
+                    return
+                time.sleep(_BEAT_S)
+            reader.join(timeout=5)
+            tail = "".join(chunks)[-_OUTPUT_TAIL:]
+            status = "success" if returncode == 0 else "failed"
             conn.execute(
                 "UPDATE qrp.job SET status=%s, exit_code=%s, output=%s, finished_at=%s "
                 "WHERE job_id=%s",
-                (status, proc.returncode, tail, _now(), job_id),
+                (status, returncode, tail, _now(), job_id),
             )
         finally:
             conn.execute("SELECT pg_advisory_unlock(%s)", (key,))

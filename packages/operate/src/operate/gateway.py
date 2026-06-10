@@ -1,12 +1,17 @@
-"""DB gateway for the Operate job ledger (QRP-own `qrp.job`)."""
+"""DB gateway for the Operate job ledger (QRP-own `qrp.job`) + sym run history."""
 
 from __future__ import annotations
 
 import json
+import re
 
 import psycopg
 
 from operate.executor import OPS, launch
+
+# Load scopes runnable through the API: universe scopes only (the CLI accepts
+# more; the API allowlist stays narrow until something needs widening).
+_SCOPE_RE = re.compile(r"^universe:[a-z0-9_-]+$")
 
 
 class DbOperateGateway:
@@ -21,13 +26,15 @@ class DbOperateGateway:
                 "label": o.label,
                 "writes": o.writes,
                 "takes_universe": o.takes_universe,
+                "takes_scope": o.takes_scope,
                 "note": o.note,
             }
             for o in OPS.values()
         ]
 
     def _row(self, r: tuple) -> dict:
-        (jid, op, args, status, exit_code, output, error, created, started, finished) = r
+        (jid, op, args, status, exit_code, output, error,
+         created, started, finished, heartbeat) = r
         return {
             "job_id": jid,
             "op": op,
@@ -39,10 +46,20 @@ class DbOperateGateway:
             "created_at": created.isoformat() if created else None,
             "started_at": started.isoformat() if started else None,
             "finished_at": finished.isoformat() if finished else None,
+            "heartbeat_at": heartbeat.isoformat() if heartbeat else None,
         }
 
+    # 'running' with a stale beat (3x the executor's 10s cadence) reads as
+    # ORPHANED: the supervising process died. Read-time reclassification is
+    # sufficient — Postgres frees advisory locks on disconnect, so the dead
+    # run's lock is already gone and nothing needs a reaper.
     _COLS = (
-        "job_id, op, args, status, exit_code, output, error, created_at, started_at, finished_at"
+        "job_id, op, args, "
+        "CASE WHEN status = 'running' "
+        "      AND coalesce(heartbeat_at, started_at, created_at) "
+        "          < now() - interval '30 seconds' "
+        "     THEN 'orphaned' ELSE status END AS status, "
+        "exit_code, output, error, created_at, started_at, finished_at, heartbeat_at"
     )
 
     def list(self, limit: int = 50) -> list[dict]:
@@ -72,19 +89,28 @@ class DbOperateGateway:
             return {"ok": False, "status": "rejected", "reason": "flag-like args are not allowed"}
         if op.takes_universe and not args:
             return {"ok": False, "status": "rejected", "reason": "this op requires a universe id"}
+        if op.takes_scope and (len(args) != 1 or not _SCOPE_RE.match(args[0])):
+            return {
+                "ok": False,
+                "status": "rejected",
+                "reason": "this op requires exactly one scope arg shaped universe:<id>",
+            }
         if op.writes and not confirm:
             return {
                 "ok": False,
                 "status": "rejected",
                 "reason": f"{op.label} writes sym data — re-run with confirm=true",
             }
-        # The 2-hour staleness window unwedges rows orphaned by a process crash (daemon threads
-        # die with the API): an op killed mid-run stops blocking re-runs once the window passes.
-        # Generous vs the executor's 1800s subprocess timeout.
+        # Busy = a live duplicate: queued within the 2h window (covers a launch
+        # thread that never started), or running with a FRESH heartbeat. A stale
+        # beat means the supervisor died — and its advisory lock died with the
+        # connection, so blocking on the row would be artificial (O.2).
         busy = self._conn.execute(
             "SELECT count(*) FROM qrp.job WHERE op = %s AND args = %s::jsonb "
-            "AND status IN ('queued', 'running') "
-            "AND created_at > now() - interval '2 hours'",
+            "AND ((status = 'queued' AND created_at > now() - interval '2 hours') "
+            "  OR (status = 'running' "
+            "      AND coalesce(heartbeat_at, started_at, created_at) "
+            "          > now() - interval '30 seconds'))",
             (op_key, json.dumps(args)),
         ).fetchone()[0]
         if busy:
@@ -97,3 +123,30 @@ class DbOperateGateway:
         ).fetchone()[0]
         launch(int(job_id), op, args)
         return {"ok": True, "job_id": int(job_id), "status": "queued", "reason": None}
+
+
+def run_history(conn: psycopg.Connection, limit: int = 50) -> list[dict]:
+    """Recent sym `pipeline_run_log` rows (FR-6) — read-only against the sym DB.
+
+    sym's run log is the system-of-record for what an op DID; `triggered_by`
+    (qrp-job:<id> or NULL for manual CLI runs) correlates it with `qrp.job`.
+    """
+    rows = conn.execute(
+        """
+        SELECT run_id, mode, source, started_at, finished_at, attempted, loaded,
+               skipped, errored, rows_written, status, triggered_by
+          FROM pipeline_run_log
+         ORDER BY run_id DESC
+         LIMIT %s
+        """,
+        (limit,),
+    ).fetchall()
+    cols = ["run_id", "mode", "source", "started_at", "finished_at", "attempted",
+            "loaded", "skipped", "errored", "rows_written", "status", "triggered_by"]
+    out = []
+    for r in rows:
+        d = dict(zip(cols, r, strict=True))
+        d["started_at"] = d["started_at"].isoformat() if d["started_at"] else None
+        d["finished_at"] = d["finished_at"].isoformat() if d["finished_at"] else None
+        out.append(d)
+    return out
