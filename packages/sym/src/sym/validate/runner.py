@@ -15,6 +15,7 @@ from sym.validate.completeness import evaluate_completeness
 from sym.validate.fx import check_fx_coverage
 from sym.validate.instrument_bridge import check_equity_instrument_bridge
 from sym.validate.integrity import check_referential_integrity
+from sym.validate.plans import check_maintenance_plan_coverage
 from sym.validate.prices import (
     check_calendar_coverage,
     check_price_calendar_consistency,
@@ -48,6 +49,8 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
          lambda: check_projection_reconciliation(conn)),
         ("universe_readiness", lambda: check_universe_readiness(conn)),        # V6
         ("fx_coverage", lambda: check_fx_coverage(conn)),                      # FX4 — SLA
+        ("maintenance_plan_coverage",                                           # U3.6 — populate gate
+         lambda: check_maintenance_plan_coverage(conn)),
     ]
     results: list[CheckResult] = []
     for name, check in checks:
