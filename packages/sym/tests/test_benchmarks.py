@@ -52,6 +52,11 @@ class _FakeConn:
             self.levels_inserted += 1
         return self
 
+    def transaction(self):
+        import contextlib
+
+        return contextlib.nullcontext()
+
     def fetchone(self):
         if "SELECT sym_id FROM instrument_xref" in self._sql:
             return None  # no existing xref -> create

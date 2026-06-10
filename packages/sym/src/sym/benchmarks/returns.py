@@ -84,7 +84,9 @@ def _levels(conn: psycopg.Connection, sym_id: int) -> dict[date, Decimal]:
 def _upsert(conn: psycopg.Connection, rows: Sequence[tuple]) -> None:
     if not rows:
         return
-    with conn.cursor() as cur:
+    # One transaction per series: under autocommit an interrupt mid-executemany would
+    # otherwise leave a half-written series (self-healing, but visibly inconsistent).
+    with conn.transaction(), conn.cursor() as cur:
         cur.executemany(
             """
             INSERT INTO fact_index_returns (sym_id, window_id, as_of_date, ret)

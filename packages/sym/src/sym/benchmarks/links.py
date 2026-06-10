@@ -61,11 +61,14 @@ def link_universe_benchmarks(conn: psycopg.Connection) -> LinkSummary:
             if sym_id is None:
                 summary.skipped_no_instrument += 1
                 continue
+            # DO UPDATE (not DO NOTHING): edits to a link's role or is_primary in
+            # UNIVERSE_BENCHMARKS must converge into the map on the next run.
             inserted = conn.execute(
                 """
                 INSERT INTO universe_benchmark (universe_id, sym_id, role, is_primary)
                 VALUES (%s, %s, %s, %s)
-                ON CONFLICT (universe_id, sym_id) DO NOTHING
+                ON CONFLICT (universe_id, sym_id) DO UPDATE
+                    SET role = EXCLUDED.role, is_primary = EXCLUDED.is_primary
                 RETURNING universe_id
                 """,
                 (universe_id, sym_id, role, is_primary),
@@ -107,6 +110,7 @@ class UniverseSnapshot:
     members: set[str]
     benchmark_sym_id: int | None
     benchmark_level: object | None  # Decimal | None
+    benchmark_level_date: date | None = None  # the session the level was observed on
 
 
 def universe_with_benchmark(
@@ -115,16 +119,22 @@ def universe_with_benchmark(
     """Point-in-time constituents + the primary benchmark's level, as-of a date.
 
     The payoff of the link: who was in the index *and* where the index closed on
-    the same date. (Benchmark returns for any window are in `fact_index_returns`.)
+    the same date. The carried-back level's own session is surfaced as
+    ``benchmark_level_date`` so a stale series is visible to the caller (the FX
+    resolver's staleness-cap pattern, applied as transparency rather than a cutoff).
+    (Benchmark returns for any window are in `fact_index_returns`.)
     """
     member_figis = members(conn, universe_id, as_of_date)
     sym_id = primary_benchmark(conn, universe_id)
     level = None
+    level_date = None
     if sym_id is not None:
         row = conn.execute(
-            "SELECT level FROM index_levels WHERE sym_id = %s AND session_date <= %s "
+            "SELECT level, session_date FROM index_levels "
+            "WHERE sym_id = %s AND session_date <= %s "
             "ORDER BY session_date DESC LIMIT 1",
             (sym_id, as_of_date),
         ).fetchone()
-        level = row[0] if row else None
-    return UniverseSnapshot(universe_id, as_of_date, member_figis, sym_id, level)
+        if row:
+            level, level_date = row
+    return UniverseSnapshot(universe_id, as_of_date, member_figis, sym_id, level, level_date)

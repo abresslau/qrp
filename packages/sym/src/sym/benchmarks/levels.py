@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Protocol
@@ -92,10 +92,9 @@ class YahooIndexLevelSource:
         import yfinance as yf
 
         self._throttle()
-        try:
-            hist = yf.Ticker(symbol).history(start=start.isoformat(), auto_adjust=False)
-        except Exception:  # noqa: BLE001 - vendor flakiness is a gap, not a crash
-            return []
+        # Vendor failures RAISE (the loader counts them as errors) — swallowing them as []
+        # made an outage indistinguishable from "this index has no data".
+        hist = yf.Ticker(symbol).history(start=start.isoformat(), auto_adjust=False)
         if hist is None or len(hist) == 0 or "Close" not in hist:
             return []
         out: list[tuple[date, Decimal]] = []
@@ -112,6 +111,8 @@ class LevelsSummary:
     levels_written: int = 0
     deferred: int = 0  # MSCI-only (instrument created, levels not yet loaded)
     gaps: int = 0  # yahoo returned nothing
+    errors: int = 0  # vendor fetch raised (distinct from "no data")
+    failures: list[str] = field(default_factory=list)
 
 
 def _upsert_level(
@@ -156,11 +157,22 @@ def load_index_levels(
         if not b.yahoo_symbol:
             summary.deferred += 1
             continue
-        series = source.levels(b.yahoo_symbol, start)
+        try:
+            series = source.levels(b.yahoo_symbol, start)
+        except Exception as exc:  # noqa: BLE001 — isolate one benchmark's vendor failure
+            summary.errors += 1
+            summary.failures.append(f"{b.yahoo_symbol}: {str(exc)[:160]}")
+            continue
+        # Drop today's row: intraday it is a PROVISIONAL close, and the immutable insert
+        # would block the final close forever. The final close lands on the next run.
+        today = date.today()
+        series = [(d, lv) for d, lv in series if d < today]
         if not series:
             summary.gaps += 1
             continue
-        for d, level in series:
-            if _upsert_level(conn, sym_id, d, level, source.SOURCE):
-                summary.levels_written += 1
+        # One transaction per benchmark: an interrupt never leaves a half-written series.
+        with conn.transaction():
+            for d, level in series:
+                if _upsert_level(conn, sym_id, d, level, source.SOURCE):
+                    summary.levels_written += 1
     return summary

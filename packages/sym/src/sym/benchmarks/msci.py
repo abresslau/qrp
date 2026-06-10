@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -46,9 +47,15 @@ def _parse_date(value: str) -> date | None:
 
 
 def _parse_level(value: str) -> Decimal | None:
-    value = (value or "").strip().strip('"').replace(",", "").replace(" ", "")
+    value = (value or "").strip().strip('"').replace(" ", "")
     if not value:
         return None
+    # European decimal-comma format ('1.234,56'): stripping commas as thousands
+    # separators would corrupt the level 100x — convert it explicitly instead.
+    if re.fullmatch(r"\d{1,3}(\.\d{3})*,\d+", value):
+        value = value.replace(".", "").replace(",", ".")
+    else:
+        value = value.replace(",", "")  # plain thousands separators ('1,234.56')
     try:
         level = Decimal(value)
     except InvalidOperation:
