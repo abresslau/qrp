@@ -31,6 +31,52 @@ class MembershipEvent:
     event_id: int
     raw_identifier: str | None = None
     source: str | None = None
+    provenance: dict | None = None
+
+
+def pair_corrections(
+    events: Iterable[MembershipEvent],
+) -> tuple[list[MembershipEvent], int, int]:
+    """Annihilate each reverses-corrective with exactly its target event (pure).
+
+    A ``correct`` event whose ``provenance.reverses`` names a change kind is a
+    TOMBSTONE for the event matching ``(raw_identifier, change, effective_date)``
+    — the same triple+date :func:`gating.reverse_change` validates before
+    appending. Both rows are removed from the stream, so an event landing
+    between the wrong change and its corrective can no longer invert the
+    corrective's intent (ledger D3). Matching is per ``raw_identifier``, never
+    per FIGI — two tokens resolving to one FIGI must not cross-annihilate.
+
+    A corrective with no ``reverses`` provenance (legacy rows) or no live match
+    SURVIVES as a toggle event (the pre-U3.7 behavior) and is counted.
+
+    Returns ``(survivors, paired_count, toggle_count)``.
+    """
+    ordered = list(events)
+    targets: dict[tuple, list[int]] = defaultdict(list)
+    for i, e in enumerate(ordered):
+        if e.change in (JOIN, LEAVE):
+            targets[(e.raw_identifier, e.change, e.effective_date)].append(i)
+    void: set[int] = set()
+    paired = toggles = 0
+    for i, e in enumerate(ordered):
+        if e.change != CORRECT:
+            continue
+        reverses = (e.provenance or {}).get("reverses")
+        target_index = None
+        if reverses in (JOIN, LEAVE):
+            for j in targets.get((e.raw_identifier, reverses, e.effective_date), ()):
+                if j not in void:
+                    target_index = j
+                    break
+        if target_index is None:
+            toggles += 1
+        else:
+            void.add(i)
+            void.add(target_index)
+            paired += 1
+    survivors = [e for i, e in enumerate(ordered) if i not in void]
+    return survivors, paired, toggles
 
 
 @dataclass(frozen=True)
@@ -93,9 +139,17 @@ def _intervals_for_figi(
 def project_membership(
     events: Iterable[MembershipEvent], counters: dict[str, int] | None = None
 ) -> dict[str, list[Interval]]:
-    """Project events into per-FIGI membership intervals (pure, deterministic)."""
+    """Project events into per-FIGI membership intervals (pure, deterministic).
+
+    Reverses-correctives are paired off against their targets FIRST (see
+    :func:`pair_corrections`); only the survivors run the state machine.
+    """
+    survivors, paired, toggles = pair_corrections(events)
+    if counters is not None:
+        counters["paired_corrections"] = counters.get("paired_corrections", 0) + paired
+        counters["toggle_corrections"] = counters.get("toggle_corrections", 0) + toggles
     by_figi: dict[str, list[MembershipEvent]] = defaultdict(list)
-    for e in events:
+    for e in survivors:
         by_figi[e.composite_figi].append(e)
     return {figi: _intervals_for_figi(evs, counters) for figi, evs in by_figi.items()}
 
@@ -111,7 +165,7 @@ def _membership_events(
     """
     sql = """
         SELECT r.composite_figi, e.change, e.effective_date, e.event_id,
-               e.raw_identifier, e.source
+               e.raw_identifier, e.source, e.provenance
           FROM membership_event e
           JOIN universe_member_resolution r
             ON r.universe_id = e.universe_id AND r.raw_identifier = e.raw_identifier
@@ -133,6 +187,8 @@ class ProjectionSummary:
     intervals: int = 0
     excluded_unresolved: int = 0  # log members with no resolved FIGI — absent from the read-model
     orphan_leaves: int = 0  # leaves with no open interval (join predates the log floor)
+    paired_corrections: int = 0  # reverses-correctives annihilated with their target (U3.7)
+    toggle_corrections: int = 0  # legacy/unmatched correctives that ran as state toggles
 
 
 def _excluded_unresolved(conn: psycopg.Connection, universe_id: str) -> int:
@@ -165,6 +221,8 @@ def rebuild_projection(conn: psycopg.Connection, universe_id: str) -> Projection
     summary = ProjectionSummary(
         excluded_unresolved=_excluded_unresolved(conn, universe_id),
         orphan_leaves=counters.get("orphan_leaves", 0),
+        paired_corrections=counters.get("paired_corrections", 0),
+        toggle_corrections=counters.get("toggle_corrections", 0),
     )
     with conn.transaction():
         conn.execute("DELETE FROM universe_membership WHERE universe_id = %s", (universe_id,))

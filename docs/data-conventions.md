@@ -125,3 +125,34 @@ change day (inclusive `valid_from`), and SQ's effective last day is 2025-07-22
 (exclusive `valid_to`). The boundary day belongs to exactly one row, with no gap
 and no overlap. The FIGI is unchanged throughout, so prices and returns keyed on
 `composite_figi` span the rename seamlessly.
+
+## 5. Membership-event correction semantics (`change='correct'`)
+
+The `membership_event` log is append-only — a wrong event is never edited or
+deleted; it is **reversed** by appending a `correct` event (via
+`sym universe reverse` / `gating.reverse_change`).
+
+**Tombstone pairing (Story U3.7).** A corrective carries
+`provenance.reverses = 'join' | 'leave'` and the WRONG event's effective date.
+Both the projector and the monitor's open-set replay pair it with exactly the
+event matching `(raw_identifier, reverses, effective_date)` and exclude BOTH
+from the state machine — annihilation by identity, so events landing between
+the wrong change and its corrective cannot invert the corrective's intent, and
+the corrective's own position in the ordering is irrelevant. Pairing is per
+`raw_identifier` (the corrective names an event row, pre-resolution); two
+tokens resolving to one FIGI never cross-annihilate.
+
+**Legacy toggle fallback.** A corrective with no `reverses` provenance, or one
+whose named target does not exist, runs as the pre-U3.7 behavior: a per-state
+toggle (closes an open membership, reopens a closed one). These are counted on
+`ProjectionSummary.toggle_corrections` (paired ones on `paired_corrections`) so
+reinterpretation of history is visible, never silent.
+
+**Known limitation (deliberate — dedupe key unchanged).** The event dedupe key
+`(universe_id, raw_identifier, change, effective_date)` admits only one
+`correct` row per token+date, so: (a) a same-token join AND leave on one date
+cannot both be reversed; (b) a correction cannot itself be un-corrected at the
+same date — re-assert the change at its true (possibly adjacent) date instead;
+(c) re-asserting the SAME change at the SAME date after reversing it is blocked
+by the surviving original row. The operator path for all three is recording the
+event at the correct date.

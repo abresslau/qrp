@@ -34,7 +34,8 @@ class _Conn:
 
     def __init__(self, *, open_tokens=(), pending_rows=None):
         self.autocommit = False
-        self._open = list(open_tokens)          # tokens whose latest log event is a join
+        self._open = list(open_tokens)          # tokens with a plain join in the log
+        self.extra_events: list[tuple] = []     # extra (raw, change, eff, id, provenance) rows
         self._pending = pending_rows or []      # canned promotable proposal rows
         self.proposals: list[tuple] = []        # staged INSERTs (raw, change, reason)
         self.proposal_bumps: list[str] = []     # poll-bounded re-sight UPDATEs (raw)
@@ -47,8 +48,11 @@ class _Conn:
     def execute(self, sql, params=None):
         if "SELECT kind, config, source_pref FROM universe" in sql:
             return _Cur(one=("criteria", {}, None))  # criteria -> local resolver (no network)
-        if "SELECT DISTINCT ON (raw_identifier)" in sql:
-            return _Cur(rows=[(t, "join") for t in self._open])
+        if "SELECT raw_identifier, change, effective_date, event_id, provenance" in sql:
+            # the open-set replay query (U3.7): joins for _open + injected extras
+            joins = [(t, "join", date(2026, 6, 1), i + 1, None)
+                     for i, t in enumerate(self._open)]
+            return _Cur(rows=joins + self.extra_events)
         if "INSERT INTO universe_monitor_log" in sql:
             return _Cur(one=(1,))
         if "SELECT 1 FROM membership_proposal" in sql:
@@ -281,6 +285,26 @@ def test_rejected_change_resight_is_operator_only():
     assert is_promotable(
         REASON_REJECTED_RESIGHT, date(2026, 6, 1), D, 5, persist_days=2, min_corroborations=2
     ) is False
+
+
+def test_reversed_leave_member_is_open_again_for_the_monitor(monkeypatch):
+    # U3.7 (ledger D3): a promoted leave then its reverses-corrective pair off,
+    # so the member is OPEN per the open-set replay. The provider re-stating it
+    # (join + snapshot presence) must produce NO discoveries — under the old
+    # latest-change-wins logic the member read CLOSED and the re-statement
+    # staged a phantom rejoin proposal.
+    open_toks = [f"ticker:M{i}@BVMF" for i in range(19)] + ["ticker:B@BVMF"]
+    conn = _Conn(open_tokens=open_toks)
+    conn.extra_events += [
+        ("ticker:B@BVMF", "leave", date(2026, 6, 8), 100, None),
+        ("ticker:B@BVMF", "correct", date(2026, 6, 8), 101, {"reverses": "leave"}),
+    ]
+    provider = _Provider([_join("ticker:B@BVMF")], snapshot=set(open_toks))
+    _patch_provider(monkeypatch, provider)
+    s = run_monitor(conn, "ibov", as_of_date=D)
+    assert s.status == MONITOR_SUCCESS
+    assert s.joiners == 0 and s.leavers == 0 and s.proposed == 0
+    assert conn.proposals == []
 
 
 def test_empty_discoveries_still_run_promotion_heartbeat(monkeypatch):

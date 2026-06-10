@@ -28,8 +28,9 @@ import psycopg
 
 from sym.universe.gating import stage_and_promote
 from sym.universe.membership_diff import diff_identifier_sets
-from sym.universe.projection import rebuild_projection
+from sym.universe.projection import MembershipEvent, pair_corrections, rebuild_projection
 from sym.universe.registry import (
+    CORRECT,
     CRITERIA,
     CUSTOM_LIST,
     JOIN,
@@ -140,23 +141,48 @@ def _write_monitor_log(conn: psycopg.Connection, summary: MonitorSummary) -> int
 
 
 def _open_tokens(conn: psycopg.Connection, universe_id: str) -> set[str]:
-    """Tokens whose LATEST log event is a join — i.e. currently-open members per the log.
+    """Tokens currently open per the log — SAME state machine as the projection.
 
-    The snapshot-source idempotency guard: a constituents snapshot re-states every
-    member on every run with a fresh as-of date, and the dedupe key includes the
-    effective date — without this, each daily monitor would re-append the whole
-    membership as 'new joiners' and grow the log unboundedly.
+    (U3.7) Replays the full ordered event list through
+    :func:`projection.pair_corrections` and the join/leave/toggle machine at the
+    raw-token level (resolution-independent), so the monitor's idempotency guard
+    and leaver diff agree with the projector about what a corrective means — a
+    reversed leave reads OPEN here, exactly as it does in ``universe_membership``.
+    The previous latest-change-wins shortcut read it closed, making the two state
+    machines contradict each other from the first reversal on. A full-log fetch
+    per run is fine at current scale (≲ a few thousand events per universe).
+
+    This set is also the snapshot-source idempotency guard: a constituents
+    snapshot re-states every member on every run with a fresh as-of date, and
+    the dedupe key includes the effective date — without it, each daily monitor
+    would re-stage the whole membership as 'new joiners' daily.
     """
     rows = conn.execute(
         """
-        SELECT DISTINCT ON (raw_identifier) raw_identifier, change
+        SELECT raw_identifier, change, effective_date, event_id, provenance
           FROM membership_event
          WHERE universe_id = %s
-         ORDER BY raw_identifier, effective_date DESC, event_id DESC
+         ORDER BY effective_date, event_id
         """,
         (universe_id,),
     ).fetchall()
-    return {raw for raw, change in rows if change == JOIN}
+    events = [
+        MembershipEvent("", change, effective, event_id, raw, None, provenance)
+        for raw, change, effective, event_id, provenance in rows
+    ]
+    survivors, _paired, _toggles = pair_corrections(events)
+    open_tokens: set[str] = set()
+    for e in sorted(survivors, key=lambda e: (e.effective_date, e.event_id)):
+        if e.change == JOIN:
+            open_tokens.add(e.raw_identifier)
+        elif e.change == LEAVE:
+            open_tokens.discard(e.raw_identifier)
+        elif e.change == CORRECT:  # unmatched/legacy corrective: per-token toggle
+            if e.raw_identifier in open_tokens:
+                open_tokens.discard(e.raw_identifier)
+            else:
+                open_tokens.add(e.raw_identifier)
+    return open_tokens
 
 
 def _resolver(conn: psycopg.Connection, kind: str, client: object | None):
