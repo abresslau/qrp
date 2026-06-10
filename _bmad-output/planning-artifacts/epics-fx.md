@@ -38,7 +38,7 @@ FR5: **Frankfurter primary ingest** (ECB-backed, `base=USD`) — historical back
 FR6: **Derivation layer** (`v_fx` view / functions) — inverse `= 1/rate`; cross `XXXYYY = rate(YYY)/rate(XXX)` triangulated through USD; `USD/USD = 1` injected (never stored).
 FR7: **As-of resolution + dense weekday view** — the rate for date D is the most recent observed rate with `date ≤ D`; a **weekend span of 3 calendar days** carries Friday over the weekend / a Monday holiday, and a separate **outage cap of 7 days** from the last *observed* rate bounds forward-fill (beyond it → NULL + flag). The dense weekday series (`v_fx_daily`) is a **view-only** forward-fill (flagged `is_filled`); **no synthetic rows are ever stored** (same derive-don't-store principle as the returns engine). Stale lookups **return value + flag** (the resolver), never raise; the threshold is single-sourced and shared with `sym validate`.
 FR8: **Conversion API** — `fx_rate(ccy, as_of)` and `convert(amount, from_ccy, to_ccy, as_of)` to express prices / market caps / returns across the multi-currency universe in a common currency.
-FR9: **CLI + EOD** — `sym fx backfill` / `sym fx delta` (+ coverage), wired as a step in the daily `sym eod` pipeline.
+FR9: **CLI + EOD** — `sym fx load` (tail by default; `--start_date` for full history) + coverage, wired as a step in the daily `sym eod` pipeline.
 FR10: **Validation integration** — `sym validate` FX checks: missing pivot leg, staleness beyond the bound, and currency coverage vs the currencies actually needed by priced instruments.
 
 ### NonFunctional Requirements
@@ -106,7 +106,7 @@ weekday, flagged `is_filled`/`observed_date`/`days_stale`, computed on read — 
 AND leg-dates agree within the bound) → None + flag; direct-cross branch deferred (schema stays
 general per FR3). DB-free pure-function tests. **FRs:** FR6 (cross), FR8. **NFRs:** NFR2, NFR5.
 
-**FX4 — CLI + EOD + validation.** `sym fx backfill | delta | coverage | convert` (the last is the
+**FX4 — CLI + EOD + validation.** `sym fx load | coverage | convert` (the last is the
 human-facing consumer smoke); an `fx` step wired into `sym eod` (idempotent/order-independent);
 `sym validate` FX checks — missing pivot leg, staleness beyond the outage cap, and **currency
 coverage vs the currencies needed by priced instruments** (the operational SLA). **FRs:** FR9, FR10.
@@ -169,8 +169,8 @@ so the table holds authoritative observed rates I can re-pull deterministically.
 - **Given** an `fx` source adapter registered like the OHLCV source (AR-5), **When** `fetch(currencies, start, end)` runs, **Then** it returns daily USD-base rates from Frankfurter `?base=USD`, tagged `source='frankfurter'`; a code comment records that these are ECB-rebased, not primary observations.
 - **Given** a per-source **direction map**, **When** a source reports a non-USD-base quote, **Then** it is inverted to USD-base before write — covered by a DB-free unit test against **synthetic payloads** (a USD-base source and an inverted-quote source); the Yahoo `=X` adapter is out of scope, so the test uses synthetic inputs, not Yahoo tickers.
 - **Given** the **relative plausibility band**, **When** a fetched rate moves more than N% vs the last observed for that currency, **Then** it is rejected/flagged, not stored.
-- **Given** `sym fx backfill`, **Then** it loads history (to 1999 where available), **resumable** (re-running inserts only missing `(ccy, as_of_date)` rows via `ON CONFLICT DO NOTHING`) and **fail-graceful** (a vendor outage aborts cleanly, no partial corruption).
-- **Given** `sym fx delta`, **Then** only sessions after the latest stored `as_of_date` per currency are fetched.
+- **Given** `sym fx load --start_date <floor>`, **Then** it loads history (to 1999 where available), **resumable** (re-running inserts only missing `(ccy, as_of_date)` rows via `ON CONFLICT DO NOTHING`) and **fail-graceful** (a vendor outage aborts cleanly, no partial corruption).
+- **Given** `sym fx load` (no `--start_date`), **Then** only sessions after the latest stored `as_of_date` per currency are fetched.
 - **And** a live smoke confirms `USDBRL`, `USDGBP`, `USDEUR` land with sane values.
 
 ### Story FX3a: Derivation view + as-of resolver (dense weekday series)
@@ -203,8 +203,8 @@ As the operator, I want `sym fx` commands (incl. a human-facing `convert`), an E
 `sym validate` FX checks, so FX stays current, gaps are caught, and the loop is *watched* working.
 
 **Acceptance Criteria:**
-- **Given** `sym fx backfill | delta | coverage | convert`, **Then** they drive FX2 ingest, report coverage, and `convert <amt> <from> <to> --as-of` prints a human-readable conversion (the real consumer smoke); output is ASCII.
-- **Given** `sym eod`, **Then** an `fx` (delta) step is included, error-isolated, and **idempotent / order-independent** so a future USD-restatement consumer can slot in after it.
+- **Given** `sym fx load | coverage | convert`, **Then** they drive FX2 ingest, report coverage, and `convert <amt> <from> <to> --as-of` prints a human-readable conversion (the real consumer smoke); output is ASCII.
+- **Given** `sym eod`, **Then** an `fx` (fill) step is included, error-isolated, and **idempotent / order-independent** so a future USD-restatement consumer can slot in after it.
 - **Given** `sym validate`, **Then** FX checks report (classified pass/warn/fail, Epic-V style): **coverage** — for every instrument priced on day D in currency C, a non-stale C->USD rate resolves for D (denominator = currencies of currently-priced instruments); **staleness** beyond the outage cap; **missing pivot leg**.
 - **And** the coverage check is the operational SLA, defined against priced-instrument currencies, not a static list.
 
@@ -218,7 +218,7 @@ Epic FX **built + committed** — all five stories, 377 tests pass, migrations d
 - FX4 `sym fx` CLI + EOD step + `check_fx_coverage` (`2ee7f6a`)
 
 **Operational follow-ups (not blockers):**
-- **Populate**: `sym fx backfill` loads all `currency`-table currencies from 1999 (the smoke
+- **Populate**: `sym fx load --start_date 1999-01-04` loads all `currency`-table currencies from 1999 (the smoke
   data was cleaned, so `fx_rate` is currently empty → `sym validate` fx_coverage WARNs
   "not populated", does not fail).
 - **Known coverage gap**: Frankfurter (ECB) does **not** cover every traded currency — e.g.
@@ -250,7 +250,7 @@ the reconcile source (commit `d8eeeaf`):
 - **`EcbSdmxSource`** (`source='ecb'`): ECB Data Portal EXR `csvdata` (EUR-base reference
   rates), **rebased to USD-base client-side** through the EUR/USD pivot
   (`CCY_per_USD = EUR→CCY / EUR→USD`; `EUR = 1/EUR→USD`); a date with no USD pivot leg is
-  skipped (fail-graceful). `sym fx backfill|delta --source ecb`.
+  skipped (fail-graceful). `sym fx load --source ecb`.
 - **Deterministic source precedence** — ECB *overlaps* Frankfurter (unlike the TWD-only
   fawazahmed0), so the read-side pick is pinned by a new `fx_source_rank()` SQL function
   (`frankfurter` 10 < `ecb` 20 < `fawazahmed0` 30), applied in the resolver + `v_fx_daily`;
@@ -263,7 +263,7 @@ the reconcile source (commit `d8eeeaf`):
   2020→2024 TWD deep-history gap is **not** closed by ECB — it stays on the fawazahmed0
   fallback (a free-source floor). A1's reconcile/divergence half is fully delivered; the
   TWD-deep-history half is not achievable from ECB.
-- **Populated (full backfill done):** `sym fx backfill --source ecb` loaded **193,437 ECB
+- **Populated (full backfill done):** `sym fx load --start_date 1999-01-04 --source ecb` loaded **193,437 ECB
   rows, 28 currencies, 1999-01-04→2026-06-05** (≈ Frankfurter's 193,817). 383 day-over-day
   jumps >50% were rejected by the plausibility band (early-2000s EM crisis/redenomination
   windows, e.g. TRY Feb-2001, BRL Jan-2000) — surfaced, not stored. **Full-history reconcile:
