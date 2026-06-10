@@ -1015,6 +1015,87 @@ def _cmd_universe_confirm(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.universe.accuracy import DEFAULT_THRESHOLD, run_configured_accuracy_check
+    from sym.universe.registry import UniverseError
+
+    as_of_date = date.today()
+    if args.as_of_date:
+        try:
+            as_of_date = date.fromisoformat(args.as_of_date)
+        except ValueError as exc:
+            print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
+            return 1
+    threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
+    load_dotenv()
+    try:
+        with connect() as conn:
+            result = run_configured_accuracy_check(
+                conn, args.universe_id, as_of_date=as_of_date, threshold=threshold
+            )
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    status = "ALARM" if result.alarm else "ok"
+    print(
+        f"accuracy {args.universe_id!r} vs {result.reference_source} [{status}]: "
+        f"maintained={result.maintained_count} reference={result.reference_count} "
+        f"divergence={result.divergence:.1%} threshold={result.threshold:.1%} "
+        f"missing={len(result.missing)} extra={len(result.extra)}"
+    )
+    return 2 if result.alarm else 0
+
+
+def _cmd_universe_reverse(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.universe.gating import reverse_change
+    from sym.universe.registry import UniverseError
+
+    try:
+        effective_date = date.fromisoformat(args.effective_date)
+    except ValueError as exc:
+        print(f"invalid effective_date {args.effective_date!r}: {exc}", file=sys.stderr)
+        return 1
+    load_dotenv()
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            appended = reverse_change(
+                conn, args.universe_id, args.raw_identifier, args.change, effective_date
+            )
+    except UniverseError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    if appended:
+        print(
+            f"reversed {args.change} of {args.raw_identifier!r} in {args.universe_id!r} "
+            f"effective {effective_date.isoformat()} "
+            "(corrective event appended; projection rebuilt)"
+        )
+        return 0
+    print(
+        f"corrective for {args.raw_identifier!r} at {effective_date.isoformat()} "
+        "already recorded — nothing appended",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sym",
@@ -1279,6 +1360,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--reject", action="store_true", help="Reject instead of confirm."
     )
     u_confirm.set_defaults(func=_cmd_universe_confirm)
+    u_accuracy = u_sub.add_parser(
+        "accuracy",
+        help="Cross-check maintained membership against the configured independent "
+        "reference source (config.accuracy_reference); exit 2 on alarm.",
+    )
+    u_accuracy.add_argument("universe_id", help="The universe slug.")
+    u_accuracy.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
+    u_accuracy.add_argument(
+        "--threshold",
+        type=float,
+        help="Alarm threshold as a divergence fraction (default: 0.05; an ETF-proxy "
+        "reference gets +0.05 tolerance on top).",
+    )
+    u_accuracy.set_defaults(func=_cmd_universe_accuracy)
+    u_reverse = u_sub.add_parser(
+        "reverse",
+        help="Reverse a wrongly-recorded membership change by appending a corrective "
+        "event (the log stays append-only).",
+    )
+    u_reverse.add_argument("universe_id", help="The universe slug.")
+    u_reverse.add_argument("raw_identifier", help="The member token (e.g. ticker:PETR4@BVMF).")
+    u_reverse.add_argument(
+        "change", choices=["join", "leave"], help="The wrong change being reversed."
+    )
+    u_reverse.add_argument("effective_date", help="The wrong change's effective date (ISO).")
+    u_reverse.set_defaults(func=_cmd_universe_reverse)
 
     return parser
 

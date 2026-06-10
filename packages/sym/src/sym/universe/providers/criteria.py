@@ -66,6 +66,9 @@ class CriteriaProvider:
     """Computes membership from a rule against fundamentals; emits figi join events."""
 
     kind = CRITERIA
+    # Full current-membership token set from the last evaluation (U3.5): a criteria
+    # screen IS the complete current set by construction — leaver-diff-safe.
+    last_snapshot_tokens: set[str] | None = None
 
     def __init__(
         self,
@@ -85,8 +88,10 @@ class CriteriaProvider:
     def members(self, start: date, end: date) -> Iterator[MembershipChange]:
         # Evaluate the rule as-of the window end and snapshot it as joins.
         figis = _RULES[self._rule](self._conn, end, self._n)
-        for figi in figis:
-            yield MembershipChange(figi_token(figi), JOIN, end, SOURCE, POLL_BOUNDED)
+        tokens = [figi_token(figi) for figi in figis]
+        self.last_snapshot_tokens = set(tokens)
+        for token in tokens:
+            yield MembershipChange(token, JOIN, end, SOURCE, POLL_BOUNDED)
 
 
 register_provider(CRITERIA, CriteriaProvider)

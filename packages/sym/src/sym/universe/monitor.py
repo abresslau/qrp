@@ -1,17 +1,20 @@
 """Daily maintenance monitor + liveness (Story U3.1, FR8/NFR2).
 
 A per-index monitor that re-runs a universe's preferred provider, discovers
-membership-change events, appends the genuinely-new ones to the log (idempotent —
-re-running the same day is a no-op), re-resolves, and rebuilds the projection. It
-records a run-log row per run and exposes liveness so a *frozen* universe is never
-mistaken for a *stable* one:
+membership-change events (including leaves derived by diffing a source-declared
+snapshot against currently-open members), STAGES them through the gating layer
+(U3.2: churn threshold, persistence, corroboration), and promotes the ones that
+have earned it to the append-only log — then re-resolves and rebuilds the
+projection. It records a run-log row per run and exposes liveness so a *frozen*
+universe is never mistaken for a *stable* one:
 
 * an empty or failed provider parse is recorded as an **error**, never "no change";
+* a run whose churn trips the gate is recorded as **gated** (operator review);
 * ``last_successful_monitor`` / :func:`stale_monitors` drive the staleness alarm;
 * a change's effective date can be aligned to the exchange calendar.
 
-The gating/corroboration layer (U3.2) sits between "discovered" and "appended";
-this story records discoveries directly (``applied``), leaving ``proposed`` at 0.
+Discoveries are NEVER appended directly: ``proposed`` counts what was staged this
+run, ``applied`` counts proposals promoted to the log (Story U3.5).
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ from datetime import date, datetime, timedelta
 
 import psycopg
 
-from sym.universe.events import append_change
+from sym.universe.gating import stage_and_promote
+from sym.universe.membership_diff import diff_identifier_sets
 from sym.universe.projection import rebuild_projection
 from sym.universe.registry import (
     CRITERIA,
@@ -163,11 +167,14 @@ def run_monitor(
     as_of_date: date | None = None,
     lookback: timedelta = DEFAULT_MONITOR_LOOKBACK,
 ) -> MonitorSummary:
-    """Re-run a universe's provider, append new changes, refresh the projection.
+    """Re-run a universe's provider, stage discoveries through gating, promote.
 
     Returns a :class:`MonitorSummary` and writes a ``universe_monitor_log`` row.
-    An empty/failed provider is an ``error`` (never "no change"); discovered
-    changes are appended directly (``applied``) — gating is layered in U3.2.
+    An empty/failed provider is an ``error`` (never "no change"). Discovered
+    changes — provider events plus leaves derived from a source-declared snapshot
+    — are staged as proposals (U3.2 gating); only proposals that have persisted
+    or gathered corroboration are promoted to the log, after which the projection
+    is rebuilt. A churn-gated run reports status ``gated``.
     """
     import sym.universe.providers  # noqa: F401  (ensure providers self-register)
 
@@ -218,32 +225,51 @@ def run_monitor(
     source = changes[0].source.split(":")[0]
     # Idempotency vs snapshot re-statement: a join for an already-open member (or a
     # leave for a not-open one) is the provider re-stating current membership with a
-    # fresh date, not a change — appending it would bloat the append-only log daily
-    # and make the joiner/leaver counts meaningless.
+    # fresh date, not a change — staging it would mint phantom proposals daily and
+    # make the joiner/leaver counts meaningless.
     open_tokens = _open_tokens(conn, universe_id)
-    joiners = leavers = 0
+    discovered: list[MembershipChange] = []
     for ch in changes:
         if ch.change == JOIN and ch.raw_identifier in open_tokens:
             continue
         if ch.change == LEAVE and ch.raw_identifier not in open_tokens:
             continue
-        if append_change(conn, universe_id, ch):  # True only if newly inserted
-            if ch.change == JOIN:
-                joiners += 1
-            elif ch.change == LEAVE:
-                leavers += 1
+        discovered.append(ch)
 
-    if joiners or leavers:
+    # Leaver derivation (U3.5): only a source that DECLARED a full current snapshot
+    # lets absence mean departure — open members missing from it become leave
+    # candidates. No declaration (a dated-history feed) means no derivation:
+    # absence from an event list says nothing about membership.
+    snapshot = getattr(provider, "last_snapshot_tokens", None)
+    if snapshot:
+        derived = diff_identifier_sets(
+            open_tokens, set(snapshot), as_of_date, changes[0].source
+        )
+        discovered.extend(ch for ch in derived if ch.change == LEAVE)
+
+    joiners = sum(1 for ch in discovered if ch.change == JOIN)
+    leavers = sum(1 for ch in discovered if ch.change == LEAVE)
+
+    # Two-stage application (U3.2, wired here): discoveries are staged as proposals
+    # — churn-gated, promoted only on persistence/corroboration — never appended
+    # directly. Promotion runs even with zero discoveries so yesterday's proposals
+    # graduate on schedule.
+    staged, promoted = stage_and_promote(
+        conn, universe_id, discovered,
+        current_count=len(open_tokens), as_of_date=as_of_date,
+    )
+    if promoted:
         resolve_universe_members(conn, universe_id, _resolver(conn, kind, client))
         rebuild_projection(conn, universe_id)
 
     summary = MonitorSummary(
         universe_id,
-        MONITOR_SUCCESS,
+        MONITOR_GATED if staged.surprising else MONITOR_SUCCESS,
         source=source,
         joiners=joiners,
         leavers=leavers,
-        applied=joiners + leavers,
+        proposed=staged.staged + staged.updated,
+        applied=promoted,
     )
     summary.monitor_run_id = _write_monitor_log(conn, summary)
     return summary

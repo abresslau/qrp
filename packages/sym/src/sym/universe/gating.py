@@ -25,7 +25,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from sym.universe.events import append_change
-from sym.universe.registry import CORRECT, MembershipChange
+from sym.universe.registry import CORRECT, POLL_BOUNDED, MembershipChange
 
 # Defaults (tunable). Churn above this fraction of current membership is gated.
 DEFAULT_CHURN_THRESHOLD = 0.10
@@ -87,6 +87,7 @@ def is_promotable(
 class StageSummary:
     staged: int = 0
     updated: int = 0
+    surprising: bool = False  # this run tripped the churn gate (everything held for review)
 
 
 def stage_changes(
@@ -103,10 +104,36 @@ def stage_changes(
     sighting bumps ``seen_count``/``last_seen`` and records the source as a
     corroboration (a *different* source seeing the same change is what
     corroboration means). Surprising runs stamp ``reason='churn_threshold'``.
+
+    A POLL_BOUNDED re-sighting matches its pending proposal by the
+    ``(universe, raw_identifier, change)`` TRIPLE — its effective date shifts with
+    every poll, so the quad dedupe key alone would mint a new proposal row daily
+    and persistence would never accrue. EXACT-dated changes keep the quad key.
     """
     reason = REASON_CHURN if surprising else REASON_PERSIST
-    summary = StageSummary()
+    summary = StageSummary(surprising=surprising)
     for ch in changes:
+        if ch.effective_date_precision == POLL_BOUNDED:
+            touched = conn.execute(
+                """
+                UPDATE membership_proposal
+                   SET last_seen_date = %s,
+                       seen_count = seen_count + 1,
+                       corroborating_sources = CASE
+                           WHEN corroborating_sources @> %s THEN corroborating_sources
+                           ELSE corroborating_sources || %s END
+                 WHERE universe_id = %s AND raw_identifier = %s
+                   AND change = %s AND status = 'pending'
+                RETURNING proposal_id
+                """,
+                (
+                    as_of_date, Jsonb([ch.source]), Jsonb([ch.source]),
+                    universe_id, ch.raw_identifier, ch.change,
+                ),
+            ).fetchone()
+            if touched is not None:
+                summary.updated += 1
+                continue
         inserted = conn.execute(
             """
             INSERT INTO membership_proposal
@@ -221,6 +248,24 @@ def pending_proposals(conn: psycopg.Connection, universe_id: str | None = None) 
     return [dict(zip(cols, row, strict=True)) for row in conn.execute(sql, params).fetchall()]
 
 
+def _resolve_and_rebuild(conn: psycopg.Connection, universe_id: str) -> None:
+    """Re-project after an append so the change becomes VISIBLE (U3.5, AC 4/5).
+
+    An appended event only exists in the log until ``universe_membership`` is
+    rebuilt — without this, a confirm/reverse "succeeds" but ``sym universe show``
+    keeps serving the old membership. Resolution is local-only (no network): the
+    affected tokens are almost always already-resolved members; a genuinely new
+    token resolves on the next refresh.
+    """
+    # Imported lazily: resolution/projection import the registry, and a module-level
+    # import here would create a cycle once they grow gating-aware.
+    from sym.universe.projection import rebuild_projection
+    from sym.universe.resolution import make_local_resolve_fn, resolve_universe_members
+
+    resolve_universe_members(conn, universe_id, make_local_resolve_fn(conn))
+    rebuild_projection(conn, universe_id)
+
+
 def _proposal(conn: psycopg.Connection, proposal_id: int) -> tuple | None:
     return conn.execute(
         """
@@ -247,6 +292,7 @@ def confirm_proposal(conn: psycopg.Connection, proposal_id: int, *, by: str = "o
         "WHERE proposal_id = %s",
         (by, proposal_id),
     )
+    _resolve_and_rebuild(conn, universe_id)
     return True
 
 
@@ -281,11 +327,14 @@ def reverse_change(
     closed one) — a reversible, appended audit trail, never a destructive edit.
     Returns True if the corrective was newly appended.
     """
-    return append_change(
+    appended = append_change(
         conn, universe_id,
         MembershipChange(raw_identifier, CORRECT, effective_date, source),
         provenance={"reverses": change, "by": by, "detail": detail},
     )
+    if appended:
+        _resolve_and_rebuild(conn, universe_id)
+    return appended
 
 
 def stage_and_promote(

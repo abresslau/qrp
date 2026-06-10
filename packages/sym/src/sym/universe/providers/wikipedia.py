@@ -330,6 +330,11 @@ class WikipediaIndexSource:
     """Derives membership events for an index from its Wikipedia page."""
 
     archetype = ARCHETYPE_WIKIPEDIA
+    # Full current-membership token set from the last fetch (U3.5): the constituents
+    # table ONLY — its joins may carry EXACT dates, which is why snapshot-ness must be
+    # declared here and never inferred from date precision. The "Selected changes"
+    # table's dated events are not part of the snapshot.
+    last_snapshot_tokens: set[str] | None = None
 
     def __init__(self, client: WikipediaClient, specs: dict[str, dict] | None = None) -> None:
         self._client = client
@@ -346,6 +351,7 @@ class WikipediaIndexSource:
         mic = spec.get("mic", "XNYS")
         yahoo_suffix = bool(spec.get("yahoo_suffix"))
         changes = _constituent_changes(tables, mic, end, yahoo_suffix=yahoo_suffix)
+        self.last_snapshot_tokens = {c.raw_identifier for c in changes}
         # The S&P "Selected changes" table is US-only; European pages rarely have a
         # parseable one, so this is a no-op there (current snapshot → build-forward).
         changes.extend(_changes_table_events(tables, mic, start, end))

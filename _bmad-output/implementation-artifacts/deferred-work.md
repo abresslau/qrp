@@ -29,14 +29,14 @@ Deferred findings:
 
 Backlogged by decision (D1-D4, accepted recommendations):
 
-- **D1 — U3-wire story (PRIORITY: the layer's headline safety promise):** route `run_monitor` through a maintained-membership snapshot diff (`diff_identifier_sets` + `maintained_tokens`, both written and tested) so snapshot sources (B3/ETF/criteria) can emit LEAVES; route surprising/poll-bounded discoveries through `stage_and_promote` (gating live, `MONITOR_GATED` assigned); give `run_accuracy_check` a CLI + schedule; expose `reverse_change` in the CLI. All three review layers found this independently; `universe-maintenance.md` now carries an honesty note until it lands. Mitigations applied in-review: monitor idempotency guard (no daily re-append), gating persistence rule fixed (last_seen), criteria universes monitorable.
+- **D1 — U3-wire story — ✅ DONE (Story U3.5, 2026-06-10):** `run_monitor` derives leaves from source-declared snapshots (`last_snapshot_tokens` + `diff_identifier_sets`), routes ALL discoveries through `stage_and_promote` (`MONITOR_GATED` live), rebuild-after-append on confirm/reverse/promote, `sym universe accuracy` (with FIGI-level cross-scheme fallback — also closes the "FIGI-level accuracy comparison" deferred finding below) and `sym universe reverse` CLIs added. No accuracy schedule by design (monitor cadence + CLI suffice; a Dagster hook would need explicit `execution_timezone`). See `U3-5-wire-safety-machinery.md`.
 - **D2 — snapshot-pin resolution watermark:** `members_pinned` watermarks events but not resolutions — a post-pin resolution changes a re-run. Needs `resolved_at` (schema). Caveat documented in `snapshot.py`.
 - **D3 — provenance-aware `correct` events:** the projector treats `correct` as a context-free toggle (ignores `provenance.reverses`); an intervening change inverts its intent, and the dedupe key makes a same-date re-correction a silent no-op. Event-model redesign.
 - **D4 — maintenance plans for the 12 populated index universes** (S&P 500/400/600 + 8 European): required by the standing populate-gate rule; only `ibov` is documented.
 
 Deferred findings:
 
-- FIGI-level accuracy comparison: the token-set gate is meaningless across token schemes (ticker-tokenised universe vs isin-tokenised ETF reference); compare resolved FIGIs instead. Docstring caveat added.
+- FIGI-level accuracy comparison: ✅ DONE in Story U3.5 — `run_configured_accuracy_check` resolves both sides to FIGIs when token schemes differ.
 - Wikipedia revision-diff client (U2.3 AC2's "revision history" path): `revision_diff` is pure + tested but nothing fetches revisions.
 - Monitor coverage for non-index kinds: `stale_monitors` defaults to `kinds=("index",)` — criteria universes can silently freeze out of the digest.
 - ETF proxy provenance tagging (U2.2 AC3): `PROXY` marker is dead; events carry no proxy provenance jsonb.

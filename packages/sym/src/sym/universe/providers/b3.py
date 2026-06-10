@@ -138,6 +138,10 @@ class B3IndexSource:
     """Derives index membership from B3's official theoretical portfolio."""
 
     archetype = ARCHETYPE_B3
+    # The full current-membership token set from the last fetch (U3.5): B3's endpoint
+    # IS the current portfolio, so the whole output is a snapshot — the monitor's
+    # leaver diff may trust it.
+    last_snapshot_tokens: set[str] | None = None
 
     def __init__(self, client: B3Client, specs: dict[str, dict] | None = None) -> None:
         self._client = client
@@ -155,6 +159,7 @@ class B3IndexSource:
                 f"B3 portfolio for {index_key!r} ({spec['code']}) parsed to zero constituents"
             )
         source = f"{ARCHETYPE_B3}:{spec['code']}"
+        self.last_snapshot_tokens = set(tokens)
         return [MembershipChange(tok, JOIN, end, source, POLL_BOUNDED) for tok in sorted(tokens)]
 
 

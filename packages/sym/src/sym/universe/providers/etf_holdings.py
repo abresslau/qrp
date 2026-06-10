@@ -175,6 +175,9 @@ class EtfHoldingsIndexSource:
 
     archetype = ARCHETYPE_ETF
     PROXY = "proxy"
+    # Full current-membership token set from the last fetch (U3.5): the holdings file
+    # is a complete snapshot — leaver-diff-safe.
+    last_snapshot_tokens: set[str] | None = None
 
     def __init__(
         self,
@@ -198,6 +201,7 @@ class EtfHoldingsIndexSource:
                 f"ETF holdings for {index_key!r} parsed to zero equity constituents"
             )
         source = f"{ARCHETYPE_ETF}:{etf_key}"
+        self.last_snapshot_tokens = set(tokens)
         return [MembershipChange(tok, JOIN, end, source, POLL_BOUNDED) for tok in sorted(tokens)]
 
 

@@ -139,6 +139,10 @@ class FmpIndexSource:
     """Derives membership events for a US flagship index from FMP."""
 
     archetype = ARCHETYPE_FMP
+    # Full current-membership token set from the last fetch (U3.5): ONLY the
+    # current-constituents endpoint's tokens — the dated history events are NOT a
+    # snapshot and must never feed the monitor's leaver diff.
+    last_snapshot_tokens: set[str] | None = None
 
     def __init__(self, client: FmpClient) -> None:
         self._client = client
@@ -186,6 +190,7 @@ class FmpIndexSource:
             # An empty current snapshot is an error, never "the index is empty".
             raise IndexSourceError(f"FMP returned no current constituents for {index_key!r}")
         changes = self._changes_from_current(current, end)
+        self.last_snapshot_tokens = {c.raw_identifier for c in changes}
         try:
             history = self._client.historical_constituents(slug)
         except IndexSourceError:

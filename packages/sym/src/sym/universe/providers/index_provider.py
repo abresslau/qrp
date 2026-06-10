@@ -40,6 +40,10 @@ class IndexProvider:
     """Resolve an index's membership via an ordered source preference with fallback."""
 
     kind = INDEX
+    # Propagated from the WINNING source after members(): the full current-membership
+    # token set when that source declared one, else None (U3.5 — the monitor derives
+    # leaves only from a declared snapshot).
+    last_snapshot_tokens: set[str] | None = None
 
     def __init__(
         self,
@@ -66,9 +70,11 @@ class IndexProvider:
 
     def members(self, start: date, end: date) -> list[MembershipChange]:
         attempts: list[str] = []
+        self.last_snapshot_tokens = None
         for archetype in self._pref:
+            source = self._source(archetype)
             try:
-                changes = list(self._source(archetype).fetch(self._index, start, end))
+                changes = list(source.fetch(self._index, start, end))
             except Exception as exc:  # noqa: BLE001 — ANY source failure falls through to
                 # the next archetype: an unanticipated JSONDecodeError/KeyError from one
                 # vendor must not kill the whole refresh when a fallback could serve.
@@ -77,6 +83,7 @@ class IndexProvider:
             if not changes:
                 attempts.append(f"{archetype}: produced no changes")
                 continue
+            self.last_snapshot_tokens = getattr(source, "last_snapshot_tokens", None)
             return changes
         raise IndexSourceError(
             f"all sources failed for index {self._index!r} "
