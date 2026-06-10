@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import traceback
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from pydantic import BaseModel
 
 from qrp_api.config import enabled_modules, modules, platform_config, platform_name
@@ -33,6 +36,40 @@ ALLOWED_ORIGINS: tuple[str, ...] = tuple(
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"]
 
 _MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+# Error-type vocabulary (architecture §Format Patterns): the envelope's `type`
+# derives from the honest HTTP status — routers keep raising plain
+# HTTPException(status, detail) and the handlers translate.
+_ERROR_TYPES = {
+    403: "forbidden",
+    404: "not_found",
+    409: "conflict",
+    422: "validation",
+    500: "internal",
+    503: "unavailable",
+}
+
+
+def _error_type_for(status_code: int) -> str:
+    return _ERROR_TYPES.get(status_code, "internal" if status_code >= 500 else "error")
+
+
+def _error_body(status_code: int, message: str, detail: object = None) -> dict:
+    """The spec'd envelope `{error: {type, message, detail?}}` + legacy mirror.
+
+    Top-level `detail` is KEPT alongside the envelope — the console reads it
+    today; removing it is a breaking change for zero gain until the console
+    fully migrates.
+    """
+    error: dict = {"type": _error_type_for(status_code), "message": message}
+    if detail is not None:
+        error["detail"] = detail
+    return {"error": error, "detail": message}
+
+
+def _error_response(status_code: int, message: str, detail: object = None) -> JSONResponse:
+    return JSONResponse(status_code=status_code,
+                        content=_error_body(status_code, message, detail))
 
 
 class HealthResponse(BaseModel):
@@ -121,12 +158,38 @@ def create_app() -> FastAPI:
             and (origin := request.headers.get("origin")) is not None
             and origin not in ALLOWED_ORIGINS
         ):
-            return JSONResponse(
-                status_code=403,
-                # Truncate the echo: the header is attacker-controlled input.
-                content={"detail": f"origin {origin[:100]!r} may not actuate this API"},
+            # Envelope built inline via the SHARED helper: this middleware runs
+            # OUTSIDE the app's exception layer (outermost), so raising
+            # HTTPException here would 500 instead of reaching the handlers.
+            # Truncated echo: the header is attacker-controlled input.
+            return _error_response(
+                403, f"origin {origin[:100]!r} may not actuate this API"
             )
         return await call_next(request)
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_exception_envelope(request: Request, exc: StarletteHTTPException):
+        # Routers keep raising HTTPException(status, detail) — translated here
+        # into the spec'd envelope; the status code is NEVER re-coded.
+        message = exc.detail if isinstance(exc.detail, str) else "request failed"
+        detail = None if isinstance(exc.detail, str) else exc.detail
+        return _error_response(exc.status_code, message, detail)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_envelope(request: Request, exc: RequestValidationError):
+        return _error_response(
+            422, "request validation failed", detail=exc.errors()
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_envelope(request: Request, exc: Exception):
+        # NEVER leak a traceback: class name only. The full exception still
+        # reaches the server log via stderr (uvicorn's default behavior is
+        # suppressed by handling, so print explicitly).
+        traceback.print_exc()
+        return _error_response(
+            500, f"internal error ({type(exc).__name__}) — see the API log"
+        )
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> dict:

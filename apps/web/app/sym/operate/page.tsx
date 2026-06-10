@@ -59,12 +59,16 @@ export default function OperatePage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ op: op.key, args, confirm }),
     });
-    // Rejections now arrive as 409 (conflict) / 422 (validation) with FastAPI's {detail}.
-    const res: RunResult & { detail?: string } = await r.json();
+    // Errors carry the spec'd envelope {error:{type,message}} (Story O.4);
+    // `detail` remains as the legacy mirror during the migration.
+    const res: RunResult & {
+      detail?: string;
+      error?: { type: string; message: string };
+    } = await r.json();
     setMsg(
       r.ok
         ? `Started ${op.label} (job #${res.job_id})`
-        : `Rejected: ${res.detail ?? res.reason ?? "unknown"}`,
+        : `Rejected: ${res.error?.message ?? res.detail ?? res.reason ?? "unknown"}`,
     );
     loadJobs();
   }

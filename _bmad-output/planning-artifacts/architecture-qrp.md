@@ -404,6 +404,9 @@ system, command palette (FR-2), SSE, any auth, CI beyond lint/type/test/gen-type
 - **Success = the typed body directly** (no `{data:...}` wrapper). **Errors = a consistent
   model** `{ error: { type, message, detail? } }`, surfaced to the console (incl. op
   failures). HTTP status used honestly (404 missing, 409 lock conflict, 422 validation).
+  **IMPLEMENTED (O.4):** global exception handlers in `qrp_api.main` translate every
+  HTTPException/validation/unhandled error; a top-level `detail` mirror remains during
+  the console migration.
 - Dates: ISO-8601 strings. Numbers as-is from sym (no client re-rounding; display formatting
   only). Missing = explicit null + "gap" UI, never fabricated.
 
@@ -417,7 +420,10 @@ system, command palette (FR-2), SSE, any auth, CI beyond lint/type/test/gen-type
 
 ### Process Patterns
 - **Status vocabulary everywhere:** the 4 states `ok | degraded | failed | stale` use one
-  color/pill/icon set across all screens (freshness, validation, jobs).
+  color/pill/icon set across all screens (freshness, validation, jobs). **Recorded
+  deviation (O.4):** sym freshness deliberately reports a 3-state `ok | stale | unknown`
+  — `unknown` (nothing measurable) is MORE honest than forcing a 4th token state; the
+  console maps it to the degraded pill.
 - **Loading:** skeletons matching final layout (no reflow); per-area error boundaries.
 - **Logging:** the API uses its own structured logger; **never reconfigure sym's logging or
   global state** (protects the in-process import boundary).
