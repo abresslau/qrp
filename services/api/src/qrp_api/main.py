@@ -4,8 +4,48 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
+from pydantic import BaseModel
 
 from qrp_api.config import enabled_modules, modules, platform_config, platform_name
+
+
+class HealthResponse(BaseModel):
+    status: str
+    platform: str
+    modules: list[str]
+
+
+class ModuleInfo(BaseModel):
+    key: str
+    name: str | None = None
+    description: str | None = None
+    enabled: bool = False
+
+
+class PlatformResponse(BaseModel):
+    name: str
+    tagline: str | None
+    theme: str
+    modules: list[ModuleInfo]
+
+
+def _use_route_names_as_operation_ids(app: FastAPI) -> None:
+    """Architecture typed-seam rule: explicit, unique ``operation_id`` on every route.
+
+    Function names become the OpenAPI operation ids (so the generated TS client gets stable,
+    human names); a duplicate function name across routers fails fast here instead of
+    producing ambiguous generated types.
+    """
+    seen: dict[str, str] = {}
+    for route in app.routes:
+        if isinstance(route, APIRoute):
+            if route.name in seen:
+                raise RuntimeError(
+                    f"duplicate operation_id {route.name!r}: {seen[route.name]} and {route.path}"
+                )
+            seen[route.name] = route.path
+            route.operation_id = route.name
 
 
 def create_app() -> FastAPI:
@@ -21,11 +61,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.get("/api/health")
+    @app.get("/api/health", response_model=HealthResponse)
     def health() -> dict:
-        return {"platform": name, "modules": [m["key"] for m in enabled_modules()]}
+        return {"status": "ok", "platform": name, "modules": [m["key"] for m in enabled_modules()]}
 
-    @app.get("/api/platform")
+    @app.get("/api/platform", response_model=PlatformResponse)
     def platform() -> dict:
         meta = cfg.get("platform", {})
         return {
@@ -77,6 +117,7 @@ def create_app() -> FastAPI:
 
         app.include_router(lineage_router)
 
+    _use_route_names_as_operation_ids(app)
     return app
 
 

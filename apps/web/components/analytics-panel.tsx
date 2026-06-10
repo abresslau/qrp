@@ -115,7 +115,7 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
             <Metric label="Bench Sharpe" value={num(m.bench_sharpe)} />
           </div>
           <p className="mt-2 text-xs text-muted">
-            {a?.n_days} daily obs · {a?.start} → {a?.end} · benchmark {a?.benchmark?.name}
+            {a?.n_days} daily obs · {a?.start_date} → {a?.end_date} · benchmark {a?.benchmark?.name}
             {a?.benchmark?.currency ? ` (${a.benchmark.currency})` : ""} · rf = 0 · latest weights
             held constant over the window.
           </p>

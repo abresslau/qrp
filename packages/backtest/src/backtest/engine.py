@@ -19,25 +19,33 @@ _W_1D, _W_1M, _W_1Y = 1, 7, 11
 _DIRECTION = {"mom_12_1": "high", "vol_1y": "low", "size": "low"}
 
 
-def _members(conn, universe_id: str) -> list[str]:
-    return [
-        r[0]
-        for r in conn.execute(
-            "SELECT composite_figi FROM universe_membership "
-            "WHERE universe_id=%s AND valid_to IS NULL",
-            (universe_id,),
-        ).fetchall()
-    ]
+def _members(conn, universe_id: str, as_of_date: date | None = None) -> list[str]:
+    """Universe membership: point-in-time as-of a date, or all-ever (``as_of_date=None``).
+
+    All-ever is scaffolding only (trading-day calendar, data range). Holdings and the
+    baseline MUST use the as-of roster — selecting today's members (`valid_to IS NULL`)
+    across history is survivorship bias.
+    """
+    if as_of_date is None:
+        sql = "SELECT DISTINCT composite_figi FROM universe_membership WHERE universe_id=%s"
+        params: tuple = (universe_id,)
+    else:
+        sql = (
+            "SELECT composite_figi FROM universe_membership WHERE universe_id=%s "
+            "AND valid_from <= %s AND (valid_to IS NULL OR valid_to > %s)"
+        )
+        params = (universe_id, as_of_date, as_of_date)
+    return [r[0] for r in conn.execute(sql, params).fetchall()]
 
 
-def _trading_days(conn, members, start, end) -> list[date]:
+def _trading_days(conn, members, start_date, end_date) -> list[date]:
     return [
         r[0]
         for r in conn.execute(
             "SELECT DISTINCT as_of_date FROM fact_returns "
             "WHERE window_id=%s AND as_of_date BETWEEN %s AND %s AND composite_figi = ANY(%s) "
             "ORDER BY as_of_date",
-            (_W_1D, start, end, members),
+            (_W_1D, start_date, end_date, members),
         ).fetchall()
     ]
 
@@ -124,7 +132,8 @@ def _stats(daily: list[float], curve: list[float]) -> dict:
     mdd = 0.0
     for v in curve:
         peak = max(peak, v)
-        mdd = min(mdd, v / peak - 1.0)
+        if peak > 0:  # a -100% day drives the curve to 0; don't divide by it
+            mdd = min(mdd, v / peak - 1.0)
     return {
         "total_return": total,
         "ann_return": ann,
@@ -140,51 +149,63 @@ def run_backtest(
     factor: str = "mom_12_1",
     universe_id: str = "sp500",
     top_pct: float = 0.2,
-    start: date | None = None,
-    end: date | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> dict:
     # sym_conn reads the sym package (fact_returns/fundamentals/universe_membership); bt_conn writes
     # runs/points to the backtest database (DB-per-package; cross-DB read via psycopg).
     conn = sym_conn  # all reads below go to the sym package
     bt_conn.autocommit = True
-    members = _members(conn, universe_id)
+    if factor not in _DIRECTION:
+        return {"error": f"unknown factor {factor!r} (one of {sorted(_DIRECTION)})"}
+    members = _members(conn, universe_id)  # all-ever: calendar + data range only
     rng = conn.execute(
         "SELECT min(as_of_date), max(as_of_date) FROM fact_returns "
         "WHERE window_id=%s AND composite_figi = ANY(%s)",
         (_W_1D, members),
     ).fetchone()
     data_lo, data_hi = rng
-    start = start or (date(data_hi.year - 5, 1, 1) if data_hi else data_lo)
-    if data_lo and start < data_lo:
-        start = data_lo
-    end = end or data_hi
-    days = _trading_days(conn, members, start, end)
+    start_date = start_date or (date(data_hi.year - 5, 1, 1) if data_hi else data_lo)
+    if data_lo and start_date < data_lo:
+        start_date = data_lo
+    end_date = end_date or data_hi
+    if start_date and end_date and start_date > end_date:
+        return {"error": f"start_date {start_date} is after end_date {end_date}"}
+    days = _trading_days(conn, members, start_date, end_date)
     if len(days) < 30:
         return {"error": f"insufficient history ({len(days)} trading days)"}
     all_rebals = _rebalance_dates(days)
 
     # Only rebalance when the factor is broadly available (else the early, thinly-covered
     # months bias the result). Skip leading/thin rebalances; the curve starts where the
-    # signal is real. min coverage = half the universe (floor 20).
-    min_cov = max(20, int(0.5 * len(members)))
+    # signal is real. min coverage = half the as-of roster (floor 20).
     rebals: list[date] = []
     holdings: dict[date, list[str]] = {}
+    members_at: dict[date, list[str]] = {}
     for d in all_rebals:
-        raw = _factor_at(conn, members, d, factor)
-        if len(raw) >= min_cov:
+        mem = _members(conn, universe_id, d)  # point-in-time roster — no survivorship bias
+        if not mem:
+            continue
+        raw = _factor_at(conn, mem, d, factor)
+        if len(raw) >= max(20, int(0.5 * len(mem))):
             rebals.append(d)
+            members_at[d] = mem
             holdings[d] = _select_top(raw, factor, top_pct)
     if len(rebals) < 2:
         return {"error": f"factor {factor!r} lacks broad coverage for {universe_id!r} in range"}
 
     strat_daily: dict[date, float] = {}
+    base_daily: dict[date, float] = {}
     for i, d in enumerate(rebals):
-        nxt = rebals[i + 1] if i + 1 < len(rebals) else end
+        nxt = rebals[i + 1] if i + 1 < len(rebals) else end_date
         strat_daily.update(_daily_mean(conn, holdings[d], d, nxt))
+        # Baseline = equal weight of the SAME as-of roster, rebalanced on the same dates.
+        base_daily.update(_daily_mean(conn, members_at[d], d, nxt))
     first_holding = holdings[rebals[0]]
-    base_daily = _daily_mean(conn, members, rebals[0], end)
 
     common = sorted(set(strat_daily) & set(base_daily))
+    if not common:
+        return {"error": "no overlapping strategy/baseline trading days in range"}
     s_cum, b_cum = 1.0, 1.0
     s_curve, b_curve, s_ser, b_ser, points = [], [], [], [], []
     for d in common:
@@ -210,24 +231,29 @@ def run_backtest(
         "first_holding_n": len(first_holding),
     }
 
-    run_id = bt_conn.execute(
-        """
-        INSERT INTO backtest.run
-            (factor, universe_id, top_pct, rebalance, start_date, end_date, n_days,
-             n_rebalances, summary)
-        VALUES (%s, %s, %s, 'monthly', %s, %s, %s, %s, %s::jsonb) RETURNING run_id
-        """,
-        (factor, universe_id, top_pct, common[0] if common else start,
-         common[-1] if common else end, len(common), len(rebals), json.dumps(summary)),
-    ).fetchone()[0]
-    # Persist the curve (sample to <= ~400 points to keep it light).
-    step = max(1, len(points) // 400)
-    with bt_conn.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO backtest.point (run_id, obs_date, strat_cum, base_cum) "
-            "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-            [(run_id, d, s, b) for idx, (d, s, b) in enumerate(points) if idx % step == 0],
-        )
+    # One transaction: never persist a run row whose curve points failed to land.
+    with bt_conn.transaction():
+        run_id = bt_conn.execute(
+            """
+            INSERT INTO backtest.run
+                (factor, universe_id, top_pct, rebalance, start_date, end_date, n_days,
+                 n_rebalances, summary)
+            VALUES (%s, %s, %s, 'monthly', %s, %s, %s, %s, %s::jsonb) RETURNING run_id
+            """,
+            (factor, universe_id, top_pct, common[0], common[-1], len(common), len(rebals),
+             json.dumps(summary)),
+        ).fetchone()[0]
+        # Persist the curve (sample to <= ~400 points; always keep the final point so the
+        # stored curve's last value ties to the summary's total_return).
+        step = max(1, len(points) // 400)
+        last_idx = len(points) - 1
+        with bt_conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO backtest.point (run_id, obs_date, strat_cum, base_cum) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                [(run_id, d, s, b) for idx, (d, s, b) in enumerate(points)
+                 if idx % step == 0 or idx == last_idx],
+            )
     # Equal-weight holdings per rebalance date — the paper portfolio's weight vectors over time
     # (Q6.4: a backtest can be materialised as a Portfolio for analytics to measure).
     weight_vectors = {

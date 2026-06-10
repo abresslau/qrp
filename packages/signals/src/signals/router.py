@@ -1,4 +1,4 @@
-"""``/api/signal`` — derived cross-sectional factors (momentum, low-vol, size) over universes."""
+"""``/api/signals`` — derived cross-sectional factors (momentum, low-vol, size) over universes."""
 
 from __future__ import annotations
 
@@ -15,7 +15,11 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 
 def _gateway() -> Iterator[DbSignalGateway]:
     conn = connect()  # signal owns its own database (DB-per-package topology)
-    sym = connect("sym")               # sym package — security labels, enriched in-app by the gateway
+    try:
+        sym = connect("sym")               # sym package — security labels, enriched in-app by the gateway
+    except Exception:
+        conn.close()  # don't leak the first connection when the second connect fails
+        raise
     try:
         yield DbSignalGateway(conn, sym)
     finally:
@@ -68,5 +72,5 @@ def factor_ranking(
 ) -> dict:
     d = gw.ranked(factor_key, universe, limit, bottom)
     if d is None:
-        raise HTTPException(status_code=404, detail="factor not found")
+        raise HTTPException(status_code=404, detail="no scores for this factor/universe")
     return d

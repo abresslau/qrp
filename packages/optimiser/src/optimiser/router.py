@@ -15,7 +15,11 @@ router = APIRouter(prefix="/api/optimiser", tags=["optimiser"])
 
 def _gateway() -> Iterator[DbOptimiserGateway]:
     conn = connect()  # optimiser owns its own database
-    sym = connect("sym")                           # sym package — engine reads on solve
+    try:
+        sym = connect("sym")                           # sym package — engine reads on solve
+    except Exception:
+        conn.close()  # don't leak the first connection when the second connect fails
+        raise
     try:
         yield DbOptimiserGateway(conn, sym)
     finally:

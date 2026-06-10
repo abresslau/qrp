@@ -15,9 +15,10 @@ class DbBacktestGateway:
         self._sym = sym_conn       # sym package — the engine's read-only source (run only)
         self._conn.autocommit = True
 
-    def run(self, factor: str, universe_id: str, top_pct: float, portfolios_gw=None) -> dict:
+    def run(self, factor: str, universe_id: str, top_pct: float, portfolios_gw=None,
+            start_date: date | None = None, end_date: date | None = None) -> dict:
         res = run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
-                           top_pct=top_pct, start=None)
+                           top_pct=top_pct, start_date=start_date, end_date=end_date)
         # Q6.4: optionally materialise the run as a paper Portfolio (persisted via the
         # portfolios package's own writer — module ownership respected, no cross-DB write here).
         if portfolios_gw is not None and res.get("run_id") and res.get("weight_vectors"):
@@ -58,7 +59,7 @@ class DbBacktestGateway:
             (run_id,),
         ).fetchall()
         out["curve"] = [
-            {"date": d.isoformat(), "strat": float(s), "base": float(b)} for d, s, b in pts
+            {"obs_date": d.isoformat(), "strat": float(s), "base": float(b)} for d, s, b in pts
         ]
         return out
 

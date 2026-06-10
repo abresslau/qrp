@@ -89,15 +89,13 @@ def package_dsn(package: str) -> str:
     parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={user}"]
     password = os.environ.get("PGPASSWORD")
     if password:
-        parts.append(f"password={password}")
+        # libpq keyword-DSN quoting: a password with spaces or quotes must be single-quoted,
+        # with backslash-escaped \ and ' (else the whole DSN fails to parse at startup).
+        quoted = password.replace("\\", "\\\\").replace("'", "\\'")
+        parts.append(f"password='{quoted}'")
     return " ".join(parts)
 
 
 def db_dsn() -> str:
     """The sym package's database (sym is a peer package; its database is named ``sym``)."""
     return package_dsn("sym")
-
-
-def signal_dsn() -> str:
-    """DSN for the `signal` package's own database (see ``package_dsn``)."""
-    return package_dsn("signal")

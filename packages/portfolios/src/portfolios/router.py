@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from datetime import date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from portfolios.db import connect
 from portfolios.gateway import DbPortfolioGateway
@@ -16,7 +16,11 @@ router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 def _gateway() -> Iterator[DbPortfolioGateway]:
     conn = connect()  # portfolios owns its own database
-    sym = connect("sym")                            # sym package — labels + fact_returns (PnL), in-app
+    try:
+        sym = connect("sym")                            # sym package — labels + fact_returns (PnL), in-app
+    except Exception:
+        conn.close()  # don't leak the first connection when the second connect fails
+        raise
     try:
         yield DbPortfolioGateway(conn, sym)
     finally:
@@ -33,7 +37,7 @@ class CreatePortfolio(BaseModel):
 
 class WeightItem(BaseModel):
     identifier: str  # ticker or composite FIGI
-    weight: float
+    weight: float = Field(..., allow_inf_nan=False)  # NaN/inf would poison stored sums
 
 
 class UploadWeights(BaseModel):
@@ -105,6 +109,7 @@ class RetConstituent(BaseModel):
 class PortfolioReturns(BaseModel):
     window: str
     as_of_date: str | None
+    returns_as_of_date: str | None = None  # the single fact_returns date all constituents use
     n_constituents: int
     n_with_return: int
     total_weight: float
@@ -166,4 +171,7 @@ def portfolio_returns(
 ) -> dict:
     if gw.get(pid) is None:
         raise HTTPException(status_code=404, detail="portfolio not found")
-    return gw.returns(pid, window)
+    try:
+        return gw.returns(pid, window)
+    except ValueError as exc:  # unknown return window
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

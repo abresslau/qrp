@@ -63,14 +63,12 @@ def _fetch_pageviews(article: str, start: date, end: date) -> list[tuple[date, i
 
 
 def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
-               start: date | None = None, end: date | None = None) -> dict:
+               start_date: date | None = None, end_date: date | None = None) -> dict:
     # sym_conn resolves figis from the sym package (security_symbology); ad_conn writes altdata
     # (DB-per-package; cross-DB read via psycopg).
     ad_conn.autocommit = True
-    end = end or date(2026, 6, 5)
-    start = start or date(end.year, end.month, 1).replace(day=1)
-    # default to ~120 days
-    start = date.fromordinal(end.toordinal() - 120)
+    end_date = end_date or date.today()
+    start_date = start_date or date.fromordinal(end_date.toordinal() - 120)  # default ~120 days
     summary = []
     for ticker, (article, name) in _MAP.items():
         figi = _resolve_figi(sym_conn, ticker)
@@ -84,7 +82,7 @@ def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
             (figi, ticker, name, article),
         )
         try:
-            pvs = _fetch_pageviews(article, start, end)
+            pvs = _fetch_pageviews(article, start_date, end_date)
         except Exception as exc:  # noqa: BLE001
             summary.append({"ticker": ticker, "ok": False, "reason": str(exc)[:120]})
             continue

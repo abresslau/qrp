@@ -31,8 +31,8 @@ class DbMacroGateway:
                 "unit": unit,
                 "frequency": freq,
                 "n_obs": n,
-                "first": f.isoformat() if f else None,
-                "last": last.isoformat() if last else None,
+                "start_date": f.isoformat() if f else None,
+                "end_date": last.isoformat() if last else None,
                 "latest": float(latest) if latest is not None else None,
             }
             for sid, src, name, geo, unit, freq, n, f, last, latest in rows
@@ -57,5 +57,5 @@ class DbMacroGateway:
             "geo": meta[3],
             "unit": meta[4],
             "frequency": meta[5],
-            "observations": [{"date": d.isoformat(), "value": float(v)} for d, v in obs],
+            "observations": [{"obs_date": d.isoformat(), "value": float(v)} for d, v in obs],
         }

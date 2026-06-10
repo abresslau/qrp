@@ -128,14 +128,15 @@ class DbSymGateway:
         uname = _scalar(
             c, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,)
         )
+        if uname is None:
+            raise LookupError(f"universe {universe_id!r} not found")
         wrow = c.execute(
             "SELECT window_id, code FROM return_window WHERE code = %s", (window_code,)
         ).fetchone()
         if not wrow:
-            wrow = c.execute(
-                "SELECT window_id, code FROM return_window WHERE code = %s",
-                (DEFAULT_HEATMAP_WINDOW,),
-            ).fetchone()
+            # No silent fallback: an unknown code is the caller's error (the router's Query
+            # default already supplies DEFAULT_HEATMAP_WINDOW when none is requested).
+            raise ValueError(f"unknown return window {window_code!r}")
         window_id, window = wrow
 
         rows = c.execute(
@@ -258,7 +259,10 @@ class DbSymGateway:
                 " OR upper(coalesce(sn.name, '')) LIKE %s"
                 " OR s.composite_figi LIKE %s)"
             )
-            like = f"%{q.upper()}%"
+            # Escape LIKE metacharacters in the user's query: a bare '%' would match
+            # everything and '_' would wildcard single characters.
+            esc = q.upper().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{esc}%"
             params = [like, like, like]
         total = c.execute(
             f"SELECT count(*) {self._SEC_FROM} {where}", params

@@ -48,13 +48,13 @@ def _ensure_catalog(conn: psycopg.Connection) -> None:
 
 
 def _members(conn: psycopg.Connection, universe_id: str, as_of_date: date) -> list[str]:
-    # Current roster (valid_to IS NULL) — decoupled from the data as-of so build-forward
-    # universes (e.g. B3 ibov/ibx, valid_from = refresh date) still score against the latest
-    # available fact_returns date.
+    # Point-in-time roster as-of the scoring date (no survivorship bias). Build-forward
+    # universes (e.g. B3 ibov/ibx — membership starts at their first refresh) are honestly
+    # empty before their seed date; score recent as-of dates for those.
     rows = conn.execute(
         "SELECT composite_figi FROM universe_membership "
-        "WHERE universe_id=%s AND valid_to IS NULL",
-        (universe_id,),
+        "WHERE universe_id=%s AND valid_from <= %s AND (valid_to IS NULL OR valid_to > %s)",
+        (universe_id, as_of_date, as_of_date),
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -75,29 +75,32 @@ def _raw_momentum(conn, members, as_of_date) -> dict[str, float]:
 
 
 def _raw_vol(conn, members, as_of_date) -> dict[str, float]:
-    start = as_of_date - timedelta(days=365)
+    start_date = as_of_date - timedelta(days=365)
+    # Both bounds matter: without the upper one, scoring an older as_of_date while newer
+    # returns exist would quietly include future data in "1Y vol as of d".
     rows = conn.execute(
         """
         SELECT composite_figi, stddev_samp(pr) * sqrt(252)
           FROM fact_returns
-         WHERE window_id = %s AND pr IS NOT NULL AND as_of_date > %s
+         WHERE window_id = %s AND pr IS NOT NULL AND as_of_date > %s AND as_of_date <= %s
            AND composite_figi = ANY(%s)
          GROUP BY composite_figi HAVING count(*) >= 60
         """,
-        (_W_1D, start, members),
+        (_W_1D, start_date, as_of_date, members),
     ).fetchall()
     return {f: float(v) for f, v in rows if v is not None}
 
 
-def _raw_size(conn, members) -> dict[str, float]:
+def _raw_size(conn, members, as_of_date) -> dict[str, float]:
     rows = conn.execute(
         """
         SELECT DISTINCT ON (composite_figi) composite_figi, market_cap_usd
           FROM fundamentals
          WHERE composite_figi = ANY(%s) AND market_cap_usd IS NOT NULL AND market_cap_usd > 0
+           AND as_of_date <= %s
          ORDER BY composite_figi, as_of_date DESC
         """,
-        (members,),
+        (members, as_of_date),
     ).fetchall()
     return {f: float(v) for f, v in rows if v is not None}
 
@@ -157,13 +160,17 @@ def compute_universe(
     _ensure_catalog(sig_conn)
     if as_of_date is None:
         as_of_date = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
+        if as_of_date is None:
+            return {"universe_id": universe_id, "as_of_date": None, "members": 0,
+                    "scored": {}, "error": "no fact_returns data to score against"}
     members = _members(sym_conn, universe_id, as_of_date)
     counts = {
         "mom_12_1": _store(sig_conn, universe_id, as_of_date, "mom_12_1", "high",
                            _raw_momentum(sym_conn, members, as_of_date)),
         "vol_1y": _store(sig_conn, universe_id, as_of_date, "vol_1y", "low",
                          _raw_vol(sym_conn, members, as_of_date)),
-        "size": _store(sig_conn, universe_id, as_of_date, "size", "low", _raw_size(sym_conn, members)),
+        "size": _store(sig_conn, universe_id, as_of_date, "size", "low",
+                       _raw_size(sym_conn, members, as_of_date)),
     }
     return {"universe_id": universe_id, "as_of_date": as_of_date.isoformat(), "members": len(members),
             "scored": counts}

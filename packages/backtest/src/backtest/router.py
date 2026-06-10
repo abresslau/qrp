@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import date
 
 from fastapi import APIRouter, Body, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backtest.db import connect
 from backtest.gateway import DbBacktestGateway
@@ -15,7 +16,11 @@ router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
 def _gateway() -> Iterator[DbBacktestGateway]:
     conn = connect()  # backtest owns its own database
-    sym = connect("sym")                          # sym package — engine reads on run
+    try:
+        sym = connect("sym")                          # sym package — engine reads on run
+    except Exception:
+        conn.close()  # don't leak the first connection when the second connect fails
+        raise
     try:
         yield DbBacktestGateway(conn, sym)
     finally:
@@ -54,7 +59,7 @@ class RunSummary(BaseModel):
 
 
 class CurvePoint(BaseModel):
-    date: str
+    obs_date: str  # matches backtest.point.obs_date (canonical date naming)
     strat: float
     base: float
 
@@ -66,7 +71,9 @@ class RunDetail(RunSummary):
 class BacktestRunRequest(BaseModel):
     factor: str = "mom_12_1"
     universe: str = "sp500"
-    top_pct: float = 0.2
+    top_pct: float = Field(default=0.2, gt=0, le=1, allow_inf_nan=False)
+    start_date: date | None = None  # FR-18: optional explicit range (default: ~5y of data)
+    end_date: date | None = None
     save_portfolio: bool = False  # Q6.4: also materialise the run as a paper Portfolio
 
 
@@ -88,7 +95,8 @@ def run_backtest_ep(
         pconn = connect("portfolios")   # write the paper portfolio to its own DB
         pgw = DbPortfolioGateway(pconn, gw._sym)      # reuse the sym package for figi resolution
     try:
-        res = gw.run(body.factor, body.universe, body.top_pct, portfolios_gw=pgw)
+        res = gw.run(body.factor, body.universe, body.top_pct, portfolios_gw=pgw,
+                     start_date=body.start_date, end_date=body.end_date)
     finally:
         if pconn is not None:
             pconn.close()

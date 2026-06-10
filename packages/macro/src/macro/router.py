@@ -29,13 +29,13 @@ class SeriesSummary(BaseModel):
     unit: str | None
     frequency: str | None
     n_obs: int
-    first: str | None
-    last: str | None
+    start_date: str | None  # observed coverage range (canonical date-naming convention)
+    end_date: str | None
     latest: float | None
 
 
 class Observation(BaseModel):
-    date: str
+    obs_date: str
     value: float
 
 
@@ -50,12 +50,12 @@ class SeriesDetail(BaseModel):
 
 
 @router.get("/series", response_model=list[SeriesSummary])
-def list_series(gw: DbMacroGateway = Depends(_gateway)) -> list[dict]:
+def list_macro_series(gw: DbMacroGateway = Depends(_gateway)) -> list[dict]:
     return gw.series()
 
 
 @router.get("/series/{series_id:path}", response_model=SeriesDetail)
-def get_series(series_id: str, gw: DbMacroGateway = Depends(_gateway)) -> dict:
+def get_macro_series(series_id: str, gw: DbMacroGateway = Depends(_gateway)) -> dict:
     d = gw.observations(series_id)
     if d is None:
         raise HTTPException(status_code=404, detail="series not found")

@@ -27,7 +27,7 @@ class AltSeries(BaseModel):
     name: str | None
     article: str
     n_obs: int
-    last: str | None
+    as_of_date: str | None  # latest observation date (canonical date-naming convention)
     latest_views: int | None
     avg7: float | None
     avg30: float | None
@@ -35,7 +35,7 @@ class AltSeries(BaseModel):
 
 
 class AltObservation(BaseModel):
-    date: str
+    obs_date: str
     views: int
 
 
@@ -48,12 +48,12 @@ class AltSeriesDetail(BaseModel):
 
 
 @router.get("/series", response_model=list[AltSeries])
-def list_series(gw: DbAltdataGateway = Depends(_gateway)) -> list[dict]:
+def list_altdata_series(gw: DbAltdataGateway = Depends(_gateway)) -> list[dict]:
     return gw.series()
 
 
 @router.get("/series/{figi}", response_model=AltSeriesDetail)
-def get_series(figi: str, gw: DbAltdataGateway = Depends(_gateway)) -> dict:
+def get_altdata_series(figi: str, gw: DbAltdataGateway = Depends(_gateway)) -> dict:
     d = gw.observations(figi)
     if d is None:
         raise HTTPException(status_code=404, detail="series not found")

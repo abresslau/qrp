@@ -12,11 +12,15 @@ from pathlib import Path
 
 import psycopg
 
-_OWN = "portfolios"
+_OWN = "analytics"
 
 
 def _load_env() -> None:
-    p = Path(".env")
+    # Anchored to the repo root (this file is packages/<pkg>/src/<pkg>/db.py), with a CWD
+    # fallback — services and workers are not guaranteed to launch from the repo root.
+    p = Path(__file__).resolve().parents[4] / ".env"
+    if not p.is_file():
+        p = Path(".env")
     if not p.is_file():
         return
     for raw in p.read_text(encoding="utf-8").splitlines():

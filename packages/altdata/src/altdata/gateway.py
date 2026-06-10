@@ -35,7 +35,7 @@ class DbAltdataGateway:
                 "name": name,
                 "article": article,
                 "n_obs": n,
-                "last": last.isoformat() if last else None,
+                "as_of_date": last.isoformat() if last else None,
                 "latest_views": int(latest) if latest is not None else None,
                 "avg7": float(a7) if a7 is not None else None,
                 "avg30": float(a30) if a30 is not None else None,
@@ -60,5 +60,5 @@ class DbAltdataGateway:
             "ticker": meta[1],
             "name": meta[2],
             "article": meta[3],
-            "observations": [{"date": d.isoformat(), "views": int(v)} for d, v in obs],
+            "observations": [{"obs_date": d.isoformat(), "views": int(v)} for d, v in obs],
         }

@@ -199,15 +199,15 @@ class DbPortfolioGateway:
             "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
         # return_window is a sym reference table; resolve the window id from the sym package.
+        # An unknown code is the caller's error — no silent YTD fallback.
         wrow = self._sym.execute(
             "SELECT window_id, code FROM return_window WHERE code = %s", (window_code,)
         ).fetchone()
         if not wrow:
-            wrow = self._sym.execute(
-                "SELECT window_id, code FROM return_window WHERE code = 'YTD'"
-            ).fetchone()
+            raise ValueError(f"unknown return window {window_code!r}")
         window_id, window = wrow
-        empty = {"window": window, "as_of_date": None, "constituents": [], "n_constituents": 0,
+        empty = {"window": window, "as_of_date": None, "returns_as_of_date": None,
+                 "constituents": [], "n_constituents": 0,
                  "n_with_return": 0, "total_weight": 0.0, "covered_weight": 0.0,
                  "portfolio_return": None, "portfolio_return_normalized": None}
         if as_of_date is None:
@@ -220,13 +220,23 @@ class DbPortfolioGateway:
         ).fetchall()
         figis = [r[0] for r in wrows]
         # weight×return is a cross-database join — assemble in-app: returns + labels from sym.
-        pr_map = dict(
-            self._sym.execute(
-                "SELECT DISTINCT ON (composite_figi) composite_figi, pr "
-                "FROM fact_returns WHERE composite_figi = ANY(%s) AND window_id = %s "
-                "ORDER BY composite_figi, as_of_date DESC",
-                (figis, window_id),
-            ).fetchall()
+        # Pin every constituent to ONE returns date (the latest available for this window) so
+        # the summed portfolio return never blends returns as-of different dates.
+        ret_date = self._sym.execute(
+            "SELECT max(as_of_date) FROM fact_returns "
+            "WHERE composite_figi = ANY(%s) AND window_id = %s",
+            (figis, window_id),
+        ).fetchone()[0]
+        pr_map = (
+            dict(
+                self._sym.execute(
+                    "SELECT composite_figi, pr FROM fact_returns "
+                    "WHERE composite_figi = ANY(%s) AND window_id = %s AND as_of_date = %s",
+                    (figis, window_id, ret_date),
+                ).fetchall()
+            )
+            if ret_date is not None
+            else {}
         )
         tickers, _ = self._labels(figis)
 
@@ -254,6 +264,7 @@ class DbPortfolioGateway:
         return {
             "window": window,
             "as_of_date": as_of_date.isoformat(),
+            "returns_as_of_date": ret_date.isoformat() if ret_date is not None else None,
             "n_constituents": len(wrows),
             "n_with_return": n_with_return,
             "total_weight": total_w,

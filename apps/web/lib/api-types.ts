@@ -12,7 +12,7 @@ export interface paths {
             cookie?: never;
         };
         /** Health */
-        get: operations["health_api_health_get"];
+        get: operations["health"];
         put?: never;
         post?: never;
         delete?: never;
@@ -29,7 +29,7 @@ export interface paths {
             cookie?: never;
         };
         /** Platform */
-        get: operations["platform_api_platform_get"];
+        get: operations["platform"];
         put?: never;
         post?: never;
         delete?: never;
@@ -45,8 +45,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
-        get: operations["health_api_sym_health_get"];
+        /** Sym Health */
+        get: operations["sym_health"];
         put?: never;
         post?: never;
         delete?: never;
@@ -63,7 +63,7 @@ export interface paths {
             cookie?: never;
         };
         /** Overview */
-        get: operations["overview_api_sym_overview_get"];
+        get: operations["overview"];
         put?: never;
         post?: never;
         delete?: never;
@@ -80,7 +80,7 @@ export interface paths {
             cookie?: never;
         };
         /** Universes */
-        get: operations["universes_api_sym_universes_get"];
+        get: operations["universes"];
         put?: never;
         post?: never;
         delete?: never;
@@ -97,7 +97,7 @@ export interface paths {
             cookie?: never;
         };
         /** Return Windows */
-        get: operations["return_windows_api_sym_return_windows_get"];
+        get: operations["return_windows"];
         put?: never;
         post?: never;
         delete?: never;
@@ -114,7 +114,7 @@ export interface paths {
             cookie?: never;
         };
         /** Heatmap */
-        get: operations["heatmap_api_sym_universes__universe_id__heatmap_get"];
+        get: operations["heatmap"];
         put?: never;
         post?: never;
         delete?: never;
@@ -131,7 +131,7 @@ export interface paths {
             cookie?: never;
         };
         /** Securities */
-        get: operations["securities_api_sym_securities_get"];
+        get: operations["securities"];
         put?: never;
         post?: never;
         delete?: never;
@@ -148,7 +148,7 @@ export interface paths {
             cookie?: never;
         };
         /** Security Detail */
-        get: operations["security_detail_api_sym_securities__figi__get"];
+        get: operations["security_detail"];
         put?: never;
         post?: never;
         delete?: never;
@@ -165,7 +165,7 @@ export interface paths {
             cookie?: never;
         };
         /** Attention */
-        get: operations["attention_api_sym_attention_get"];
+        get: operations["attention"];
         put?: never;
         post?: never;
         delete?: never;
@@ -182,7 +182,7 @@ export interface paths {
             cookie?: never;
         };
         /** Validation */
-        get: operations["validation_api_sym_validation_get"];
+        get: operations["validation"];
         put?: never;
         post?: never;
         delete?: never;
@@ -199,10 +199,10 @@ export interface paths {
             cookie?: never;
         };
         /** List Portfolios */
-        get: operations["list_portfolios_api_portfolios_get"];
+        get: operations["list_portfolios"];
         put?: never;
         /** Create Portfolio */
-        post: operations["create_portfolio_api_portfolios_post"];
+        post: operations["create_portfolio"];
         delete?: never;
         options?: never;
         head?: never;
@@ -217,10 +217,10 @@ export interface paths {
             cookie?: never;
         };
         /** List Clients */
-        get: operations["list_clients_api_portfolios_clients_get"];
+        get: operations["list_clients"];
         put?: never;
         /** Create Client */
-        post: operations["create_client_api_portfolios_clients_post"];
+        post: operations["create_client"];
         delete?: never;
         options?: never;
         head?: never;
@@ -235,7 +235,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Portfolio */
-        get: operations["get_portfolio_api_portfolios__pid__get"];
+        get: operations["get_portfolio"];
         put?: never;
         post?: never;
         delete?: never;
@@ -254,7 +254,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Upload Weights */
-        post: operations["upload_weights_api_portfolios__pid__weights_post"];
+        post: operations["upload_weights"];
         delete?: never;
         options?: never;
         head?: never;
@@ -269,7 +269,7 @@ export interface paths {
             cookie?: never;
         };
         /** Portfolio Returns */
-        get: operations["portfolio_returns_api_portfolios__pid__returns_get"];
+        get: operations["portfolio_returns"];
         put?: never;
         post?: never;
         delete?: never;
@@ -286,7 +286,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Benchmarks */
-        get: operations["list_benchmarks_api_analytics_benchmarks_get"];
+        get: operations["list_benchmarks"];
         put?: never;
         post?: never;
         delete?: never;
@@ -303,7 +303,7 @@ export interface paths {
             cookie?: never;
         };
         /** Portfolio Analytics */
-        get: operations["portfolio_analytics_api_portfolios__pid__analytics_get"];
+        get: operations["portfolio_analytics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -320,7 +320,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Ops */
-        get: operations["list_ops_api_operate_ops_get"];
+        get: operations["list_ops"];
         put?: never;
         post?: never;
         delete?: never;
@@ -337,7 +337,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Jobs */
-        get: operations["list_jobs_api_operate_jobs_get"];
+        get: operations["list_jobs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -354,7 +354,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Job */
-        get: operations["get_job_api_operate_jobs__job_id__get"];
+        get: operations["get_job"];
         put?: never;
         post?: never;
         delete?: never;
@@ -373,7 +373,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Run Op */
-        post: operations["run_op_api_operate_run_post"];
+        post: operations["run_op"];
         delete?: never;
         options?: never;
         head?: never;
@@ -387,8 +387,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Series */
-        get: operations["list_series_api_macro_series_get"];
+        /** List Macro Series */
+        get: operations["list_macro_series"];
         put?: never;
         post?: never;
         delete?: never;
@@ -404,8 +404,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Series */
-        get: operations["get_series_api_macro_series__series_id__get"];
+        /** Get Macro Series */
+        get: operations["get_macro_series"];
         put?: never;
         post?: never;
         delete?: never;
@@ -422,7 +422,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Factors */
-        get: operations["list_factors_api_signals_factors_get"];
+        get: operations["list_factors"];
         put?: never;
         post?: never;
         delete?: never;
@@ -439,7 +439,7 @@ export interface paths {
             cookie?: never;
         };
         /** Factor Ranking */
-        get: operations["factor_ranking_api_signals_factors__factor_key__get"];
+        get: operations["factor_ranking"];
         put?: never;
         post?: never;
         delete?: never;
@@ -458,7 +458,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Run Backtest Ep */
-        post: operations["run_backtest_ep_api_backtest_run_post"];
+        post: operations["run_backtest_ep"];
         delete?: never;
         options?: never;
         head?: never;
@@ -473,7 +473,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Runs */
-        get: operations["list_runs_api_backtest_runs_get"];
+        get: operations["list_runs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -490,7 +490,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Run */
-        get: operations["get_run_api_backtest_runs__run_id__get"];
+        get: operations["get_run"];
         put?: never;
         post?: never;
         delete?: never;
@@ -509,7 +509,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Solve Ep */
-        post: operations["solve_ep_api_optimiser_solve_post"];
+        post: operations["solve_ep"];
         delete?: never;
         options?: never;
         head?: never;
@@ -524,7 +524,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Solutions */
-        get: operations["list_solutions_api_optimiser_solutions_get"];
+        get: operations["list_solutions"];
         put?: never;
         post?: never;
         delete?: never;
@@ -541,7 +541,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get Solution */
-        get: operations["get_solution_api_optimiser_solutions__solution_id__get"];
+        get: operations["get_solution"];
         put?: never;
         post?: never;
         delete?: never;
@@ -557,8 +557,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Series */
-        get: operations["list_series_api_altdata_series_get"];
+        /** List Altdata Series */
+        get: operations["list_altdata_series"];
         put?: never;
         post?: never;
         delete?: never;
@@ -574,8 +574,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Series */
-        get: operations["get_series_api_altdata_series__figi__get"];
+        /** Get Altdata Series */
+        get: operations["get_altdata_series"];
         put?: never;
         post?: never;
         delete?: never;
@@ -595,7 +595,7 @@ export interface paths {
          * Graph
          * @description Table-level lineage edges (declared + auto-derived + FK referential) with group + stats.
          */
-        get: operations["graph_api_lineage_graph_get"];
+        get: operations["graph"];
         put?: never;
         post?: never;
         delete?: never;
@@ -615,7 +615,7 @@ export interface paths {
          * Field Flow
          * @description Mermaid `flowchart` source for each join key's propagation (composite_figi, sym_id).
          */
-        get: operations["field_flow_api_lineage_field_flow_get"];
+        get: operations["field_flow"];
         put?: never;
         post?: never;
         delete?: never;
@@ -630,8 +630,8 @@ export interface components {
     schemas: {
         /** AltObservation */
         AltObservation: {
-            /** Date */
-            date: string;
+            /** Obs Date */
+            obs_date: string;
             /** Views */
             views: number;
         };
@@ -647,8 +647,8 @@ export interface components {
             article: string;
             /** N Obs */
             n_obs: number;
-            /** Last */
-            last: string | null;
+            /** As Of Date */
+            as_of_date: string | null;
             /** Latest Views */
             latest_views: number | null;
             /** Avg7 */
@@ -682,13 +682,21 @@ export interface components {
             portfolio_currencies: string[];
             /** N Days */
             n_days: number;
-            /** Start */
-            start: string | null;
-            /** End */
-            end: string | null;
+            /** Start Date */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
             metrics: components["schemas"]["Metrics"] | null;
             /** Warning */
             warning: string | null;
+        };
+        /** Attention */
+        Attention: {
+            /** Review Queue */
+            review_queue: components["schemas"]["ReviewItem"][];
+            price_gaps: components["schemas"]["PriceGaps"];
+            /** Membership Proposals */
+            membership_proposals: components["schemas"]["MembershipProposal"][];
         };
         /** BacktestRunRequest */
         BacktestRunRequest: {
@@ -707,6 +715,10 @@ export interface components {
              * @default 0.2
              */
             top_pct: number;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
             /**
              * Save Portfolio
              * @default false
@@ -776,8 +788,8 @@ export interface components {
         };
         /** CurvePoint */
         CurvePoint: {
-            /** Date */
-            date: string;
+            /** Obs Date */
+            obs_date: string;
             /** Strat */
             strat: number;
             /** Base */
@@ -848,10 +860,83 @@ export interface components {
             /** Dagster Url */
             dagster_url: string;
         };
+        /** FreshnessItem */
+        FreshnessItem: {
+            /** Area */
+            area: string;
+            /** As Of Date */
+            as_of_date: string | null;
+            /** Days Behind */
+            days_behind: number | null;
+            /** Status */
+            status: string;
+        };
+        /** FundamentalsInfo */
+        FundamentalsInfo: {
+            /** Market Cap Lcy */
+            market_cap_lcy: number | null;
+            /** Market Cap Usd */
+            market_cap_usd: number | null;
+            /** Shares Outstanding */
+            shares_outstanding: number | null;
+            /** Currency */
+            currency: string | null;
+            /** As Of Date */
+            as_of_date: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthResponse */
+        HealthResponse: {
+            /** Status */
+            status: string;
+            /** Platform */
+            platform: string;
+            /** Modules */
+            modules: string[];
+        };
+        /** Heatmap */
+        Heatmap: {
+            /** Universe Id */
+            universe_id: string;
+            /** Universe Name */
+            universe_name: string | null;
+            /** Window */
+            window: string;
+            /** Members Resolved */
+            members_resolved: number;
+            /** Shown */
+            shown: number;
+            /** Missing Mcap */
+            missing_mcap: number;
+            /** Merged Share Classes */
+            merged_share_classes: number;
+            /** Cells */
+            cells: components["schemas"]["HeatmapCell"][];
+        };
+        /** HeatmapCell */
+        HeatmapCell: {
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string | null;
+            /** Sector */
+            sector: string | null;
+            /** Industry */
+            industry: string | null;
+            /** Market Cap Usd */
+            market_cap_usd: number;
+            /** Market Cap Lcy */
+            market_cap_lcy: number | null;
+            /** Currency */
+            currency: string | null;
+            /** Price */
+            price: number | null;
+            /** Ret */
+            ret: number | null;
         };
         /** Job */
         Job: {
@@ -875,6 +960,21 @@ export interface components {
             started_at: string | null;
             /** Finished At */
             finished_at: string | null;
+        };
+        /** LastRun */
+        LastRun: {
+            /** Run Id */
+            run_id: string | null;
+            /** Mode */
+            mode: string | null;
+            /** Status */
+            status: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Rows Written */
+            rows_written: number | null;
         };
         /** LineageEdge */
         LineageEdge: {
@@ -907,6 +1007,21 @@ export interface components {
             by_basis: {
                 [key: string]: number;
             };
+        };
+        /** MembershipProposal */
+        MembershipProposal: {
+            /** Proposal Id */
+            proposal_id: string;
+            /** Universe Id */
+            universe_id: string | null;
+            /** Raw Identifier */
+            raw_identifier: string | null;
+            /** Change */
+            change: string | null;
+            /** Status */
+            status: string | null;
+            /** Created At */
+            created_at: string | null;
         };
         /** Metrics */
         Metrics: {
@@ -941,10 +1056,24 @@ export interface components {
             /** Slugging Ratio */
             slugging_ratio: number | null;
         };
+        /** ModuleInfo */
+        ModuleInfo: {
+            /** Key */
+            key: string;
+            /** Name */
+            name?: string | null;
+            /** Description */
+            description?: string | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+        };
         /** Observation */
         Observation: {
-            /** Date */
-            date: string;
+            /** Obs Date */
+            obs_date: string;
             /** Value */
             value: number;
         };
@@ -1061,6 +1190,17 @@ export interface components {
             /** Weight */
             weight: number;
         };
+        /** PlatformResponse */
+        PlatformResponse: {
+            /** Name */
+            name: string;
+            /** Tagline */
+            tagline: string | null;
+            /** Theme */
+            theme: string;
+            /** Modules */
+            modules: components["schemas"]["ModuleInfo"][];
+        };
         /** PortfolioDetail */
         PortfolioDetail: {
             /** Portfolio Id */
@@ -1086,6 +1226,8 @@ export interface components {
             window: string;
             /** As Of Date */
             as_of_date: string | null;
+            /** Returns As Of Date */
+            returns_as_of_date?: string | null;
             /** N Constituents */
             n_constituents: number;
             /** N With Return */
@@ -1118,6 +1260,33 @@ export interface components {
             /** Latest As Of Date */
             latest_as_of_date: string | null;
         };
+        /** PriceGap */
+        PriceGap: {
+            /** Figi */
+            figi: string;
+            /** Ticker */
+            ticker: string | null;
+            /** Session Date */
+            session_date: string | null;
+            /** Source */
+            source: string | null;
+            /** Detected At */
+            detected_at: string | null;
+        };
+        /** PriceGaps */
+        PriceGaps: {
+            /** Total */
+            total: number;
+            /** Recent */
+            recent: components["schemas"]["PriceGap"][];
+        };
+        /** PriceInfo */
+        PriceInfo: {
+            /** Close */
+            close: number | null;
+            /** Session Date */
+            session_date: string | null;
+        };
         /** RetConstituent */
         RetConstituent: {
             /** Ticker */
@@ -1128,6 +1297,26 @@ export interface components {
             ret: number | null;
             /** Contribution */
             contribution: number | null;
+        };
+        /** ReturnWindow */
+        ReturnWindow: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+        };
+        /** ReviewItem */
+        ReviewItem: {
+            /** Review Id */
+            review_id: string;
+            /** Source Key */
+            source_key: string | null;
+            /** Source Input */
+            source_input: string | null;
+            /** Status */
+            status: string | null;
+            /** Created At */
+            created_at: string | null;
         };
         /** RunDetail */
         RunDetail: {
@@ -1208,6 +1397,59 @@ export interface components {
             n_rebalances: number | null;
             summary: components["schemas"]["Summary"] | null;
         };
+        /** SecuritiesPage */
+        SecuritiesPage: {
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Rows */
+            rows: components["schemas"]["SecurityRow"][];
+        };
+        /** SecurityDetail */
+        SecurityDetail: {
+            /** Figi */
+            figi: string;
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string | null;
+            /** Mic */
+            mic: string | null;
+            /** Currency */
+            currency: string | null;
+            /** Status */
+            status: string | null;
+            /** Delist Date */
+            delist_date: string | null;
+            /** Sector */
+            sector: string | null;
+            /** Industry */
+            industry: string | null;
+            /** Sub Industry */
+            sub_industry: string | null;
+            price: components["schemas"]["PriceInfo"];
+            fundamentals: components["schemas"]["FundamentalsInfo"] | null;
+            /** Returns */
+            returns: components["schemas"]["WindowReturn"][];
+        };
+        /** SecurityRow */
+        SecurityRow: {
+            /** Figi */
+            figi: string;
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string | null;
+            /** Mic */
+            mic: string | null;
+            /** Currency */
+            currency: string | null;
+            /** Status */
+            status: string | null;
+        };
         /** SeriesDetail */
         SeriesDetail: {
             /** Series Id */
@@ -1241,10 +1483,10 @@ export interface components {
             frequency: string | null;
             /** N Obs */
             n_obs: number;
-            /** First */
-            first: string | null;
-            /** Last */
-            last: string | null;
+            /** Start Date */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
             /** Latest */
             latest: number | null;
         };
@@ -1271,6 +1513,36 @@ export interface components {
             first_rebalance?: string | null;
             /** First Holding N */
             first_holding_n?: number | null;
+        };
+        /** SymHealth */
+        SymHealth: {
+            /** Module */
+            module: string;
+            /** Healthy */
+            healthy: boolean;
+        };
+        /** SymOverview */
+        SymOverview: {
+            /** Securities */
+            securities: number;
+            /** Universes */
+            universes: number;
+            /** Priced Securities */
+            priced_securities: number;
+            /** Latest Session */
+            latest_session: string | null;
+            /** Freshness */
+            freshness: components["schemas"]["FreshnessItem"][];
+            last_run: components["schemas"]["LastRun"] | null;
+        };
+        /** UniverseSummary */
+        UniverseSummary: {
+            /** Universe Id */
+            universe_id: string;
+            /** Name */
+            name: string | null;
+            /** Members Resolved */
+            members_resolved: number;
         };
         /** UploadResult */
         UploadResult: {
@@ -1304,6 +1576,25 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** ValidationRun */
+        ValidationRun: {
+            /** Run Id */
+            run_id: string;
+            /** Run At */
+            run_at: string | null;
+            /** Universe Id */
+            universe_id: string | null;
+            /** Checks */
+            checks: number | null;
+            /** Passed */
+            passed: number | null;
+            /** Warned */
+            warned: number | null;
+            /** Failed */
+            failed: number | null;
+            /** Status */
+            status: string | null;
+        };
         /** Weight */
         Weight: {
             /** Figi */
@@ -1322,6 +1613,19 @@ export interface components {
             /** Weight */
             weight: number;
         };
+        /** WindowReturn */
+        WindowReturn: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string | null;
+            /** Pr */
+            pr: number | null;
+            /** Tr */
+            tr: number | null;
+            /** As Of Date */
+            as_of_date: string | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -1331,7 +1635,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    health_api_health_get: {
+    health: {
         parameters: {
             query?: never;
             header?: never;
@@ -1346,14 +1650,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HealthResponse"];
                 };
             };
         };
     };
-    platform_api_platform_get: {
+    platform: {
         parameters: {
             query?: never;
             header?: never;
@@ -1368,14 +1670,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PlatformResponse"];
                 };
             };
         };
     };
-    health_api_sym_health_get: {
+    sym_health: {
         parameters: {
             query?: never;
             header?: never;
@@ -1390,14 +1690,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SymHealth"];
                 };
             };
         };
     };
-    overview_api_sym_overview_get: {
+    overview: {
         parameters: {
             query?: never;
             header?: never;
@@ -1412,14 +1710,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SymOverview"];
                 };
             };
         };
     };
-    universes_api_sym_universes_get: {
+    universes: {
         parameters: {
             query?: never;
             header?: never;
@@ -1434,14 +1730,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["UniverseSummary"][];
                 };
             };
         };
     };
-    return_windows_api_sym_return_windows_get: {
+    return_windows: {
         parameters: {
             query?: never;
             header?: never;
@@ -1456,14 +1750,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ReturnWindow"][];
                 };
             };
         };
     };
-    heatmap_api_sym_universes__universe_id__heatmap_get: {
+    heatmap: {
         parameters: {
             query?: {
                 window?: string;
@@ -1482,9 +1774,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Heatmap"];
                 };
             };
             /** @description Validation Error */
@@ -1498,7 +1788,7 @@ export interface operations {
             };
         };
     };
-    securities_api_sym_securities_get: {
+    securities: {
         parameters: {
             query?: {
                 q?: string | null;
@@ -1517,9 +1807,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SecuritiesPage"];
                 };
             };
             /** @description Validation Error */
@@ -1533,7 +1821,7 @@ export interface operations {
             };
         };
     };
-    security_detail_api_sym_securities__figi__get: {
+    security_detail: {
         parameters: {
             query?: never;
             header?: never;
@@ -1550,9 +1838,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SecurityDetail"];
                 };
             };
             /** @description Validation Error */
@@ -1566,7 +1852,7 @@ export interface operations {
             };
         };
     };
-    attention_api_sym_attention_get: {
+    attention: {
         parameters: {
             query?: never;
             header?: never;
@@ -1581,14 +1867,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Attention"];
                 };
             };
         };
     };
-    validation_api_sym_validation_get: {
+    validation: {
         parameters: {
             query?: never;
             header?: never;
@@ -1603,14 +1887,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    }[];
+                    "application/json": components["schemas"]["ValidationRun"][];
                 };
             };
         };
     };
-    list_portfolios_api_portfolios_get: {
+    list_portfolios: {
         parameters: {
             query?: never;
             header?: never;
@@ -1630,7 +1912,7 @@ export interface operations {
             };
         };
     };
-    create_portfolio_api_portfolios_post: {
+    create_portfolio: {
         parameters: {
             query?: never;
             header?: never;
@@ -1663,7 +1945,7 @@ export interface operations {
             };
         };
     };
-    list_clients_api_portfolios_clients_get: {
+    list_clients: {
         parameters: {
             query?: never;
             header?: never;
@@ -1683,7 +1965,7 @@ export interface operations {
             };
         };
     };
-    create_client_api_portfolios_clients_post: {
+    create_client: {
         parameters: {
             query?: never;
             header?: never;
@@ -1716,7 +1998,7 @@ export interface operations {
             };
         };
     };
-    get_portfolio_api_portfolios__pid__get: {
+    get_portfolio: {
         parameters: {
             query?: never;
             header?: never;
@@ -1747,7 +2029,7 @@ export interface operations {
             };
         };
     };
-    upload_weights_api_portfolios__pid__weights_post: {
+    upload_weights: {
         parameters: {
             query?: never;
             header?: never;
@@ -1782,7 +2064,7 @@ export interface operations {
             };
         };
     };
-    portfolio_returns_api_portfolios__pid__returns_get: {
+    portfolio_returns: {
         parameters: {
             query?: {
                 window?: string;
@@ -1815,7 +2097,7 @@ export interface operations {
             };
         };
     };
-    list_benchmarks_api_analytics_benchmarks_get: {
+    list_benchmarks: {
         parameters: {
             query?: never;
             header?: never;
@@ -1835,7 +2117,7 @@ export interface operations {
             };
         };
     };
-    portfolio_analytics_api_portfolios__pid__analytics_get: {
+    portfolio_analytics: {
         parameters: {
             query: {
                 /** @description instrument sym_id of the index benchmark */
@@ -1871,7 +2153,7 @@ export interface operations {
             };
         };
     };
-    list_ops_api_operate_ops_get: {
+    list_ops: {
         parameters: {
             query?: never;
             header?: never;
@@ -1891,7 +2173,7 @@ export interface operations {
             };
         };
     };
-    list_jobs_api_operate_jobs_get: {
+    list_jobs: {
         parameters: {
             query?: {
                 limit?: number;
@@ -1922,7 +2204,7 @@ export interface operations {
             };
         };
     };
-    get_job_api_operate_jobs__job_id__get: {
+    get_job: {
         parameters: {
             query?: never;
             header?: never;
@@ -1953,7 +2235,7 @@ export interface operations {
             };
         };
     };
-    run_op_api_operate_run_post: {
+    run_op: {
         parameters: {
             query?: never;
             header?: never;
@@ -1986,7 +2268,7 @@ export interface operations {
             };
         };
     };
-    list_series_api_macro_series_get: {
+    list_macro_series: {
         parameters: {
             query?: never;
             header?: never;
@@ -2006,7 +2288,7 @@ export interface operations {
             };
         };
     };
-    get_series_api_macro_series__series_id__get: {
+    get_macro_series: {
         parameters: {
             query?: never;
             header?: never;
@@ -2037,7 +2319,7 @@ export interface operations {
             };
         };
     };
-    list_factors_api_signals_factors_get: {
+    list_factors: {
         parameters: {
             query?: never;
             header?: never;
@@ -2057,7 +2339,7 @@ export interface operations {
             };
         };
     };
-    factor_ranking_api_signals_factors__factor_key__get: {
+    factor_ranking: {
         parameters: {
             query: {
                 /** @description universe_id, e.g. sp500 | ibov | ibx */
@@ -2094,7 +2376,7 @@ export interface operations {
             };
         };
     };
-    run_backtest_ep_api_backtest_run_post: {
+    run_backtest_ep: {
         parameters: {
             query?: never;
             header?: never;
@@ -2127,7 +2409,7 @@ export interface operations {
             };
         };
     };
-    list_runs_api_backtest_runs_get: {
+    list_runs: {
         parameters: {
             query?: never;
             header?: never;
@@ -2147,7 +2429,7 @@ export interface operations {
             };
         };
     };
-    get_run_api_backtest_runs__run_id__get: {
+    get_run: {
         parameters: {
             query?: never;
             header?: never;
@@ -2178,7 +2460,7 @@ export interface operations {
             };
         };
     };
-    solve_ep_api_optimiser_solve_post: {
+    solve_ep: {
         parameters: {
             query?: never;
             header?: never;
@@ -2211,7 +2493,7 @@ export interface operations {
             };
         };
     };
-    list_solutions_api_optimiser_solutions_get: {
+    list_solutions: {
         parameters: {
             query?: never;
             header?: never;
@@ -2231,7 +2513,7 @@ export interface operations {
             };
         };
     };
-    get_solution_api_optimiser_solutions__solution_id__get: {
+    get_solution: {
         parameters: {
             query?: never;
             header?: never;
@@ -2262,7 +2544,7 @@ export interface operations {
             };
         };
     };
-    list_series_api_altdata_series_get: {
+    list_altdata_series: {
         parameters: {
             query?: never;
             header?: never;
@@ -2282,7 +2564,7 @@ export interface operations {
             };
         };
     };
-    get_series_api_altdata_series__figi__get: {
+    get_altdata_series: {
         parameters: {
             query?: never;
             header?: never;
@@ -2313,7 +2595,7 @@ export interface operations {
             };
         };
     };
-    graph_api_lineage_graph_get: {
+    graph: {
         parameters: {
             query?: never;
             header?: never;
@@ -2333,7 +2615,7 @@ export interface operations {
             };
         };
     };
-    field_flow_api_lineage_field_flow_get: {
+    field_flow: {
         parameters: {
             query?: never;
             header?: never;

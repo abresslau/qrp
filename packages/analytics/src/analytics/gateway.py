@@ -25,6 +25,10 @@ COVERAGE_FLOOR = 0.99
 _ONE_DAY_WINDOW = 1
 
 
+# Every window code analytics understands; anything else is a 422 at the router.
+VALID_WINDOWS = ("ALL", "SI", "MAX", "YTD", "1M", "3M", "6M", "1Y", "2Y", "3Y")
+
+
 def _window_start(window: str, max_date: date) -> date | None:
     """Map a window code to a start date (inclusive), or None for the full series."""
     w = (window or "ALL").upper()
@@ -156,6 +160,10 @@ class DbAnalyticsGateway:
         )
 
     def analytics(self, pid: int, benchmark_id: int, window: str) -> dict:
+        w = (window or "ALL").upper()
+        if w not in VALID_WINDOWS:
+            # Don't silently compute full-history metrics while echoing the bogus label.
+            raise ValueError(f"unknown window {window!r} (one of {', '.join(VALID_WINDOWS)})")
         as_of_date, port_series, currencies = self._portfolio_daily(pid)
         bench_meta, bench_series = self._benchmark_daily(benchmark_id)
 
@@ -165,8 +173,8 @@ class DbAnalyticsGateway:
             "benchmark": bench_meta,
             "portfolio_currencies": currencies,
             "n_days": 0,
-            "start": None,
-            "end": None,
+            "start_date": None,
+            "end_date": None,
             "metrics": None,
             "warning": None,
         }
@@ -191,7 +199,8 @@ class DbAnalyticsGateway:
                 "(need >= 20 for stable statistics)"
             )
             if common:
-                result["start"], result["end"] = common[0].isoformat(), common[-1].isoformat()
+                result["start_date"] = common[0].isoformat()
+                result["end_date"] = common[-1].isoformat()
             return result
 
         p = [port_series[d] for d in common]
@@ -220,7 +229,8 @@ class DbAnalyticsGateway:
         slugging_ratio = (_mean(wins) / _mean(losses)) if wins and losses else None
 
         result["n_days"] = n
-        result["start"], result["end"] = common[0].isoformat(), common[-1].isoformat()
+        result["start_date"] = common[0].isoformat()
+        result["end_date"] = common[-1].isoformat()
         result["metrics"] = {
             "ann_return": ann_p,
             "ann_vol": sp * math.sqrt(ANN),

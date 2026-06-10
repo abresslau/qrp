@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from analytics.db import connect
@@ -15,7 +15,11 @@ router = APIRouter(tags=["analytics"])
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
     conn = connect("portfolios")  # portfolios DB — portfolio weights
-    sym = connect("sym")                            # sym package — fact_returns / index returns / instrument
+    try:
+        sym = connect("sym")                            # sym package — fact_returns / index returns / instrument
+    except Exception:
+        conn.close()  # don't leak the first connection when the second connect fails
+        raise
     try:
         yield DbAnalyticsGateway(conn, sym)
     finally:
@@ -53,8 +57,8 @@ class Analytics(BaseModel):
     benchmark: Benchmark | None
     portfolio_currencies: list[str]
     n_days: int
-    start: str | None
-    end: str | None
+    start_date: str | None
+    end_date: str | None
     metrics: Metrics | None
     warning: str | None
 
@@ -71,4 +75,7 @@ def portfolio_analytics(
     window: str = Query(default="ALL", description="ALL | YTD | 1M | 3M | 6M | 1Y | 2Y | 3Y"),
     gw: DbAnalyticsGateway = Depends(_gateway),
 ) -> dict:
-    return gw.analytics(pid, benchmark, window)
+    try:
+        return gw.analytics(pid, benchmark, window)
+    except ValueError as exc:  # unknown window code
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

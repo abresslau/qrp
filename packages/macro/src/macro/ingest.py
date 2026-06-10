@@ -60,12 +60,16 @@ def run_ingest(conn: psycopg.Connection) -> dict:
     conn.autocommit = True
     summary: list[dict] = []
     for indicator, name, unit, geos in _WB:
-        try:
-            for meta, obs in fetch_worldbank(indicator, name, unit, geos):
-                n = _upsert(conn, meta, obs)
-                summary.append({"series_id": meta["series_id"], "obs": n, "ok": True})
-        except Exception as exc:  # noqa: BLE001
-            summary.append({"series_id": f"WB:{indicator}", "obs": 0, "ok": False, "error": str(exc)[:160]})
+        # One fetch per geo so a single failing country doesn't skip the indicator's
+        # remaining geos (and the failure is attributed to the right series).
+        for geo in geos:
+            try:
+                for meta, obs in fetch_worldbank(indicator, name, unit, [geo]):
+                    n = _upsert(conn, meta, obs)
+                    summary.append({"series_id": meta["series_id"], "obs": n, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                summary.append({"series_id": f"WB:{indicator}:{geo}", "obs": 0, "ok": False,
+                                "error": str(exc)[:160]})
     for key, sid, name, unit, freq in _ECB:
         try:
             meta, obs = fetch_ecb(key, sid, name, unit, freq)

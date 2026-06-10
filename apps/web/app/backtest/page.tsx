@@ -29,7 +29,7 @@ function EquityCurve({ detail }: { detail: RunDetail }) {
     const W = 760;
     const H = 260;
     const PAD = 30;
-    const xs = pts.map((p) => new Date(p.date).getTime());
+    const xs = pts.map((p) => new Date(p.obs_date).getTime());
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const allY = pts.flatMap((p) => [p.strat, p.base]);

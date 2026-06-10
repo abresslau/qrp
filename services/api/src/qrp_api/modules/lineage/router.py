@@ -8,13 +8,15 @@ the Dagster UI (`dagster_url`); this exposes the table-level edges + the field-f
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api/lineage", tags=["lineage"])
 
 # Where the OSS Dagster UI serves (the console links out for the interactive graph).
-DAGSTER_URL = "http://127.0.0.1:3333"
+DAGSTER_URL = os.environ.get("DAGSTER_URL", "http://127.0.0.1:3333")
 
 
 class LineageEdge(BaseModel):

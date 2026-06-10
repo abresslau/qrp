@@ -25,14 +25,17 @@ def _get(url: str) -> bytes:
 
 
 # --- World Bank (annual indicators, JSON) ---------------------------------------------
-WB_BASE = "https://api.worldbank.org/v2/country/{geo}/indicator/{ind}?format=json&per_page=500&date=1990:2025"
+WB_BASE = (
+    "https://api.worldbank.org/v2/country/{geo}/indicator/{ind}"
+    "?format=json&per_page=500&date=1990:{end_year}"
+)
 
 
 def fetch_worldbank(indicator: str, name: str, unit: str, geos: list[str]) -> list[tuple[dict, list]]:
     """One series per country. WB JSON = [meta, [obs...]]; obs.date is a year string."""
     out: list[tuple[dict, list]] = []
     for geo in geos:
-        url = WB_BASE.format(geo=geo, ind=indicator)
+        url = WB_BASE.format(geo=geo, ind=indicator, end_year=date.today().year)
         payload = json.loads(_get(url).decode("utf-8", "replace"))
         if not isinstance(payload, list) or len(payload) < 2 or payload[1] is None:
             continue

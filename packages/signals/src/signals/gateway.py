@@ -83,6 +83,8 @@ class DbSignalGateway:
             "SELECT max(as_of_date) FROM signals.score WHERE factor_key=%s AND universe_id=%s",
             (factor_key, universe_id),
         ).fetchone()[0]
+        if as_of_date is None:
+            return None  # no scores for this factor+universe — a 404 at the router, not an empty 200
         order = "DESC" if bottom else "ASC"  # rank 1 = most favourable; bottom = least favourable
         rows = self._conn.execute(
             f"""

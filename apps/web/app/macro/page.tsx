@@ -19,7 +19,7 @@ function LineChart({ detail }: { detail: SeriesDetail }) {
     const W = 720;
     const H = 240;
     const PAD = 28;
-    const xs = pts.map((p) => new Date(p.date).getTime());
+    const xs = pts.map((p) => new Date(p.obs_date).getTime());
     const ys = pts.map((p) => p.value);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
