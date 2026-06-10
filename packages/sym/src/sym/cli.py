@@ -321,8 +321,18 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
     from sym.db import connect
     from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
 
-    end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
-    start_date = date.fromisoformat(args.start_date) if args.start_date else end_date - DEFAULT_LOOKBACK
+    try:
+        end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
+        start_date = (
+            date.fromisoformat(args.start_date) if args.start_date
+            else end_date - DEFAULT_LOOKBACK
+        )
+    except ValueError as exc:
+        print(f"invalid date: {exc}", file=sys.stderr)
+        return 1
+    if start_date > end_date:
+        print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
+        return 1
     try:
         with connect() as conn:
             summary = load_returns(conn, start_date=start_date, end_date=end_date)
@@ -345,7 +355,11 @@ def _cmd_backup(args: argparse.Namespace) -> int:
 
     default = Path("backups") / f"sym-{date.today():%Y%m%d}.dump"
     output = Path(args.output) if args.output else default
-    output.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        output.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"backup failed: cannot create {output.parent}: {exc}", file=sys.stderr)
+        return 1
     try:
         run_backup(load_db_config(), str(output))
     except FileNotFoundError as exc:
@@ -404,6 +418,9 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
 
     if not args.all and not args.universe:
         print("specify --universe <id> or --all", file=sys.stderr)
+        return 1
+    if args.all and args.universe:
+        print("--all and --universe are mutually exclusive", file=sys.stderr)
         return 1
     load_dotenv()
     try:
@@ -554,19 +571,28 @@ def _cmd_eod(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
-    only = [s.strip() for s in args.steps.split(",")] if args.steps else None
-    skip = [s.strip() for s in args.skip.split(",")] if args.skip else None
+    only = [s.strip() for s in args.steps.split(",") if s.strip()] if args.steps else None
+    skip = [s.strip() for s in args.skip.split(",") if s.strip()] if args.skip else None
     try:
-        with connect() as conn:
-            conn.autocommit = True
-            summary = run_eod(conn, as_of_date=as_of_date, only=only, skip=skip, dry_run=args.dry_run)
+        if args.dry_run:
+            # The plan is static — printing what WOULD run must work with the DB down.
+            summary = run_eod(None, as_of_date=as_of_date, only=only, skip=skip, dry_run=True)
+        else:
+            with connect() as conn:
+                conn.autocommit = True
+                summary = run_eod(conn, as_of_date=as_of_date, only=only, skip=skip)
+    except ValueError as exc:  # unknown --steps/--skip key (a typo'd cron must be loud)
+        print(f"eod: {exc}", file=sys.stderr)
+        return 1
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
     label = f"eod {'plan' if args.dry_run else 'run'} (as_of_date {as_of_date.isoformat()})"
     print(f"{label}:")
     for r in summary.results:
-        marker = {"planned": "plan", "ok": " ok ", "error": "FAIL"}.get(r.status, "?")
+        marker = {"planned": "plan", "ok": " ok ", "error": "FAIL", "skipped": "skip"}.get(
+            r.status, "?"
+        )
         print(f"  [{marker}] {r.key}: {r.detail}")
     if not args.dry_run:
         print(f"overall: {'OK' if summary.ok else 'FAILED'}")
@@ -591,7 +617,12 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def _fx_currencies(args: argparse.Namespace) -> list[str] | None:
-    return [c.strip().upper() for c in args.currencies.split(",")] if args.currencies else None
+    if not args.currencies:
+        return None
+    # Drop empty segments ('EUR,,GBP' / trailing comma) — an empty-string currency
+    # code would flow into FX source queries.
+    codes = [c.strip().upper() for c in args.currencies.split(",") if c.strip()]
+    return codes or None
 
 
 def _fx_source(name: str):
@@ -654,10 +685,11 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 from sym.fx.reconcile import DEFAULT_DIVERGENCE, find_divergences
 
                 threshold = Decimal(args.threshold) if args.threshold else DEFAULT_DIVERGENCE
-                since = date.fromisoformat(args.since) if args.since else None
+                start_date = date.fromisoformat(args.start_date) if args.start_date else None
                 rep = find_divergences(
                     conn, source_a=args.source_a, source_b=args.source_b,
-                    threshold=threshold, start=since, currencies=_fx_currencies(args),
+                    threshold=threshold, start_date=start_date,
+                    currencies=_fx_currencies(args),
                 )
                 print(
                     f"fx divergence: {rep.source_a} vs {rep.source_b} "
@@ -671,10 +703,17 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                     )
                 return 1 if rep.diverged else 0
             elif args.fx_command == "convert":
+                from decimal import Decimal, InvalidOperation
+
                 from sym.fx.convert import convert
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                out = convert(conn, args.amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of_date)
+                try:
+                    amount = Decimal(args.amount)
+                except InvalidOperation:
+                    print(f"invalid amount {args.amount!r}", file=sys.stderr)
+                    return 1
+                out = convert(conn, amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of_date)
                 if out is None:
                     print(f"convert: unavailable ({args.from_ccy.upper()}->"
                           f"{args.to_ccy.upper()} as-of {as_of_date}: no/stale rate)")
@@ -721,6 +760,11 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                     f"(= {mc.close_raw} {mc.local_currency} x {mc.shares:,.0f} shares "
                     f"as-of {mc.shares_as_of_date})"
                 )
+    except (ValueError, ArithmeticError) as exc:
+        # Malformed --start_date/--end_date/--as_of_date/--since/--threshold across the
+        # fx branches: a one-line message, never a raw traceback.
+        print(f"invalid input: {exc}", file=sys.stderr)
+        return 1
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -1104,7 +1148,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--universe", help="Scope completeness to one universe (else all).")
     p_validate.set_defaults(func=_cmd_validate)
 
-    p_fx = sub.add_parser("fx", help="FX rates: load, coverage, divergence, convert.")
+    p_fx = sub.add_parser(
+        "fx", help="FX rates: load, coverage, divergence, convert, px, returns, mcap."
+    )
     fx_sub = p_fx.add_subparsers(dest="fx_command", required=True, metavar="<action>")
     fx_load = fx_sub.add_parser(
         "load",
@@ -1133,7 +1179,7 @@ def build_parser() -> argparse.ArgumentParser:
     fx_div.add_argument("--source-b", dest="source_b", default="ecb",
                         help="Reference source / denominator (default: ecb).")
     fx_div.add_argument("--threshold", help="Relative flag threshold (default: 0.005 = 0.5%%).")
-    fx_div.add_argument("--since", help="Only compare dates on/after this ISO date.")
+    fx_div.add_argument("--start_date", help="Only compare dates on/after this ISO date.")
     fx_div.add_argument("--currencies", help="Comma-separated subset (default: all overlapping).")
     fx_div.set_defaults(func=_cmd_fx)
     fx_cv = fx_sub.add_parser("convert", help="Convert an amount between currencies as-of a date.")

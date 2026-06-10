@@ -6,10 +6,11 @@ scheduler either calls each ``sym <step>`` as its own task (fine-grained retries
 or runs ``sym eod`` (one cron line). Each step is error-isolated and reports a
 short status; the run fails (non-zero exit) only if a *critical* step fails.
 
-Tiered cadence: the daily core is monitor → fill → map → benchmarks → recompute
-→ validate; ``fundamentals`` (weekly) and ``snapshot-calendar`` (occasional) run on
-their own schedules and are not in the daily default. (``map`` keeps the equity →
-``instrument``/``sym_id`` bridge current so cross-asset joins never drop a new security.)
+Tiered cadence: the daily core is monitor → fill → map → benchmarks → fx →
+recompute → validate; ``fundamentals`` (weekly) and ``snapshot-calendar``
+(occasional) run on their own schedules and are not in the daily default.
+(``map`` keeps the equity → ``instrument``/``sym_id`` bridge current so
+cross-asset joins never drop a new security.)
 """
 
 from __future__ import annotations
@@ -26,8 +27,8 @@ class EodStep:
     critical: bool = True
 
 
-# The daily core, in order. monitor/benchmarks/validate are non-critical (a hiccup
-# shouldn't fail the night); fill + recompute are the critical data path.
+# The daily core, in order. monitor/map/benchmarks/fx/validate are non-critical (a
+# hiccup shouldn't fail the night); fill + recompute are the critical data path.
 DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("monitor", "Discover index-universe membership changes", critical=False),
     EodStep("fill", "Incremental EOD price fill (since each cursor)", critical=True),
@@ -59,7 +60,19 @@ def select_steps(
     only: list[str] | None = None,
     skip: list[str] | None = None,
 ) -> list[EodStep]:
-    """The steps to run after applying ``only``/``skip`` (pure; preserves order)."""
+    """The steps to run after applying ``only``/``skip`` (pure; preserves order).
+
+    Unknown keys raise: a typo'd ``--steps fil`` (or a wrapper still passing a
+    retired step name) would otherwise select an empty plan, run nothing, and
+    exit 0 — a cron line that silently does nothing forever.
+    """
+    known = {s.key for s in steps}
+    unknown = (set(only or []) | set(skip or [])) - known
+    if unknown:
+        raise ValueError(
+            f"unknown EOD step(s): {', '.join(sorted(unknown))} "
+            f"(known: {', '.join(s.key for s in steps)})"
+        )
     selected = list(steps)
     if only:
         only_set = set(only)
@@ -82,8 +95,13 @@ def run_eod(
     """Run the daily EOD steps, error-isolated; return per-step status.
 
     ``runner(key) -> detail`` executes one step (injected for testing); the default
-    dispatches to the real implementations. ``dry_run`` prints the plan only. The
+    dispatches to the real implementations. ``dry_run`` returns the plan only. The
     summary is ``ok`` unless a *critical* step errored.
+
+    Failure semantics: a NON-critical failure is isolated (the run continues); a
+    CRITICAL failure aborts the remaining steps — running recompute/validate on
+    top of a failed price fill would materialize derived data from inputs already
+    known bad. Skipped steps are reported as ``skipped`` with the reason.
     """
     steps = select_steps(only=only, skip=skip)
     summary = EodSummary()
@@ -92,13 +110,24 @@ def run_eod(
         return summary
     run = runner or _default_runner(conn, as_of_date or date.today())
     crit = {s.key: s.critical for s in steps}
+    aborted_by: str | None = None
     for step in steps:
+        if aborted_by is not None:
+            summary.results.append(
+                StepResult(step.key, "skipped", False,
+                           f"skipped: critical step {aborted_by!r} failed")
+            )
+            continue
         try:
             detail = run(step.key)
             summary.results.append(StepResult(step.key, "ok", True, detail))
         except Exception as exc:  # noqa: BLE001 - isolate one step's failure
             summary.results.append(StepResult(step.key, "error", False, str(exc)[:300]))
-    summary.ok = all(r.ok for r in summary.results if crit.get(r.key, True))
+            if step.critical:
+                aborted_by = step.key
+    summary.ok = all(
+        r.ok for r in summary.results if crit.get(r.key, True) and r.status != "skipped"
+    )
     return summary
 
 
@@ -175,7 +204,12 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
             _results, overall = validate(conn)
             p, w, f, _ = summarize(_results)
-            return f"overall={overall} ({p} pass, {w} warn, {f} fail)"
+            detail = f"overall={overall} ({p} pass, {w} warn, {f} fail)"
+            if overall == "fail":
+                # The step must REPORT failure — `[ok] validate: overall=FAIL` was a
+                # gate that couldn't gate. Non-critical, so the run still exits 0.
+                raise RuntimeError(detail)
+            return detail
         raise ValueError(f"unknown EOD step {key!r}")
 
     return run
