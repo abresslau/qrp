@@ -61,6 +61,13 @@ def members_pinned(
 
     Enforces the pit boundary, then re-projects from events ``<= log_version`` so
     later-appended events are ignored — the same pin always returns the same set.
+
+    One-time semantic shift (U3.7): re-projection now routes correctives through
+    tombstone pairing, so a pre-U3.7 pin whose window contains a
+    reverses-corrective can differ from what it returned under toggle semantics.
+    Forward reproducibility is unaffected — a watermark can never include a
+    corrective without its target (``reverse_change`` validates the target
+    exists before appending, and ``event_id`` is monotonic).
     """
     assert_within_pit(as_of_date, _pit_valid_from(conn, universe_id))
     events = _membership_events(conn, universe_id, through=log_version)

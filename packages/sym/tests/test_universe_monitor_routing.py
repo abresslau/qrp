@@ -307,6 +307,20 @@ def test_reversed_leave_member_is_open_again_for_the_monitor(monkeypatch):
     assert conn.proposals == []
 
 
+def test_legacy_toggle_corrective_closes_token_in_open_set(monkeypatch):
+    # The unmatched/legacy corrective branch of the open-set replay: a
+    # provenance-less correct on an open token toggles it CLOSED, so the
+    # snapshot diff treats the provider re-stating it as a (re)join discovery.
+    open_toks = [f"ticker:M{i}@BVMF" for i in range(19)] + ["ticker:B@BVMF"]
+    conn = _Conn(open_tokens=open_toks)
+    conn.extra_events += [("ticker:B@BVMF", "correct", date(2026, 6, 8), 100, None)]
+    provider = _Provider([_join("ticker:B@BVMF")], snapshot=set(open_toks))
+    _patch_provider(monkeypatch, provider)
+    s = run_monitor(conn, "ibov", as_of_date=D)
+    assert s.joiners == 1 and s.proposed == 1  # B reads closed -> rejoin staged
+    assert ("ticker:B@BVMF", "join", "awaiting_persistence") in conn.proposals
+
+
 def test_empty_discoveries_still_run_promotion_heartbeat(monkeypatch):
     # All provider output re-states current membership -> zero discoveries, but the
     # daily run still promotes yesterday's now-persisted proposals.

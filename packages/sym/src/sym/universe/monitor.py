@@ -167,12 +167,21 @@ def _open_tokens(conn: psycopg.Connection, universe_id: str) -> set[str]:
         (universe_id,),
     ).fetchall()
     events = [
-        MembershipEvent("", change, effective, event_id, raw, None, provenance)
-        for raw, change, effective, event_id, provenance in rows
+        MembershipEvent(
+            composite_figi="",  # sentinel: this replay is token-level, pre-resolution
+            change=change,
+            effective_date=effective_date,
+            event_id=event_id,
+            raw_identifier=raw_identifier,
+            provenance=provenance,
+        )
+        for raw_identifier, change, effective_date, event_id, provenance in rows
     ]
-    survivors, _paired, _toggles = pair_corrections(events)
+    # pair_corrections is order-agnostic; the state machine below relies on the
+    # SQL's (effective_date, event_id) ordering, which survivor filtering preserves.
+    survivors, _paired, _toggles, _dangling = pair_corrections(events)
     open_tokens: set[str] = set()
-    for e in sorted(survivors, key=lambda e: (e.effective_date, e.event_id)):
+    for e in survivors:
         if e.change == JOIN:
             open_tokens.add(e.raw_identifier)
         elif e.change == LEAVE:

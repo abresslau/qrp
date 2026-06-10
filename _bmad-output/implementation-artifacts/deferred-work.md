@@ -131,3 +131,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of U3-6-maintenance-plans (2026-06-10)
 
 - Wikipedia membership completeness for ftse100 (92 of ~100), smi (19 of 20), estoxx50 (49 of 50): the plans note the shortfalls but no remediation exists — investigate whether the pages are genuinely short, the parser drops rows, or the indexes' real counts differ; until then the completeness check is the watchdog.
+
+## Deferred from: code review of U3-7-provenance-aware-correct (2026-06-10)
+
+- Exact-date re-assertion dead-end: after reversing an EXACT-dated event, the change cannot be re-asserted at its true date (the surviving original row blocks the dedupe key); the documented operator path (adjacent date) is a knowing misstatement for exact events. Proper fix = a dedupe-key nonce/sequence column on membership_event (schema change).

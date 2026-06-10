@@ -36,7 +36,7 @@ class MembershipEvent:
 
 def pair_corrections(
     events: Iterable[MembershipEvent],
-) -> tuple[list[MembershipEvent], int, int]:
+) -> tuple[list[MembershipEvent], int, int, int]:
     """Annihilate each reverses-corrective with exactly its target event (pure).
 
     A ``correct`` event whose ``provenance.reverses`` names a change kind is a
@@ -47,10 +47,22 @@ def pair_corrections(
     corrective's intent (ledger D3). Matching is per ``raw_identifier``, never
     per FIGI — two tokens resolving to one FIGI must not cross-annihilate.
 
-    A corrective with no ``reverses`` provenance (legacy rows) or no live match
-    SURVIVES as a toggle event (the pre-U3.7 behavior) and is counted.
+    Corrective dispositions:
 
-    Returns ``(survivors, paired_count, toggle_count)``.
+    * matched explicit corrective → PAIRED (both rows removed);
+    * EXPLICIT but unmatched (names a target that isn't in the stream) → a data
+      error; the corrective is DROPPED — inert, never mutating state via the
+      context-dependent toggle this design exists to kill — and counted as
+      DANGLING (recorded review decision, 2026-06-10);
+    * no ``reverses`` provenance at all (legacy rows) → SURVIVES as a toggle
+      event (the pre-U3.7 behavior), counted as a TOGGLE.
+
+    Preconditions (both hold for log-sourced streams): the stream belongs to ONE
+    universe (``universe_id`` is deliberately absent from the match key), and
+    the DB dedupe key guarantees no duplicate ``(raw, change, date)`` targets —
+    hand-built streams violating either get input-order-dependent matching.
+
+    Returns ``(survivors, paired_count, toggle_count, dangling_count)``.
     """
     ordered = list(events)
     targets: dict[tuple, list[int]] = defaultdict(list)
@@ -58,25 +70,30 @@ def pair_corrections(
         if e.change in (JOIN, LEAVE):
             targets[(e.raw_identifier, e.change, e.effective_date)].append(i)
     void: set[int] = set()
-    paired = toggles = 0
+    paired = toggles = dangling = 0
     for i, e in enumerate(ordered):
         if e.change != CORRECT:
             continue
-        reverses = (e.provenance or {}).get("reverses")
+        provenance = e.provenance if isinstance(e.provenance, dict) else {}
+        if "reverses" not in provenance:
+            toggles += 1  # legacy provenance-less corrective: keeps toggle behavior
+            continue
+        reverses = provenance["reverses"]
         target_index = None
-        if reverses in (JOIN, LEAVE):
+        if reverses in (JOIN, LEAVE) and e.raw_identifier is not None:
             for j in targets.get((e.raw_identifier, reverses, e.effective_date), ()):
                 if j not in void:
                     target_index = j
                     break
         if target_index is None:
-            toggles += 1
+            void.add(i)  # dangling explicit corrective: inert, counted
+            dangling += 1
         else:
             void.add(i)
             void.add(target_index)
             paired += 1
     survivors = [e for i, e in enumerate(ordered) if i not in void]
-    return survivors, paired, toggles
+    return survivors, paired, toggles, dangling
 
 
 @dataclass(frozen=True)
@@ -144,10 +161,12 @@ def project_membership(
     Reverses-correctives are paired off against their targets FIRST (see
     :func:`pair_corrections`); only the survivors run the state machine.
     """
-    survivors, paired, toggles = pair_corrections(events)
+    survivors, paired, toggles, dangling = pair_corrections(events)
     if counters is not None:
-        counters["paired_corrections"] = counters.get("paired_corrections", 0) + paired
-        counters["toggle_corrections"] = counters.get("toggle_corrections", 0) + toggles
+        for key, n in (("paired_corrections", paired), ("toggle_corrections", toggles),
+                       ("dangling_corrections", dangling)):
+            if n:
+                counters[key] = counters.get(key, 0) + n
     by_figi: dict[str, list[MembershipEvent]] = defaultdict(list)
     for e in survivors:
         by_figi[e.composite_figi].append(e)
@@ -188,7 +207,8 @@ class ProjectionSummary:
     excluded_unresolved: int = 0  # log members with no resolved FIGI — absent from the read-model
     orphan_leaves: int = 0  # leaves with no open interval (join predates the log floor)
     paired_corrections: int = 0  # reverses-correctives annihilated with their target (U3.7)
-    toggle_corrections: int = 0  # legacy/unmatched correctives that ran as state toggles
+    toggle_corrections: int = 0  # legacy provenance-less correctives that ran as state toggles
+    dangling_corrections: int = 0  # explicit correctives naming a missing target — dropped, inert
 
 
 def _excluded_unresolved(conn: psycopg.Connection, universe_id: str) -> int:
@@ -223,6 +243,7 @@ def rebuild_projection(conn: psycopg.Connection, universe_id: str) -> Projection
         orphan_leaves=counters.get("orphan_leaves", 0),
         paired_corrections=counters.get("paired_corrections", 0),
         toggle_corrections=counters.get("toggle_corrections", 0),
+        dangling_corrections=counters.get("dangling_corrections", 0),
     )
     with conn.transaction():
         conn.execute("DELETE FROM universe_membership WHERE universe_id = %s", (universe_id,))

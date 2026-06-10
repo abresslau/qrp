@@ -142,17 +142,40 @@ the corrective's own position in the ordering is irrelevant. Pairing is per
 `raw_identifier` (the corrective names an event row, pre-resolution); two
 tokens resolving to one FIGI never cross-annihilate.
 
-**Legacy toggle fallback.** A corrective with no `reverses` provenance, or one
-whose named target does not exist, runs as the pre-U3.7 behavior: a per-state
-toggle (closes an open membership, reopens a closed one). These are counted on
-`ProjectionSummary.toggle_corrections` (paired ones on `paired_corrections`) so
-reinterpretation of history is visible, never silent.
+**Legacy toggle fallback / dangling drop.** A corrective with NO `reverses`
+provenance (legacy rows) runs as the pre-U3.7 behavior: a per-state toggle
+(closes an open membership, reopens a closed one). A corrective that EXPLICITLY
+names a target which does not exist is a data error and is DROPPED — inert,
+never mutating state via the context-dependent toggle this design exists to
+kill. Both are counted on `ProjectionSummary` (`toggle_corrections` /
+`dangling_corrections`; paired ones on `paired_corrections`), surfaced when the
+projection REBUILDS — the monitor's open-set replay uses the same logic but does
+not report the counts per run.
 
-**Known limitation (deliberate — dedupe key unchanged).** The event dedupe key
+**Scope of the agreement guarantee.** The projector and the monitor's open-set
+replay agree BY CONSTRUCTION for paired correctives. A legacy toggle corrective
+can still diverge between them (the projector toggles FIGI-level state after
+resolution merge; the monitor toggles token-level state), and unresolved tokens
+are visible to the monitor but excluded from the projection (surfaced via
+`excluded_unresolved`) — both are properties of legacy/edge data, not of the
+reverse path: every corrective created through `sym universe reverse` pairs.
+
+**Known limitations (deliberate — dedupe key unchanged).** The event dedupe key
 `(universe_id, raw_identifier, change, effective_date)` admits only one
 `correct` row per token+date, so: (a) a same-token join AND leave on one date
-cannot both be reversed; (b) a correction cannot itself be un-corrected at the
-same date — re-assert the change at its true (possibly adjacent) date instead;
-(c) re-asserting the SAME change at the SAME date after reversing it is blocked
-by the surviving original row. The operator path for all three is recording the
-event at the correct date.
+cannot both be reversed; (b) a correction cannot be un-corrected at all —
+`sym universe reverse` refuses `correct` targets at ANY date (reversing a
+corrective would re-apply the wrong change), and the dedupe key blocks a second
+same-date corrective regardless; (c) re-asserting the SAME change at the SAME
+date after reversing it is blocked by the surviving original row. The operator
+path is recording the event at an adjacent date — fine for `poll_bounded`
+events (the date was an approximation within the polling window anyway), but a
+knowing misstatement for `exact`-dated events; the proper fix (a dedupe-key
+nonce) is on the deferred-work ledger.
+
+**One-time historical-pin shift (U3.7).** `members_pinned` (Story U1.6)
+re-projects through the same pairing logic: a pre-U3.7 pin whose watermarked
+window contains a reverses-corrective can return a different member set than it
+did under toggle semantics. Reproducibility going FORWARD is unaffected (a
+watermark can never include a corrective without its target — `reverse` checks
+the target exists before appending, and `event_id` is monotonic).

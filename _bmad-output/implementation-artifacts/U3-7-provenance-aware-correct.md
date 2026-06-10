@@ -1,6 +1,6 @@
 # Story U3.7: Provenance-aware corrective events — tombstone pairing (ledger D3)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -53,6 +53,23 @@ The monitor's `_open_tokens` switches to the same pure pairing+state-machine log
 - [x] Task 3: Live round-trip on ibov (AC: 5)
 - [x] Task 4: Docs + ledger (AC: 6)
 - [x] Task 5: Full suite + lint (AC: 7)
+
+### Review Findings (code review 2026-06-10, commit e83e5f2 — ALL RESOLVED)
+
+- [x] [Review][Decision→Patch] Dangling EXPLICIT corrective — RESOLVED (option a, deviating from the story's constraint 4 by recorded operator decision): a corrective naming a target that doesn't exist is DROPPED (inert) and counted as `dangling_corrections`; only provenance-less legacy rows keep toggle behavior [projection.py]
+- [x] [Review][Patch] "Agree by construction" scoped to the PAIRED path in docs §5 (legacy toggles can diverge token-vs-FIGI; unresolved tokens monitor-only by design); live census: ZERO correctives exist in the log, so no legacy rows are affected; toggle/dangling counts surface at projection rebuild (documented) [docs]
+- [x] [Review][Patch] AC5 redone with a RESOLVED member (ABEV3/BBG000DCR6J5): synthetic leave → projection AND log-replay read closed → `reverse` → BOTH read open, `paired_corrections=1` live → monitor derives NOTHING (member in B3 snapshot + open) → 2 synthetic events deleted, 78 members, monitor 0/0. AC5's literal observables produced this time [live verification]
+- [x] [Review][Patch] Mixed paired+toggle test + monitor unmatched-toggle routing test added [tests]
+- [x] [Review][Patch] Non-dict provenance guarded (isinstance); `raw_identifier=None` corrective → dangling, never None-matched [projection.py]
+- [x] [Review][Patch] Preconditions documented on `pair_corrections` (single-universe stream, DB dedupe invariant) [projection.py]
+- [x] [Review][Patch] Story record arithmetic corrected (see amended notes below) [story file]
+- [x] [Review][Patch] Keyword-args event construction + redundant re-sort dropped (SQL ordering is the contract, stated) [monitor.py]
+- [x] [Review][Patch] Docs §5: CLI blocks un-correction at any date; adjacent-date advice scoped by precision; `members_pinned` one-time shift recorded in §5 + snapshot.py docstring [docs]
+- [x] [Review][Patch] Ledger entry added: exact-date re-assertion dead-end → dedupe-key nonce (schema follow-up) [deferred-work.md]
+
+Record corrections (review round): Task 1 produced 7 pairing tests (not 8); the e83e5f2 commit added 8 tests total (7 pairing + 1 routing), not 9; the invert-roundtrip property is scoped to join/leave streams by design — pairing correctness has its own dedicated tests. Post-review the pairing file has 10 tests and the suite is 486.
+- [x] [Review][Defer] Exact-date corrective re-assertion dead-end (schema nonce) — deferred to ledger, schema change out of scope
+- Dismissed (3): property-test "hollowness" (the invert-roundtrip is and was scoped to join/leave streams; pairing has dedicated coverage); unresolved-token monitor/projection divergence (pre-existing by design, surfaced via `excluded_unresolved`); duplicate-target order dependence (impossible under the DB dedupe key; covered by the precondition docstring patch).
 
 ## Dev Notes
 
@@ -118,3 +135,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor per task.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-5); suite 474 → 482 green; live ibov round-trip verified (closed → reversed → open in the log replay; monitor sees it). Status → review.
+- 2026-06-10: Code review (3 adversarial layers) — 1 decision (dangling explicit correctives now DROPPED + counted, a recorded deviation from constraint 4) + 9 patches applied, 1 deferred (dedupe-key nonce → ledger), 3 dismissed. AC5 re-verified live with a resolved member (ABEV3): projection + log replay agree closed→open across the reverse, `paired_corrections=1` observed, monitor derives nothing. Auditor confirmed `members_pinned` reproducibility is not broken (one-time historical shift now documented). Suite 482 → 486 green. Status → done.
