@@ -43,7 +43,7 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
             "fx_coverage",
             checked=len(needed),
             warnings=[f"{c}: no FX (table empty)" for c in needed],
-            detail="fx_rate is empty - run `sym fx backfill`.",
+            detail="fx_rate is empty - run `sym fx load --start_date 1999-01-04`.",
         )
     warnings: list[str] = []
     for ccy in needed:

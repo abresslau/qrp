@@ -413,9 +413,9 @@ _RUNNABLE_SYM = [
     _sym_asset(
         "fx_rate", ("sym", "fx_rate"), [],
         "USD-base FX rates, multi-source with reconciliation; immutable per source/pair/date.",
-        _md(("sym", "fx_rate"), "sym", "fx_rate", "`sym fx backfill` / `sym fx delta`",
+        _md(("sym", "fx_rate"), "sym", "fx_rate", "`sym fx load` (fill)",
             source="Frankfurter · ECB SDMX · fawazahmed0"),
-        ["fx", "delta"],
+        ["fx", "load"],
     ),
     _sym_asset(
         "index_levels", ("sym", "index_levels"), [],

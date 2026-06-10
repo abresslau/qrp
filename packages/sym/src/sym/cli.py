@@ -615,35 +615,23 @@ def _cmd_fx(args: argparse.Namespace) -> int:
     try:
         with connect() as conn:
             conn.autocommit = True
-            if args.fx_command == "backfill":
-                from sym.fx.ingest import DEFAULT_FX_FLOOR, backfill_fx
+            if args.fx_command == "load":
+                from sym.fx.ingest import fill_fx
 
-                start = date.fromisoformat(args.start) if args.start else DEFAULT_FX_FLOOR
-                s = backfill_fx(
-                    conn, _fx_source(args.source), end=today, start=start,
+                start = date.fromisoformat(args.start_date) if args.start_date else None
+                end = date.fromisoformat(args.end_date) if args.end_date else today
+                s = fill_fx(
+                    conn, _fx_source(args.source), end=end, start=start,
                     currencies=_fx_currencies(args),
                 )
+                window = f"[{start} .. {end}]" if start else f"[tail .. {end}]"
                 print(
-                    f"fx backfill: {s.currencies} currencies, inserted={s.inserted}, "
+                    f"fx load {window}: {s.currencies} currencies, inserted={s.inserted}, "
                     f"skipped={s.skipped_existing}, implausible={s.implausible}"
                 )
                 if s.flagged:
                     print(f"  flagged (rejected): {', '.join(s.flagged[:10])}")
                 if s.inserted:  # new FX can fill previously-uncovered currency/dates
-                    from sym.universe.fundamentals import recompute_market_cap_usd
-
-                    print(f"  market_cap_usd recomputed ({recompute_market_cap_usd(conn)} rows)")
-            elif args.fx_command == "delta":
-                from sym.fx.ingest import delta_fx
-
-                s = delta_fx(
-                    conn, _fx_source(args.source), end=today, currencies=_fx_currencies(args)
-                )
-                print(
-                    f"fx delta: inserted={s.inserted}, skipped={s.skipped_existing}, "
-                    f"implausible={s.implausible}"
-                )
-                if s.inserted:
                     from sym.universe.fundamentals import recompute_market_cap_usd
 
                     print(f"  market_cap_usd recomputed ({recompute_market_cap_usd(conn)} rows)")
@@ -1109,24 +1097,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_validate.add_argument("--universe", help="Scope completeness to one universe (else all).")
     p_validate.set_defaults(func=_cmd_validate)
 
-    p_fx = sub.add_parser("fx", help="FX rates: backfill/delta, coverage, convert.")
+    p_fx = sub.add_parser("fx", help="FX rates: load, coverage, divergence, convert.")
     fx_sub = p_fx.add_subparsers(dest="fx_command", required=True, metavar="<action>")
-    fx_bf = fx_sub.add_parser("backfill", help="Load full USD-base history (resumable).")
-    fx_bf.add_argument("--from", dest="start", help="Start date (ISO; default: 1999-01-04).")
-    fx_bf.add_argument("--currencies", help="Comma-separated subset (default: all in `currency`).")
-    fx_bf.add_argument(
+    fx_load = fx_sub.add_parser(
+        "load",
+        help="Load USD-base rates: no --start_date = the tail since the latest stored date "
+        "(daily); --start_date = fill from that floor (full history, resumable).",
+    )
+    fx_load.add_argument(
+        "--start_date",
+        help="Window start (ISO). Omit for tail-since-latest; 1999-01-04 is the ECB floor.",
+    )
+    fx_load.add_argument("--end_date", help="Window end (ISO; default: today).")
+    fx_load.add_argument("--currencies", help="Comma-separated subset (default: all in `currency`).")
+    fx_load.add_argument(
         "--source", default="frankfurter", choices=["frankfurter", "ecb", "fawazahmed0"],
         help="FX source (default: frankfurter; ecb is the reconcile, fawazahmed0 the breadth "
              "fallback).",
     )
-    fx_bf.set_defaults(func=_cmd_fx)
-    fx_dl = fx_sub.add_parser("delta", help="Load the tail after the latest stored date.")
-    fx_dl.add_argument("--currencies", help="Comma-separated subset (default: all in `currency`).")
-    fx_dl.add_argument(
-        "--source", default="frankfurter", choices=["frankfurter", "ecb", "fawazahmed0"],
-        help="FX source (default: frankfurter).",
-    )
-    fx_dl.set_defaults(func=_cmd_fx)
+    fx_load.set_defaults(func=_cmd_fx)
     fx_cov = fx_sub.add_parser("coverage", help="FX coverage vs priced-instrument currencies.")
     fx_cov.set_defaults(func=_cmd_fx)
     fx_div = fx_sub.add_parser(

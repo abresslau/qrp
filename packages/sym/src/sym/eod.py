@@ -33,7 +33,7 @@ DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("fill", "Incremental EOD price fill (since each cursor)", critical=True),
     EodStep("map", "Map new securities to instrument identity (sym_id bridge)", critical=False),
     EodStep("benchmarks", "Refresh benchmark index levels + returns", critical=False),
-    EodStep("fx", "Daily FX rate delta (Frankfurter)", critical=False),
+    EodStep("fx", "Daily FX rate fill (Frankfurter)", critical=False),
     EodStep("recompute", "Materialize fact_returns (PR + TR)", critical=True),
     EodStep("validate", "Cross-layer integrity gate", critical=False),
 )
@@ -153,11 +153,12 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             link_universe_benchmarks(conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
-            from sym.fx.ingest import delta_fx
+            from sym.fx.ingest import fill_fx
             from sym.fx.source import FrankfurterSource
             from sym.universe.fundamentals import recompute_market_cap_usd
 
-            s = delta_fx(conn, FrankfurterSource(), end=as_of_date)
+            # Daily forward fill (start=None -> tail since the latest stored date).
+            s = fill_fx(conn, FrankfurterSource(), end=as_of_date)
             usd = recompute_market_cap_usd(conn) if s.inserted else 0
             return (
                 f"inserted={s.inserted} skipped={s.skipped_existing} "

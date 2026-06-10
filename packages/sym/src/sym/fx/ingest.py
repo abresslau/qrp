@@ -4,8 +4,11 @@ Fetches USD-base observations from an ``FxSource``, runs a **relative** day-over
 plausibility band (catches a decimal shift / inverted feed / 10x without per-currency
 magic numbers), and inserts them as ``(base='USD', quote=ccy, …)`` with
 ``ON CONFLICT DO NOTHING`` (immutable; resumable — a re-run inserts only missing rows).
-``backfill`` loads from the ECB-inception floor; ``delta`` loads only the tail after the
-latest stored date. Stored rates are never overwritten; corrections are out of scope (v1).
+
+One loader, :func:`fill_fx`, mirrors `sym load`: no ``start`` → the tail after the latest
+stored date (the daily case); an explicit ``start`` → fill from that floor (e.g. the
+ECB-inception ``DEFAULT_FX_FLOOR``, a full-history backfill). Stored rates are never
+overwritten; corrections are out of scope (v1), so there is no overwrite mode.
 """
 
 from __future__ import annotations
@@ -103,31 +106,23 @@ def load_fx(
     return summary
 
 
-def backfill_fx(
+def fill_fx(
     conn: psycopg.Connection,
     source: FxSource,
     *,
     end: date,
-    start: date = DEFAULT_FX_FLOOR,
+    start: date | None = None,
     currencies: Iterable[str] | None = None,
 ) -> FxLoadSummary:
-    """Full-history load from the ECB-inception floor (resumable; immutable writes)."""
-    return load_fx(
-        conn, source, start=start, end=end,
-        currencies=list(currencies) if currencies is not None else None,
-    )
+    """Add missing USD-base rates (immutable insert; skips existing) — the one FX loader.
 
-
-def delta_fx(
-    conn: psycopg.Connection,
-    source: FxSource,
-    *,
-    end: date,
-    currencies: Iterable[str] | None = None,
-) -> FxLoadSummary:
-    """Incremental load of the tail after the latest stored date for this source."""
-    last = _max_stored_date(conn, source.SOURCE)
-    start = (last + timedelta(days=1)) if last is not None else DEFAULT_FX_FLOOR
+    Forward (``start=None``): only the tail after the latest stored date for this source
+    (the daily case). Gap-aware (explicit ``start``): fill from that floor — e.g.
+    ``DEFAULT_FX_FLOOR`` for a full-history backfill. Mirrors `sym load` (fill).
+    """
+    if start is None:
+        last = _max_stored_date(conn, source.SOURCE)
+        start = (last + timedelta(days=1)) if last is not None else DEFAULT_FX_FLOOR
     if start > end:
         return FxLoadSummary()
     return load_fx(

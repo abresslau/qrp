@@ -94,5 +94,5 @@ table-to-table) + column-aware catalog search. So the column data is all here in
 - Windows: `dagster dev` logs a benign warning that compute-log capture is disabled
   (`PYTHONLEGACYWINDOWSSTDIO`) — does not affect lineage.
 - Not yet wired into the QRP console/`platform.toml` (it's a standalone Dagster UI for now).
-- The runnable sym assets intentionally use light commands (e.g. `load`, `fx delta`); heavier
+- The runnable sym assets intentionally use light commands (e.g. `load`, `fx load`); heavier
   modes (a gap-aware `load --start_date` backfill) are available via the same `sym` CLI.
