@@ -1,4 +1,17 @@
 
+## Deferred from: code review of sym data core, chunk 2 of project-wide review (2026-06-10)
+
+- Multi-flag review schema: audit (`sweep_divergence`) and ingest (`price_jump`/non-trading-day) flags share one `(figi, session_date)` slot and clobber each other while unreviewed; `pct_move` flips between signed and unsigned-relative semantics. Fix = one row per flag_type (schema change).
+- Run-log row written up-front (`status='running'`, finalized on completion) so a process death mid-run leaves a visible record instead of silently missing FR-8 history. Pairs with the Operate heartbeat backlog item.
+- Persistent FX-rejection table (FX NFR4's `prices_review` analog): plausibility rejections live only in the in-memory `FxLoadSummary.flagged` list — printed, never stored. After a genuine >50% move (peg break) the band also wedges until an operator notices; a durable review surface is the fix for both.
+- `convert()` returns bare `None` — the legs' rich `FxResolution` status (stale vs no-data vs leg-spread) is discarded. Surface a reason (FX3b AC3's "+ flag").
+- `sym audit` covers active securities only — a vendor's retroactive correction inside a recently-delisted name's trailing window is never detected.
+- Data-level survivorship test (Story 3.7 AC3): compute returns for a known delisted figi through its delist date (needs DB-backed test infra; current guards are static source scans).
+- Currency-redenomination history: `fx/restate.py` applies the security's CURRENT currency across all history (wrong across e.g. pre-euro changeovers). Needs an SCD currency table that doesn't exist yet.
+- Read-side dirty-set for returns recompute (Story 3.6 efficiency intent): loader recomputes everything in range and skips only at the upsert.
+- PR-vs-TR benchmark mixing: the `dax` link makes a TR index primary against PR member returns (amended B3 accepted variant-free storage; alpha consumers should get a variant-awareness pass under the index-maintenance plan).
+- MSCI date-format ambiguity: `_DATE_FORMATS` tries day-first then month-first — `03/04/2025` parses day-first silently. Operator-controlled import; document the expected format or add a column/format hint.
+
 ## Deferred from: code review of QRP module layer, chunk 1 of project-wide review (2026-06-10)
 
 Roadmap-depth FR gaps (spec'd, built to demo depth in the 2026-06-08 v1) + refactors that fold into the decided qrp/packages restructure:
