@@ -1,4 +1,22 @@
 
+## Deferred from: code review of QRP module layer, chunk 1 of project-wide review (2026-06-10)
+
+Roadmap-depth FR gaps (spec'd, built to demo depth in the 2026-06-08 v1) + refactors that fold into the decided qrp/packages restructure:
+
+- FR-15: portfolio returns are a latest-weights × latest-returns dot product — not time-weighted, no PnL (money), weights history never consumed time-series-wise [portfolios/gateway.py:197-264; analytics/gateway.py:85-139 applies latest weights retroactively].
+- FR-20: macro observations carry `source` but no release/vintage date — restatements indistinguishable [macro/ingest.py:38-55].
+- FR-22: optimiser takes no constraints input (hardcoded long-only sum=1), never consumes `signals.score`, and has no save-solution-as-Portfolio path [optimiser/engine.py:101-111, router.py:50-55].
+- FR-17: analytics benchmark picker lists only `instrument.kind='index'` — a sym Universe cannot be the benchmark [analytics/gateway.py:68-83].
+- Gateway encapsulation: backtest router reaches into `gw._sym`; several gateways type `sym_conn: ... | None` then dereference unconditionally [backtest/router.py:89; analytics/gateway.py:70]. Fold into the qrp structure-target refactor.
+- DRY: eight byte-identical `db.py` helpers (already drifted once — see analytics `_OWN` bug); fold into the decided qrp/packages restructure rather than patching eight copies.
+
+Backlogged by decision (review 2026-06-10, D2/D4/D6/D7 accepted recommendations):
+
+- **Operate architecture story (D2):** reconcile subprocess-everything vs the recorded library-first ADR-1 (or record the reversal); add `heartbeat_at` + orphaned-run reconciliation; add `triggered_by` provenance + `run_log_id` correlation to `pipeline_run_log`; decide lock granularity (spec said per Operation, built per op+args); widen the op allowlist (fx/fill/eod/universe review|confirm) or record the narrowing; build the FR-6 run-history endpoint over `pipeline_run_log` (v1 spec item, missing entirely). Immediate wedge/lock dangers patched in-review (stable lock key, stale-job window, thread-death guard).
+- **API hardening (D4):** same-origin/CSRF guard on actuation endpoints; move backtest/optimiser engine execution out of request handlers (into Operate). Accepted as-is for local single-operator v1; arg flag-injection patched in-review.
+- **Error envelope rollout (D6):** spec'd `{error:{type,message,detail?}}` envelope + unified `ok|degraded|failed|stale` status vocabulary across all modules. Operate's dishonest 200s patched to 409/422 in-review.
+- **analytics boundaries (D7):** remount under its own toggle-scoped prefix (currently appears under `/api/portfolios/...` even when the portfolios toggle is off); consume weights via the portfolios gateway instead of reading `portfolio_weight` directly; replace retroactive latest-weights application with effective-dated weighting (pairs with the FR-15 time-weighted-returns deferral). `_OWN` mislabel patched in-review.
+
 ## Deferred from: code review of 3.1-ext-return-window-expansion (2026-06-07)
 
 - `base_date` assumes `asof` is a member of the calendar `sessions` list. Off-calendar price dates (known pre-1990 / vendor-phantom bars, already WARN-classified and inert to returns) make the SESSION-count and snap logic count from the insertion point — slightly off but harmless. Optional hardening: snap `asof` via `_last_on_or_before` before counting. Pre-existing (all base-date snapping shares this assumption).

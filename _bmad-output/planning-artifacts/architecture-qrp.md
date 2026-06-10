@@ -57,6 +57,12 @@ shared Postgres").**
   database but are now **Sqitch-formalized** (project `qrp`, commit `38074b0`). The built v1
   (Q1–Q5 + the 8 module areas) is **NOT invalidated** — this changes deployment topology, not the
   consumer/actuator design. Migration is a forward, incremental, force-triggered workstream.
+- **ADR-3 interim ruling (2026-06-10, project-wide code review chunk 1):** module reads of sym
+  **base tables are accepted until the DuckDB-federation restructure lands** — the spec'd published
+  views mostly don't exist, and building them now would be throwaway work given the federation
+  direction above. The views-only contract is NOT abandoned: it re-materializes as the per-package
+  read-only role + `ATTACH READ_ONLY` discipline when the restructure is built. Until then,
+  reads-are-read-only remains a code-review-enforced discipline, not a physical one.
 - **New design items it introduces:** a **materialization tier** (regenerable Parquet snapshots
   for heavy analytical paths; never authoritative), a **live-vs-materialized freshness contract**
   per read surface, and **meta-orchestration** (deploy-all migrations / compose-up-all DBs / one
