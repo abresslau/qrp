@@ -1,24 +1,30 @@
-"""Reproducible universe snapshots (Story U1.6).
+"""Reproducible universe snapshots (Story U1.6; resolution watermark U1.7).
 
-A *snapshot pin* is ``(universe_id, as_of_date, log_version)`` where ``log_version`` is
-a monotonic ``membership_event.event_id`` watermark. A pinned membership query
-re-projects from only the events ``<= log_version`` (it does NOT read the
-materialized ``universe_membership``, which reflects the latest rebuild), so
-later-appended events — including corrections — are ignored and a re-run of the
-same pin yields identical membership. Determinism follows from the projection
-being a pure function of the ordered event subset (resolutions are frozen, U1.3).
+A *snapshot pin* is ``(universe_id, as_of_date, log_version, resolved_through)``:
 
-KNOWN CAVEAT (deferred): the pin watermarks EVENTS, not resolutions. A member
-that resolves (or upgrades from `unresolved`) AFTER the pin was taken changes a
-later re-run of the same pin — full reproducibility needs a resolution watermark
-(e.g. resolved_at <= pin time), which the schema does not carry yet. See the
-deferred-work ledger (chunk-3 review, D2).
+* ``log_version`` — a monotonic ``membership_event.event_id`` watermark; the
+  pinned query re-projects from only the events ``<= log_version`` (it does NOT
+  read the materialized ``universe_membership``), so later-appended events —
+  including corrections — are ignored;
+* ``resolved_through`` — a timestamp watermark over
+  ``universe_member_resolution.resolved_at``; resolutions written (or upgraded
+  from ``unresolved`` — the upgrade re-stamps ``resolved_at``) AFTER the pin are
+  ignored, so a member unresolved at pin time stays out of the pin forever.
+
+Capture both with :func:`current_log_version` + :func:`current_resolution_version`
+at pin time. Determinism then follows from the projection being a pure function
+of the watermarked event/resolution subsets: resolutions mutate at most once
+(the upgrade-only upsert, U1.3) — if a re-pointing write path is ever added,
+pin reproducibility needs resolution SCD, not just this watermark.
+``resolved_through=None`` preserves the U1.6 events-only behavior (an old pin
+without a stored resolution watermark remains readable, with the original,
+weaker guarantee).
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date
+from datetime import date, datetime
 
 import psycopg
 
@@ -39,6 +45,21 @@ def current_log_version(conn: psycopg.Connection, universe_id: str) -> int:
     return row[0] if row else 0
 
 
+def current_resolution_version(conn: psycopg.Connection, universe_id: str) -> datetime:
+    """The current resolution watermark — ``max(resolved_at)`` (epoch if none).
+
+    Store this alongside :func:`current_log_version` when taking a pin. Take the
+    pin OUTSIDE an in-flight resolution run — a batch committing around the
+    capture moment lands on whichever side its commit falls.
+    """
+    row = conn.execute(
+        "SELECT coalesce(max(resolved_at), 'epoch'::timestamptz) "
+        "FROM universe_member_resolution WHERE universe_id = %s",
+        (universe_id,),
+    ).fetchone()
+    return row[0]
+
+
 def members_from_events(events: Iterable[MembershipEvent], as_of_date: date) -> set[str]:
     """The CompositeFIGI set that was a member on ``as_of_date`` given ``events`` (pure).
 
@@ -55,12 +76,19 @@ def members_from_events(events: Iterable[MembershipEvent], as_of_date: date) -> 
 
 
 def members_pinned(
-    conn: psycopg.Connection, universe_id: str, as_of_date: date, log_version: int
+    conn: psycopg.Connection,
+    universe_id: str,
+    as_of_date: date,
+    log_version: int,
+    resolved_through: datetime | None = None,
 ) -> set[str]:
-    """Members as-of ``as_of_date`` as the log stood at ``log_version`` (reproducible).
+    """Members as-of ``as_of_date`` as the log AND resolutions stood at the pin.
 
-    Enforces the pit boundary, then re-projects from events ``<= log_version`` so
-    later-appended events are ignored — the same pin always returns the same set.
+    Enforces the pit boundary, then re-projects from events ``<= log_version``
+    joined to resolutions with ``resolved_at <= resolved_through`` — the same
+    pin always returns the same set, including across later resolution upgrades
+    (U1.7). ``resolved_through=None`` is the legacy U1.6 events-only pin: still
+    deterministic over events, but a post-pin resolution upgrade changes it.
 
     One-time semantic shift (U3.7): re-projection now routes correctives through
     tombstone pairing, so a pre-U3.7 pin whose window contains a
@@ -70,5 +98,7 @@ def members_pinned(
     exists before appending, and ``event_id`` is monotonic).
     """
     assert_within_pit(as_of_date, _pit_valid_from(conn, universe_id))
-    events = _membership_events(conn, universe_id, through=log_version)
+    events = _membership_events(
+        conn, universe_id, through=log_version, resolved_through=resolved_through
+    )
     return members_from_events(events, as_of_date)

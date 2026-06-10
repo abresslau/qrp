@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 import psycopg
 
@@ -174,13 +174,19 @@ def project_membership(
 
 
 def _membership_events(
-    conn: psycopg.Connection, universe_id: str, through: int | None = None
+    conn: psycopg.Connection,
+    universe_id: str,
+    through: int | None = None,
+    resolved_through: datetime | None = None,
 ) -> list[MembershipEvent]:
     """Resolved events for a universe (join to frozen resolutions; resolved only).
 
     ``through`` caps the result to events with ``event_id <= through`` — the
-    log-version watermark used by reproducible snapshots (Story U1.6). ``None``
-    (the default) reads the full log for the latest rebuild.
+    log-version watermark used by reproducible snapshots (Story U1.6).
+    ``resolved_through`` additionally caps the resolution join to rows with
+    ``resolved_at <= resolved_through`` — the resolution watermark (U1.7): a
+    member that resolved AFTER a pin was taken stays excluded from that pin.
+    ``None`` for either (the defaults) reads the latest state.
     """
     sql = """
         SELECT r.composite_figi, e.change, e.effective_date, e.event_id,
@@ -195,6 +201,9 @@ def _membership_events(
     if through is not None:
         sql += " AND e.event_id <= %s"
         params.append(through)
+    if resolved_through is not None:
+        sql += " AND r.resolved_at <= %s"
+        params.append(resolved_through)
     sql += " ORDER BY e.effective_date, e.event_id"
     rows = conn.execute(sql, params).fetchall()
     return [MembershipEvent(*row) for row in rows]

@@ -288,7 +288,10 @@ def _write_resolutions(
 ) -> None:
     for raw, mr in resolutions.items():
         # Upgrade-only upsert: a fresh outcome replaces an UNRESOLVED row only when it
-        # actually resolved; a frozen RESOLVED row is never touched.
+        # actually resolved; a frozen RESOLVED row is never touched. The upgrade
+        # re-stamps resolved_at — "when this mapping became visible" — which is what
+        # makes the snapshot-pin resolution watermark sound (U1.7): a pin taken while
+        # the member was unresolved must keep excluding it after the upgrade.
         inserted = conn.execute(
             """
             INSERT INTO universe_member_resolution
@@ -299,7 +302,8 @@ def _write_resolutions(
                 SET composite_figi = EXCLUDED.composite_figi,
                     share_class_figi = EXCLUDED.share_class_figi,
                     resolution_status = EXCLUDED.resolution_status,
-                    detail = EXCLUDED.detail
+                    detail = EXCLUDED.detail,
+                    resolved_at = now()
                 WHERE universe_member_resolution.resolution_status = %s
                   AND EXCLUDED.resolution_status = %s
             RETURNING raw_identifier
