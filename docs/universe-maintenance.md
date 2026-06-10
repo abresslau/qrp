@@ -3,7 +3,24 @@
 Every index universe MUST have a maintenance plan before it is populated:
 **source · monitor cadence · gating · point-in-time (PIT) boundary**. This file
 records them. (US/European index plans follow the same template; the B3 plan
-below is the first written down explicitly.)
+below is the first written down explicitly. The S&P 500/400/600 and the eight
+European index universes are POPULATED WITHOUT WRITTEN PLANS — a known violation
+of this rule, backlogged in the deferred-work ledger, chunk-3 review D4.)
+
+> **⚠ Honesty note (2026-06-10 code review):** two safety mechanisms this file
+> previously described as live are NOT wired in yet (backlogged as the U3-wire
+> story, deferred-work ledger D1):
+>
+> 1. **Snapshot leaver detection does not exist.** `run_monitor` appends provider
+>    output directly; nothing diffs a snapshot against maintained membership, so a
+>    name that drops out of a snapshot source (B3, ETF holdings, criteria) keeps an
+>    open membership interval until the U3-wire story lands. (The monitor IS
+>    idempotent — re-stated members are not re-appended.)
+> 2. **Gating is not wired.** `stage_and_promote` exists and is tested, but
+>    `run_monitor` bypasses it: every discovered change is applied directly to the
+>    event log. `membership_proposal` stays empty, so `sym universe review`'s
+>    pending pane and `sym universe confirm` currently have nothing to act on.
+>    The accuracy gate (`run_accuracy_check`) likewise has no runner/schedule.
 
 ## ibov — Ibovespa (B3)
 
@@ -20,16 +37,18 @@ below is the first written down explicitly.)
   `IndexSourceError` (never applied as "every member left").
 - **PIT boundary:** **build-forward.** B3's daily endpoint carries no history, so
   `pit_valid_from` is pinned at inception (2026-06-08). Membership before that date
-  is unknown and is not back-projected (no survivorship bias). Leavers are tracked
-  *forward* from the first monitor via the membership diff.
+  is unknown and is not back-projected (no survivorship bias). Leavers WILL BE
+  tracked *forward* via the maintained-membership diff once the U3-wire story
+  lands (see the honesty note above — the diff is not wired in yet).
 - **Rebalance cadence:** B3 rebalances three times a year (**Jan / May / Sep**)
   plus ad-hoc corporate events.
 - **Monitor cadence:** daily `sym universe monitor ibov` — the daily diff catches
   both scheduled rebalances and ad-hoc events. Events are `poll_bounded` (the
   effective date is bounded by the polling interval, not exact).
-- **Gating:** membership changes surface in `sym universe review`; large/suspicious
-  diffs are gated as `membership_proposal` rows requiring
-  `sym universe confirm <id>` (or `--reject`) before they apply.
+- **Gating:** PLANNED (U3-wire story): membership changes surface in
+  `sym universe review`; large/suspicious diffs are gated as `membership_proposal`
+  rows requiring `sym universe confirm <id>` (or `--reject`) before they apply.
+  Until then every discovered change is applied directly (see honesty note).
 - **Prices / FX / returns:** prices via yfinance (`.SA`); **USD/BRL FX already
   present** in `fx_rate` (to 2026-06-05) — no FX ingest needed; returns via
   `sym recompute`; market cap via `sym fundamentals --universe ibov`.

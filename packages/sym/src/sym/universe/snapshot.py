@@ -7,6 +7,12 @@ materialized ``universe_membership``, which reflects the latest rebuild), so
 later-appended events — including corrections — are ignored and a re-run of the
 same pin yields identical membership. Determinism follows from the projection
 being a pure function of the ordered event subset (resolutions are frozen, U1.3).
+
+KNOWN CAVEAT (deferred): the pin watermarks EVENTS, not resolutions. A member
+that resolves (or upgrades from `unresolved`) AFTER the pin was taken changes a
+later re-run of the same pin — full reproducibility needs a resolution watermark
+(e.g. resolved_at <= pin time), which the schema does not carry yet. See the
+deferred-work ledger (chunk-3 review, D2).
 """
 
 from __future__ import annotations

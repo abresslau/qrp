@@ -8,7 +8,12 @@ A proxy reference (an ETF that tracks but is not the index) gets a wider toleran
 to avoid alert fatigue.
 
 The comparison is on normalised identifier tokens (both pipelines build tokens via
-``membership_diff``), so it does not depend on resolution succeeding.
+``membership_diff``). Caveats the operator must know: ``maintained_tokens`` reads
+the PROJECTION (resolved members only — an unresolved member is invisible to the
+gate), and the comparison is only meaningful when both sides use the SAME token
+scheme — a ``ticker:``-tokenised universe checked against an ``isin:``-tokenised
+ETF reference diverges toward 1.0 regardless of truth (compare on resolved FIGIs
+for cross-scheme checks; see the deferred-work ledger).
 """
 
 from __future__ import annotations
@@ -25,6 +30,8 @@ from sym.universe.registry import JOIN, MembershipChange
 DEFAULT_THRESHOLD = 0.05
 # A proxy (ETF holdings) legitimately differs from the index it tracks; widen the
 # alarm tolerance for a proxy reference so normal tracking drift isn't an alarm.
+# Callers pass this as ``proxy_tolerance`` when the reference is a proxy — it is
+# NOT applied automatically (the gate can't know the reference's nature).
 DEFAULT_PROXY_TOLERANCE = 0.05
 
 

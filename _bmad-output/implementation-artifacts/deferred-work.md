@@ -1,5 +1,21 @@
 
-## Deferred from: code review of sym data core, chunk 2 of project-wide review (2026-06-10)
+## Deferred from: code review of sym universe layer, chunk 3 of project-wide review (2026-06-10)
+
+Backlogged by decision (D1-D4, accepted recommendations):
+
+- **D1 — U3-wire story (PRIORITY: the layer's headline safety promise):** route `run_monitor` through a maintained-membership snapshot diff (`diff_identifier_sets` + `maintained_tokens`, both written and tested) so snapshot sources (B3/ETF/criteria) can emit LEAVES; route surprising/poll-bounded discoveries through `stage_and_promote` (gating live, `MONITOR_GATED` assigned); give `run_accuracy_check` a CLI + schedule; expose `reverse_change` in the CLI. All three review layers found this independently; `universe-maintenance.md` now carries an honesty note until it lands. Mitigations applied in-review: monitor idempotency guard (no daily re-append), gating persistence rule fixed (last_seen), criteria universes monitorable.
+- **D2 — snapshot-pin resolution watermark:** `members_pinned` watermarks events but not resolutions — a post-pin resolution changes a re-run. Needs `resolved_at` (schema). Caveat documented in `snapshot.py`.
+- **D3 — provenance-aware `correct` events:** the projector treats `correct` as a context-free toggle (ignores `provenance.reverses`); an intervening change inverts its intent, and the dedupe key makes a same-date re-correction a silent no-op. Event-model redesign.
+- **D4 — maintenance plans for the 12 populated index universes** (S&P 500/400/600 + 8 European): required by the standing populate-gate rule; only `ibov` is documented.
+
+Deferred findings:
+
+- FIGI-level accuracy comparison: the token-set gate is meaningless across token schemes (ticker-tokenised universe vs isin-tokenised ETF reference); compare resolved FIGIs instead. Docstring caveat added.
+- Wikipedia revision-diff client (U2.3 AC2's "revision history" path): `revision_diff` is pure + tested but nothing fetches revisions.
+- Monitor coverage for non-index kinds: `stale_monitors` defaults to `kinds=("index",)` — criteria universes can silently freeze out of the digest.
+- ETF proxy provenance tagging (U2.2 AC3): `PROXY` marker is dead; events carry no proxy provenance jsonb.
+- Criteria-universe evolution semantics: re-evaluation appends joins only — an evolving screen accumulates the union of snapshots (pairs with D1's leaver diff).
+- FMP partial-fetch verification: no expected-vs-returned count check exists (docstring now says so honestly); a throttled partial list passes silently.
 
 - Multi-flag review schema: audit (`sweep_divergence`) and ingest (`price_jump`/non-trading-day) flags share one `(figi, session_date)` slot and clobber each other while unreviewed; `pct_move` flips between signed and unsigned-relative semantics. Fix = one row per flag_type (schema change).
 - Run-log row written up-front (`status='running'`, finalized on completion) so a process death mid-run leaves a visible record instead of silently missing FR-8 history. Pairs with the Operate heartbeat backlog item.

@@ -26,7 +26,7 @@ VALID_KINDS: tuple[str, ...] = (CUSTOM_LIST, INDEX, CRITERIA)
 
 # Universe-id slug rule — mirrors the universe_id_format_chk CHECK so a bad id is
 # rejected cleanly in Python before the DB raises a CheckViolation.
-UNIVERSE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+UNIVERSE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*\Z")  # \Z: `$` would pass 'abc\n'
 
 # A change's effective date is exact when a dated source reports it, or only
 # bounded by the polling interval when derived from diffing snapshots (U1.2/U2).

@@ -58,7 +58,7 @@ def is_surprising(
 def is_promotable(
     reason: str,
     first_seen: date,
-    as_of_date: date,
+    last_seen: date,
     corroboration_count: int,
     *,
     persist_days: int = DEFAULT_PERSIST_DAYS,
@@ -67,12 +67,15 @@ def is_promotable(
     """Whether a pending proposal may be auto-promoted to the event log.
 
     Churn-gated proposals always need an operator (never auto-promote). Others
-    promote once they have persisted ``persist_days`` or gathered
-    ``min_corroborations`` distinct sources.
+    promote once they have persisted ``persist_days`` — meaning the change was
+    STILL BEING SEEN at the end of the window (``last_seen``), not merely first
+    sighted N days ago (a one-shot vendor glitch never re-seen must not
+    auto-promote by aging alone) — or gathered ``min_corroborations`` distinct
+    sources.
     """
     if reason == REASON_CHURN:
         return False
-    persisted = (as_of_date - first_seen).days >= persist_days
+    persisted = (last_seen - first_seen).days >= persist_days
     corroborated = corroboration_count >= min_corroborations
     return persisted or corroborated
 
@@ -123,8 +126,10 @@ def stage_changes(
         if inserted is not None:
             summary.staged += 1
             continue
-        # Already staged: bump persistence + record a corroborating source.
-        conn.execute(
+        # Already staged: bump persistence + record a corroborating source. The count
+        # reflects rows actually touched — a re-sighting of an already-DECIDED
+        # (confirmed/rejected) proposal matches nothing and must not report as updated.
+        touched = conn.execute(
             """
             UPDATE membership_proposal
                SET last_seen_date = %s,
@@ -134,13 +139,15 @@ def stage_changes(
                        ELSE corroborating_sources || %s END
              WHERE universe_id = %s AND raw_identifier = %s
                AND change = %s AND effective_date = %s AND status = 'pending'
+            RETURNING proposal_id
             """,
             (
                 as_of_date, Jsonb([ch.source]), Jsonb([ch.source]),
                 universe_id, ch.raw_identifier, ch.change, ch.effective_date,
             ),
-        )
-        summary.updated += 1
+        ).fetchone()
+        if touched is not None:
+            summary.updated += 1
     return summary
 
 
@@ -164,16 +171,17 @@ def promote_ready_proposals(
     rows = conn.execute(
         """
         SELECT proposal_id, raw_identifier, change, effective_date,
-               effective_date_precision, source, reason, first_seen_date, corroborating_sources
+               effective_date_precision, source, reason, first_seen_date, last_seen_date,
+               corroborating_sources
           FROM membership_proposal
          WHERE universe_id = %s AND status = 'pending'
         """,
         (universe_id,),
     ).fetchall()
     promoted = 0
-    for (pid, raw, change, eff, precision, source, reason, first_seen, corr) in rows:
+    for (pid, raw, change, eff, precision, source, reason, first_seen, last_seen, corr) in rows:
         if not is_promotable(
-            reason, first_seen, as_of_date, _corroboration_count(corr),
+            reason, first_seen, last_seen or first_seen, _corroboration_count(corr),
             persist_days=persist_days, min_corroborations=min_corroborations,
         ):
             continue

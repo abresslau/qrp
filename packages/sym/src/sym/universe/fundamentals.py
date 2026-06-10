@@ -73,15 +73,27 @@ class YFinanceSharesHistorySource:
         for ts, value in series.items():
             if value is None or (isinstance(value, float) and math.isnan(value)):
                 continue
-            out.append((ts.date(), Decimal(str(int(value)))))
+            try:
+                out.append((ts.date(), Decimal(str(int(value)))))
+            except (ValueError, TypeError):
+                continue  # non-numeric vendor cell — skip the point, not the security
         return out
 
 
 def dedupe_changes(series: Sequence[tuple[date, Decimal]]) -> list[tuple[date, Decimal]]:
-    """Collapse a (date, value) series to change-points (keep the first + each change)."""
+    """Collapse a (date, value) series to change-points (keep the first + each change).
+
+    Same-date duplicates (vendors emit them) collapse deterministically to the LAST
+    value for the date — plain ``sorted`` would pick a winner by value, which is
+    arbitrary and made re-runs nondeterministic.
+    """
+    by_date: dict[date, Decimal] = {}
+    for d, v in series:
+        by_date[d] = v  # last write wins per date (input order = vendor order)
     out: list[tuple[date, Decimal]] = []
     last: Decimal | None = None
-    for d, v in sorted(series):
+    for d in sorted(by_date):
+        v = by_date[d]
         if v != last:
             out.append((d, v))
             last = v
@@ -173,8 +185,10 @@ def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
     Set-based, repeatable, reconstructable: for each row, USD = ``market_cap_lcy`` for USD rows,
     else ``market_cap_lcy / rate`` where ``rate`` is the latest USD-base rate (per-USD) with
     ``as_of_date <= the row's date`` and within the FX outage cap (so a currency with no FX cover on
-    the date stays NULL). This mirrors the Python ``fx.resolve``/``convert`` semantics (kept in sync
-    with ``OUTAGE_CAP_DAYS``); run it after a fundamentals load and/or an FX load.
+    the date stays NULL — including a previously-converted row whose inputs no longer qualify:
+    the recompute NULLs it rather than leaving a stale conversion in place). This mirrors the
+    Python ``fx.resolve``/``convert`` semantics (kept in sync with ``OUTAGE_CAP_DAYS``); run it
+    after a fundamentals load and/or an FX load.
     """
     from sym.fx.resolve import OUTAGE_CAP_DAYS
 
@@ -184,8 +198,13 @@ def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
         UPDATE fundamentals f SET market_cap_usd = sub.usd
           FROM (
             SELECT f2.composite_figi, f2.as_of_date,
-                   CASE WHEN f2.currency_code = 'USD' THEN f2.market_cap_lcy
-                        ELSE f2.market_cap_lcy / r.rate END AS usd
+                   CASE WHEN f2.market_cap_lcy IS NULL THEN NULL
+                        WHEN f2.currency_code = 'USD' THEN f2.market_cap_lcy
+                        WHEN r.rate IS NOT NULL AND r.rate > 0
+                             AND f2.as_of_date - r.as_of_date <= %s
+                            THEN f2.market_cap_lcy / r.rate
+                        ELSE NULL  -- no usable rate: NULL, never a stale prior conversion
+                   END AS usd
               FROM fundamentals f2
               LEFT JOIN LATERAL (
                   SELECT rate, as_of_date FROM fx_rate
@@ -193,11 +212,9 @@ def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
                      AND as_of_date <= f2.as_of_date
                    ORDER BY as_of_date DESC LIMIT 1
               ) r ON TRUE
-             WHERE f2.market_cap_lcy IS NOT NULL
-               AND (f2.currency_code = 'USD'
-                    OR (r.rate IS NOT NULL AND f2.as_of_date - r.as_of_date <= %s))
           ) sub
          WHERE f.composite_figi = sub.composite_figi AND f.as_of_date = sub.as_of_date
+           AND f.market_cap_usd IS DISTINCT FROM sub.usd
         """,
         (OUTAGE_CAP_DAYS,),
     )
