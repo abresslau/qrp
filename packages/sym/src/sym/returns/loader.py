@@ -19,7 +19,14 @@ from decimal import Decimal
 import psycopg
 
 from sym.calendar.snapshot import current_calendar_version
-from sym.returns.windows import WINDOWS, base_date, canonical_return, end_date, period_years
+from sym.returns.windows import (
+    INCEPTION,
+    WINDOWS,
+    base_date,
+    canonical_return,
+    end_date,
+    period_years,
+)
 
 
 def input_hash(
@@ -56,6 +63,11 @@ def total_return_index(
     accumulate Decimal rounding and make TR ≈ PR). Equivalent to the daily factor
     ``adj_ratio × (1 + yield)``, but rounding-free in the price term.
 
+    **Ex-date on a missing bar:** a dividend whose ex-date has no price row (gap,
+    halt, vendor-shifted date) is CARRIED FORWARD and reinvested at the next priced
+    session's close — dropping it would silently understate TR forever. Dividends
+    dated before the first bar are skipped (no price basis exists to reinvest at).
+
     **Basis consistency (critical):** the ex-date yield ``D / price`` must take D and the
     price in the SAME split basis. yfinance reports dividends **split-adjusted to today's
     basis**, and ``adj_close`` (= close_raw / future-split product) is likewise today-basis,
@@ -65,11 +77,20 @@ def total_return_index(
     adj_close == D_hist / close_raw`` = the true ex-date yield.
     """
     tri: dict[date, Decimal] = {}
+    if not rows:
+        return tri
     growth = Decimal(1)
+    pending = Decimal(0)
+    first_bar = rows[0][0]
+    div_dates = [d for d in sorted(dividends) if d >= first_bar]
+    di = 0
     for session_date, _close_raw, adj_close in rows:
-        dividend = dividends.get(session_date, Decimal(0))
-        if dividend and adj_close > 0:
-            growth = growth * (Decimal(1) + dividend / adj_close)
+        while di < len(div_dates) and div_dates[di] <= session_date:
+            pending += dividends[div_dates[di]]
+            di += 1
+        if pending and adj_close > 0:
+            growth = growth * (Decimal(1) + pending / adj_close)
+            pending = Decimal(0)
         tri[session_date] = adj_close * growth
     return tri
 
@@ -93,19 +114,33 @@ def compute_return_rows(
     sessions: Sequence[date],
     calendar_version: int | None,
     gated_dates: Collection[date] = frozenset(),
+    gated_div_dates: Collection[date] = frozenset(),
 ) -> list[ReturnRow]:
     """PR + TR rows for one security across ``as_of_dates`` × all return windows (pure).
 
-    A row whose as_of_date or base references an unreviewed flag (``gated_dates``) is
-    gated: pr/tr held NULL, ``gated=True`` (AR-9 gate half). ``input_hash`` still
-    reflects the prices, so a later price change re-dirties even a gated row.
+    A row whose as_of_date, base, or end references an unreviewed flag (``gated_dates``)
+    is gated: pr/tr held NULL, ``gated=True`` (AR-9 gate half). TR is additionally gated
+    when an unreviewed flag sits on an INTERIOR dividend ex-date (``gated_div_dates``) —
+    the TRI folds that day's adj_close into every later value, so endpoint checks alone
+    would publish TR built on a suspect price. ``input_hash`` still reflects the prices,
+    so a later price change re-dirties even a gated row.
+
+    Inception windows (SI/SI_ANN) anchor at the security's FIRST PRICED session
+    (``min(adj)``), not ``sessions[0]`` — the exchange calendar reaches decades before
+    most listings, and a calendar-anchored base has no price, which would NULL the
+    window for every security younger than the calendar.
     """
     rows: list[ReturnRow] = []
+    first_priced = min(adj) if adj else None
+    div_flags = sorted(gated_div_dates)
     for as_of_date in as_of_dates:
         for window in WINDOWS:
             # end is as-of for base->as-of windows, a past session for `period` ones.
             end = end_date(window, as_of_date, sessions)
-            base = base_date(window, as_of_date, sessions)
+            base = (
+                first_priced if window.kind == INCEPTION
+                else base_date(window, as_of_date, sessions)
+            )
             adj_end = adj.get(end) if end is not None else None
             tri_end = tri.get(end) if end is not None else None
             adj_base = adj.get(base) if base is not None else None
@@ -115,23 +150,25 @@ def compute_return_rows(
                 or (base is not None and base in gated_dates)
                 or (end is not None and end in gated_dates)
             )
+            tr_gated = gated or (
+                base is not None
+                and end is not None
+                and any(base < d <= end for d in div_flags)
+            )
             years = period_years(end, base) if (window.annualized and base and end) else None
-            if gated:
-                pr = tr = None
-            else:
-                pr = (
-                    canonical_return(adj_end, adj_base, annualized=window.annualized, years=years)
-                    if adj_base is not None and adj_end is not None else None
-                )
-                tr = (
-                    canonical_return(tri_end, tri_base, annualized=window.annualized, years=years)
-                    if tri_base is not None and tri_end is not None else None
-                )
+            pr = (
+                canonical_return(adj_end, adj_base, annualized=window.annualized, years=years)
+                if not gated and adj_base is not None and adj_end is not None else None
+            )
+            tr = (
+                canonical_return(tri_end, tri_base, annualized=window.annualized, years=years)
+                if not tr_gated and tri_base is not None and tri_end is not None else None
+            )
             rows.append(
                 ReturnRow(figi, window.id, as_of_date, pr, tr,
                           input_hash(calendar_version, base, end, adj_base, adj_end,
                                      tri_base, tri_end),
-                          gated)
+                          gated or tr_gated)
             )
     return rows
 
@@ -257,13 +294,22 @@ def load_returns(
         sessions = _calendar_sessions(conn, mic)
         price_rows = _price_rows(conn, figi)
         adj = {d: adj_close for d, _close_raw, adj_close in price_rows}
-        tri = total_return_index(price_rows, _dividends(conn, figi))
+        dividends = _dividends(conn, figi)
+        tri = total_return_index(price_rows, dividends)
         gated_dates = _unreviewed_flag_dates(conn, figi)
         as_of_dates = [d for d in sorted(adj) if start_date <= d <= end_date]
+        # Drop rows whose as-of date no longer has a price (e.g. an overwrite removed a
+        # vendor-phantom bar) — the upsert alone never deletes, so they'd live forever.
+        conn.execute(
+            "DELETE FROM fact_returns WHERE composite_figi = %s "
+            "AND as_of_date BETWEEN %s AND %s AND NOT (as_of_date = ANY(%s))",
+            (figi, start_date, end_date, as_of_dates),
+        )
         if not as_of_dates:
             continue
         rows = compute_return_rows(
-            figi, as_of_dates, adj, tri, sessions, calendar_version, gated_dates
+            figi, as_of_dates, adj, tri, sessions, calendar_version, gated_dates,
+            gated_div_dates=gated_dates & set(dividends),  # flags on dividend ex-dates
         )
         _upsert(conn, rows)
         summary.securities += 1

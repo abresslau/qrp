@@ -251,10 +251,11 @@ def canonical_return(
 ) -> Decimal | None:
     """The window return: cumulative ``ratio - 1``, or CAGR over ``years``.
 
-    Returns ``None`` if a base price is missing/zero (NULL rule). CAGR uses Decimal
-    ln/exp for determinism.
+    Returns ``None`` if an endpoint price is missing or non-positive (NULL rule — a
+    non-positive price is corrupt data, and ``ratio.ln()`` would raise on it). CAGR uses
+    Decimal ln/exp for determinism.
     """
-    if price_base is None or price_base <= 0 or price_asof is None:
+    if price_base is None or price_base <= 0 or price_asof is None or price_asof <= 0:
         return None
     ratio = price_asof / price_base
     if not annualized:
