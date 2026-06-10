@@ -37,7 +37,7 @@ def triangulate(
     """
     if from_res.status != "ok" or to_res.status != "ok":
         return None
-    if from_res.rate is None or to_res.rate is None or from_res.rate <= 0:
+    if from_res.rate is None or to_res.rate is None or from_res.rate <= 0 or to_res.rate <= 0:
         return None
     if from_res.observed_date is not None and to_res.observed_date is not None:
         if abs((from_res.observed_date - to_res.observed_date).days) > max_leg_spread:
@@ -54,6 +54,9 @@ def convert(
 ) -> Decimal | None:
     """Convert ``amount`` from ``from_ccy`` to ``to_ccy`` as-of ``as_of_date`` (None on any gap)."""
     amt = amount if isinstance(amount, Decimal) else Decimal(str(amount))
+    # Normalize: stored codes are uppercase; 'usd' or ' EUR' would silently miss the
+    # identity short-circuit / DB lookup and return None.
+    from_ccy, to_ccy = from_ccy.strip().upper(), to_ccy.strip().upper()
     if from_ccy == to_ccy:
         return amt  # identity — no rate lookup, never stale
     return triangulate(amt, fx_rate(conn, from_ccy, as_of_date), fx_rate(conn, to_ccy, as_of_date))

@@ -684,12 +684,12 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "px":
                 from sym.fx.restate import price_in_currency
 
-                on = date.fromisoformat(args.on) if args.on else today
-                px = price_in_currency(conn, args.figi, on, args.ccy.upper())
+                as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
+                px = price_in_currency(conn, args.figi, as_of_date, args.ccy.upper())
                 if px is None:
-                    print(f"px: unavailable ({args.figi} in {args.ccy.upper()} on {on})")
+                    print(f"px: unavailable ({args.figi} in {args.ccy.upper()} on {as_of_date})")
                     return 1
-                print(f"{args.figi} adj close on {on} = {px:.4f} {args.ccy.upper()}")
+                print(f"{args.figi} adj close on {as_of_date} = {px:.4f} {args.ccy.upper()}")
             elif args.fx_command == "returns":
                 from sym.fx.restate import returns_in_currency
 
@@ -709,13 +709,15 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "mcap":
                 from sym.marketcap import market_cap
 
-                on = date.fromisoformat(args.on) if args.on else today
-                mc = market_cap(conn, args.figi, on, args.ccy.upper() if args.ccy else None)
+                as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
+                mc = market_cap(
+                    conn, args.figi, as_of_date, args.ccy.upper() if args.ccy else None
+                )
                 if mc.value is None:
-                    print(f"mcap: unavailable ({args.figi} on {on})")
+                    print(f"mcap: unavailable ({args.figi} on {as_of_date})")
                     return 1
                 print(
-                    f"{args.figi} market cap on {on} = {mc.value:,.0f} {mc.currency} "
+                    f"{args.figi} market cap on {as_of_date} = {mc.value:,.0f} {mc.currency} "
                     f"(= {mc.close_raw} {mc.local_currency} x {mc.shares:,.0f} shares "
                     f"as-of {mc.shares_as_of_date})"
                 )
@@ -1143,7 +1145,7 @@ def build_parser() -> argparse.ArgumentParser:
     fx_px = fx_sub.add_parser("px", help="A security's adjusted close folded to a currency.")
     fx_px.add_argument("figi", help="CompositeFIGI.")
     fx_px.add_argument("ccy", help="Target currency (e.g. USD).")
-    fx_px.add_argument("--on", help="Session date (ISO; default: today).")
+    fx_px.add_argument("--as_of_date", help="Session date (ISO; default: today).")
     fx_px.set_defaults(func=_cmd_fx)
     fx_ret = fx_sub.add_parser("returns", help="Return windows restated to a currency.")
     fx_ret.add_argument("figi", help="CompositeFIGI.")
@@ -1153,7 +1155,7 @@ def build_parser() -> argparse.ArgumentParser:
     fx_mc = fx_sub.add_parser("mcap", help="Derived market cap (price x shares) in LCY or a ccy.")
     fx_mc.add_argument("figi", help="CompositeFIGI.")
     fx_mc.add_argument("--ccy", help="Target currency (default: LCY / the security's own).")
-    fx_mc.add_argument("--on", help="Date (ISO; default: today).")
+    fx_mc.add_argument("--as_of_date", help="Date (ISO; default: today).")
     fx_mc.set_defaults(func=_cmd_fx)
 
     p_fundamentals = sub.add_parser(

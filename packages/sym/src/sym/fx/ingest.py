@@ -57,20 +57,31 @@ def _default_currencies(conn: psycopg.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
-def _last_stored_rate(conn: psycopg.Connection, ccy: str, source: str) -> Decimal | None:
+def _last_rate_before(
+    conn: psycopg.Connection, ccy: str, source: str, before: date
+) -> Decimal | None:
+    """Last stored rate strictly BEFORE ``before`` — the plausibility seed for a load window.
+
+    Seeding from the global latest rate instead would compare e.g. a 1999 backfill
+    observation against today's rate and falsely reject decades of history for any
+    currency that moved more than the band since (most of EM).
+    """
     row = conn.execute(
         "SELECT rate FROM fx_rate WHERE base_currency='USD' AND quote_currency=%s AND source=%s "
-        "ORDER BY as_of_date DESC LIMIT 1",
-        (ccy, source),
+        "AND as_of_date < %s ORDER BY as_of_date DESC LIMIT 1",
+        (ccy, source, before),
     ).fetchone()
     return row[0] if row else None
 
 
-def _max_stored_date(conn: psycopg.Connection, source: str) -> date | None:
-    row = conn.execute(
-        "SELECT max(as_of_date) FROM fx_rate WHERE source=%s", (source,)
-    ).fetchone()
-    return row[0] if row else None
+def _last_stored_dates(conn: psycopg.Connection, source: str) -> dict[str, date]:
+    """Latest stored as_of_date per quote currency for this source."""
+    rows = conn.execute(
+        "SELECT quote_currency, max(as_of_date) FROM fx_rate WHERE source=%s "
+        "GROUP BY quote_currency",
+        (source,),
+    ).fetchall()
+    return {c: d for c, d in rows}
 
 
 def load_fx(
@@ -91,8 +102,15 @@ def load_fx(
         by_ccy.setdefault(o.currency, []).append(o)
     for ccy, series in by_ccy.items():
         summary.currencies += 1
-        prev = _last_stored_rate(conn, ccy, source.SOURCE)
-        for o in sorted(series, key=lambda x: x.as_of_date):
+        series = sorted(series, key=lambda x: x.as_of_date)
+        # Seed the day-over-day band from the last rate BEFORE this window (not the global
+        # latest) so backfills below stored history compare against the right neighbour.
+        prev = _last_rate_before(conn, ccy, source.SOURCE, series[0].as_of_date)
+        for o in series:
+            if o.rate <= 0:
+                summary.implausible += 1
+                summary.flagged.append(f"{ccy}@{o.as_of_date}={o.rate} (non-positive)")
+                continue  # never store a non-positive rate; do NOT advance prev
             if implausible(prev, o.rate):
                 summary.implausible += 1
                 summary.flagged.append(f"{ccy}@{o.as_of_date}={o.rate}")
@@ -120,16 +138,21 @@ def fill_fx(
 ) -> FxLoadSummary:
     """Add missing USD-base rates (immutable insert; skips existing) — the one FX loader.
 
-    Forward (``start_date=None``): only the tail after the latest stored date for this source
-    (the daily case). Gap-aware (explicit ``start_date``): fill from that floor — e.g.
-    ``DEFAULT_FX_FLOOR`` for a full-history backfill. Mirrors `sym load` (fill).
+    Forward (``start_date=None``): only the tail after the latest stored date — resolved
+    PER CURRENCY, so a currency newly added to the ``currency`` table pulls its whole
+    history (the fetch window is the min over currencies; ``ON CONFLICT DO NOTHING``
+    makes the refetch of already-covered currencies a cheap skip). Gap-aware (explicit
+    ``start_date``): fill from that floor — e.g. ``DEFAULT_FX_FLOOR`` for a full-history
+    backfill. Mirrors `sym load` (fill).
     """
+    ccys = list(currencies) if currencies is not None else _default_currencies(conn)
     if start_date is None:
-        last = _max_stored_date(conn, source.SOURCE)
-        start_date = (last + timedelta(days=1)) if last is not None else DEFAULT_FX_FLOOR
+        last_by_ccy = _last_stored_dates(conn, source.SOURCE)
+        starts = [
+            (last_by_ccy[c] + timedelta(days=1)) if c in last_by_ccy else DEFAULT_FX_FLOOR
+            for c in ccys
+        ]
+        start_date = min(starts) if starts else DEFAULT_FX_FLOOR
     if start_date > end_date:
         return FxLoadSummary(start_date=start_date, end_date=end_date)
-    return load_fx(
-        conn, source, start_date=start_date, end_date=end_date,
-        currencies=list(currencies) if currencies is not None else None,
-    )
+    return load_fx(conn, source, start_date=start_date, end_date=end_date, currencies=ccys)

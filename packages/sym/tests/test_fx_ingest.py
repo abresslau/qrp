@@ -32,18 +32,23 @@ class _Cur:
 class _Conn:
     """Duck-typed psycopg connection for the four queries the loader issues."""
 
-    def __init__(self, *, currencies=("BRL", "GBP"), max_stored=None, existing=()):
+    def __init__(self, *, currencies=("BRL", "GBP"), max_stored=None, existing=(),
+                 stored_ccys=None):
         self.autocommit = False
         self._currencies = currencies          # the `currency` reference table
         self._max_stored = max_stored          # date | None — latest stored as_of_date
+        # currencies that actually HAVE stored rows (per-ccy tail); default: all of them
+        self._stored_ccys = tuple(stored_ccys) if stored_ccys is not None else tuple(currencies)
         self._existing = set(existing)          # {(ccy, as_of_date)} -> INSERT hits ON CONFLICT
         self.inserted: list[tuple] = []         # captured successful inserts
 
     def execute(self, sql, params=None):
         if "SELECT code FROM currency" in sql:
             return _Cur(rows=[(c,) for c in self._currencies])
-        if "SELECT max(as_of_date) FROM fx_rate" in sql:
-            return _Cur(one=(self._max_stored,))  # max() always returns a row (NULL when empty)
+        if "SELECT quote_currency, max(as_of_date) FROM fx_rate" in sql:
+            if self._max_stored is None:
+                return _Cur(rows=[])
+            return _Cur(rows=[(c, self._max_stored) for c in self._stored_ccys])
         if "SELECT rate FROM fx_rate" in sql:
             return _Cur(one=None)  # no prior stored rate -> first obs seeds the band
         if "INSERT INTO fx_rate" in sql:
@@ -98,6 +103,16 @@ def test_tail_already_current_is_noop():
     assert (s.currencies, s.inserted, s.skipped_existing, s.implausible) == (0, 0, 0, 0)
     assert s.flagged == []
     assert s.start_date == date(2026, 6, 6) and s.end_date == END
+
+
+def test_tail_opens_to_floor_for_a_new_currency():
+    # GBP exists in `currency` but has no stored rows -> the tail window opens to the
+    # floor so its whole history is pulled (BRL's refetch is an ON CONFLICT skip).
+    conn = _Conn(currencies=("BRL", "GBP"), max_stored=date(2026, 6, 3), stored_ccys={"BRL"})
+    src = _FakeSource()
+    s = fill_fx(conn, src, end_date=END)
+    assert src.calls == [(["BRL", "GBP"], DEFAULT_FX_FLOOR, END)]
+    assert s.start_date == DEFAULT_FX_FLOOR
 
 
 def test_explicit_start_ignores_stored_max():

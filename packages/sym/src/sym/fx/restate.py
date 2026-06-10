@@ -24,7 +24,7 @@ import psycopg
 
 from sym.fx.convert import convert
 from sym.returns.loader import _calendar_sessions
-from sym.returns.windows import WINDOWS, base_date, period_years
+from sym.returns.windows import WINDOWS, base_date, end_date, period_years
 
 _ONE = Decimal(1)
 
@@ -57,12 +57,12 @@ def restate_return(
 
 
 def price_in_currency(
-    conn: psycopg.Connection, figi: str, on_date: date, target: str
+    conn: psycopg.Connection, figi: str, as_of_date: date, target: str
 ) -> Decimal | None:
-    """The adjusted close of ``figi`` on ``on_date`` folded to ``target`` (None on any gap)."""
+    """The adjusted close of ``figi`` on ``as_of_date`` folded to ``target`` (None on any gap)."""
     row = conn.execute(
         "SELECT adj_close FROM v_prices_adjusted WHERE composite_figi=%s AND session_date=%s",
-        (figi, on_date),
+        (figi, as_of_date),
     ).fetchone()
     if not row or row[0] is None:
         return None
@@ -71,7 +71,7 @@ def price_in_currency(
     ).fetchone()
     if not sec or not sec[0]:
         return None
-    return convert(conn, row[0], sec[0].strip(), target, on_date)
+    return convert(conn, row[0], sec[0].strip(), target, as_of_date)
 
 
 def returns_in_currency(
@@ -103,18 +103,29 @@ def returns_in_currency(
                 out[w.code] = {"pr": pr, "tr": tr}
         return out
     sessions = _calendar_sessions(conn, mic)
-    f_asof = convert(conn, _ONE, local, target, as_of_date)
+    fx_at: dict[date, Decimal | None] = {}  # FX leg per endpoint date (27/28 windows share as-of)
+
+    def _fx(d: date) -> Decimal | None:
+        if d not in fx_at:
+            fx_at[d] = convert(conn, _ONE, local, target, d)
+        return fx_at[d]
+
     for wid, pr, tr in rows:
         w = by_id.get(wid)
         if w is None:
             continue
         base = base_date(w, as_of_date, sessions)
-        f_base = convert(conn, _ONE, local, target, base) if base is not None else None
-        if f_asof is None or f_base is None or f_base <= 0:
+        # The FX numerator leg is the window's END — as_of for base->as-of windows, but a
+        # PAST session for discrete `period` windows (PQ): restating PQ with as-of FX would
+        # fold post-quarter currency moves into the completed quarter's return.
+        end = end_date(w, as_of_date, sessions)
+        f_end = _fx(end) if end is not None else None
+        f_base = _fx(base) if base is not None else None
+        if f_end is None or f_base is None or f_base <= 0:
             out[w.code] = {"pr": None, "tr": None}
             continue
-        ratio = f_asof / f_base
-        years = period_years(as_of_date, base) if (w.annualized and base) else None
+        ratio = f_end / f_base
+        years = period_years(end, base) if (w.annualized and base and end) else None
         out[w.code] = {
             "pr": restate_return(pr, ratio, annualized=w.annualized, years=years),
             "tr": restate_return(tr, ratio, annualized=w.annualized, years=years),

@@ -95,10 +95,15 @@ def parse_frankfurter_timeseries(payload: dict) -> list[FxObservation]:
     if not isinstance(rates, dict) or not rates:
         raise FxSourceError("Frankfurter payload has no rates (empty/garbled)")
     out: list[FxObservation] = []
-    for date_str, day in rates.items():
-        d = date.fromisoformat(date_str)
-        for ccy, value in day.items():
-            out.append(FxObservation(ccy, d, to_usd_base(Decimal(str(value)), QUOTE_PER_USD)))
+    try:
+        for date_str, day in rates.items():
+            d = date.fromisoformat(date_str)
+            for ccy, value in day.items():
+                out.append(FxObservation(ccy, d, to_usd_base(Decimal(str(value)), QUOTE_PER_USD)))
+    except (ValueError, ArithmeticError, AttributeError, TypeError) as exc:
+        # Malformed date/value must surface as the source contract's error type, not a
+        # raw ValueError that bypasses callers' FxSourceError handling.
+        raise FxSourceError(f"garbled Frankfurter payload: {exc}") from exc
     return out
 
 
@@ -153,10 +158,15 @@ def parse_fawazahmed_day(payload: dict, wanted: set[str], as_of_date: date) -> l
     if not isinstance(usd, dict):
         raise FxSourceError("fawazahmed0 payload missing 'usd' map")
     out: list[FxObservation] = []
-    for code in wanted:
-        value = usd.get(code.lower())
-        if value is not None:
-            out.append(FxObservation(code, as_of_date, to_usd_base(Decimal(str(value)), QUOTE_PER_USD)))
+    try:
+        for code in wanted:
+            value = usd.get(code.lower())
+            if value is not None:
+                out.append(
+                    FxObservation(code, as_of_date, to_usd_base(Decimal(str(value)), QUOTE_PER_USD))
+                )
+    except (ValueError, ArithmeticError, TypeError) as exc:
+        raise FxSourceError(f"garbled fawazahmed0 payload: {exc}") from exc
     return out
 
 
@@ -235,14 +245,17 @@ def parse_ecb_csv(text: str) -> dict[date, dict[str, Decimal]]:
     except ValueError as exc:
         raise FxSourceError(f"ECB CSV missing expected column: {exc}") from exc
     out: dict[date, dict[str, Decimal]] = {}
-    for r in rows[1:]:
-        if len(r) <= max(i_ccy, i_date, i_val):
-            continue
-        value = r[i_val].strip()
-        if not value:  # ECB emits blank OBS_VALUE on non-trading days
-            continue
-        d = date.fromisoformat(r[i_date].strip())
-        out.setdefault(d, {})[r[i_ccy].strip().upper()] = Decimal(value)
+    try:
+        for r in rows[1:]:
+            if len(r) <= max(i_ccy, i_date, i_val):
+                continue
+            value = r[i_val].strip()
+            if not value:  # ECB emits blank OBS_VALUE on non-trading days
+                continue
+            d = date.fromisoformat(r[i_date].strip())
+            out.setdefault(d, {})[r[i_ccy].strip().upper()] = Decimal(value)
+    except (ValueError, ArithmeticError) as exc:
+        raise FxSourceError(f"garbled ECB CSV row: {exc}") from exc
     return out
 
 
