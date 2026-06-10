@@ -721,6 +721,43 @@ def _cmd_fx(args: argparse.Namespace) -> int:
     try:
         with connect() as conn:
             conn.autocommit = True
+            if args.fx_command == "review":
+                from sym.fx.review import FxReviewError, list_fx_reviews, resolve_fx_review
+
+                if args.accept is not None and args.reject is not None:
+                    print("--accept and --reject are mutually exclusive", file=sys.stderr)
+                    return 1
+                if args.accept is not None or args.reject is not None:
+                    review_id = args.accept if args.accept is not None else args.reject
+                    try:
+                        outcome = resolve_fx_review(
+                            conn, review_id, accept=args.accept is not None
+                        )
+                    except FxReviewError as exc:
+                        print(f"{exc}", file=sys.stderr)
+                        return 1
+                    print(
+                        f"fx review {review_id} {outcome}"
+                        + (" — rate inserted into fx_rate; the band un-wedges on the "
+                           "next load" if outcome == "accepted" else " — vendor garbage, closed")
+                    )
+                    return 0
+                items = list_fx_reviews(conn, include_resolved=args.all)
+                if not items:
+                    print("no fx rejections" if args.all else "no open fx rejections")
+                    return 0
+                for it in items:
+                    state = it["resolution"] or "open"
+                    move = (f" move={it['relative_move']:.1%}"
+                            if it["relative_move"] is not None else "")
+                    print(
+                        f"  #{it['review_id']:<4} {it['quote_currency']} "
+                        f"{it['as_of_date']} rate={it['rate']} "
+                        f"(prior={it['prior_rate']}){move} {it['reason']} "
+                        f"[{state}] {it['source']}"
+                    )
+                print(f"{len(items)} item(s)")
+                return 0
             if args.fx_command == "load":
                 from sym.fx.ingest import fill_fx
 
@@ -1340,6 +1377,17 @@ def build_parser() -> argparse.ArgumentParser:
              "fallback).",
     )
     fx_load.set_defaults(func=_cmd_fx)
+    fx_rev = fx_sub.add_parser(
+        "review",
+        help="Steward FX plausibility rejections: list open items, --accept (insert the "
+        "rate, un-wedge the band) or --reject (vendor garbage) one.",
+    )
+    fx_rev.add_argument("--all", action="store_true", help="Include resolved rows.")
+    fx_rev.add_argument("--accept", type=int, metavar="ID",
+                        help="Accept: the move was genuine; insert into fx_rate and close.")
+    fx_rev.add_argument("--reject", type=int, metavar="ID",
+                        help="Reject as vendor garbage and close.")
+    fx_rev.set_defaults(func=_cmd_fx)
     fx_cov = fx_sub.add_parser("coverage", help="FX coverage vs priced-instrument currencies.")
     fx_cov.set_defaults(func=_cmd_fx)
     fx_div = fx_sub.add_parser(

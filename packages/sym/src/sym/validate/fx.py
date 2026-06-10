@@ -55,6 +55,13 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
             detail="fx_rate is empty - run `sym fx load --start_date 1999-01-04`.",
         )
     warnings: list[str] = []
+    open_rejections = conn.execute(
+        "SELECT count(*) FROM fx_rate_review WHERE NOT reviewed"
+    ).fetchone()[0]
+    if open_rejections:
+        warnings.append(
+            f"{open_rejections} open FX rejection(s) awaiting stewarding — `sym fx review`"
+        )
     for ccy in needed:
         r = fx_rate(conn, ccy, as_of_date)
         if r.status == "no_data":

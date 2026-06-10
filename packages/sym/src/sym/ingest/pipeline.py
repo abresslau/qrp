@@ -444,8 +444,8 @@ def _flag_divergence(
         INSERT INTO prices_review
             (composite_figi, session_date, flag_type, detail, pct_move, source)
         VALUES (%s, %s, 'sweep_divergence', %s, %s, %s)
-        ON CONFLICT (composite_figi, session_date) DO UPDATE
-            SET flag_type = EXCLUDED.flag_type, detail = EXCLUDED.detail,
+        ON CONFLICT (composite_figi, session_date, flag_type) DO UPDATE
+            SET detail = EXCLUDED.detail,
                 pct_move = EXCLUDED.pct_move, source = EXCLUDED.source
             WHERE NOT prices_review.reviewed
         """,

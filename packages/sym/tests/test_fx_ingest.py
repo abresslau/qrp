@@ -41,8 +41,13 @@ class _Conn:
         self._stored_ccys = tuple(stored_ccys) if stored_ccys is not None else tuple(currencies)
         self._existing = set(existing)          # {(ccy, as_of_date)} -> INSERT hits ON CONFLICT
         self.inserted: list[tuple] = []         # captured successful inserts
+        self.rejections: list[tuple] = []       # persisted fx_rate_review rows (S.1)
 
     def execute(self, sql, params=None):
+        if "INSERT INTO fx_rate_review" in sql:
+            # (quote, as_of_date, rate, prior, relative, source, reason)
+            self.rejections.append(params)
+            return _Cur()
         if "SELECT code FROM currency" in sql:
             return _Cur(rows=[(c,) for c in self._currencies])
         if "SELECT quote_currency, max(as_of_date) FROM fx_rate" in sql:

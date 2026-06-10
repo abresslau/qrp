@@ -226,7 +226,8 @@ def _dividends(conn: psycopg.Connection, figi: str) -> dict[date, Decimal]:
 def _unreviewed_flag_dates(conn: psycopg.Connection, figi: str) -> set[date]:
     """Session dates with an unreviewed prices_review flag (the gate set)."""
     rows = conn.execute(
-        "SELECT session_date FROM prices_review WHERE composite_figi = %s AND NOT reviewed",
+        "SELECT DISTINCT session_date FROM prices_review "
+        "WHERE composite_figi = %s AND NOT reviewed",
         (figi,),
     ).fetchall()
     return {r[0] for r in rows}

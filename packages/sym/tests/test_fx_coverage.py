@@ -24,12 +24,15 @@ class _Cur:
 class _Conn:
     """Dispatches the three queries check_fx_coverage issues."""
 
-    def __init__(self, needed, fx_count, rates):
+    def __init__(self, needed, fx_count, rates, open_rejections=0):
         self.needed = needed          # list[str]
         self.fx_count = fx_count      # int
         self.rates = rates            # {ccy: (as_of_date, Decimal) | None}
+        self.open_rejections = open_rejections
 
     def execute(self, sql, params=None):
+        if "count(*) FROM fx_rate_review" in sql:
+            return _Cur(one=(self.open_rejections,))
         if "DISTINCT s.currency_code" in sql:
             return _Cur(rows=[(c,) for c in self.needed])
         if "count(*) FROM fx_rate" in sql:

@@ -52,3 +52,5 @@ fundamentals_column_order [fundamentals_market_cap_lcy] 2026-06-08T11:00:00Z And
 fx_source_rank [fx_rate] 2026-06-08T12:00:00Z Andre <ab@gladstone-management.com> # FX source trust-tier rank for the canonical multi-source pick (Epic FX, FR4a/FR4b)
 fx_views_precedence [fx_views fx_source_rank] 2026-06-08T12:30:00Z Andre <ab@gladstone-management.com> # v_fx_daily: break multi-source ties by fx_source_rank (deterministic carry)
 pipeline_run_log_triggered_by [pipeline_run_log] 2026-06-10T20:05:00Z Andre <ab@gladstone-management.com> # triggered_by provenance (SYM_TRIGGERED_BY env, e.g. qrp-job:<id>) - Story O.2
+prices_review_per_flag [prices_review_sweep_flag] 2026-06-10T22:00:00Z Andre <ab@gladstone-management.com> # PK -> (figi, session_date, flag_type): audit + ingest flags coexist (Story S.1)
+fx_rate_review [fx_rate] 2026-06-10T22:05:00Z Andre <ab@gladstone-management.com> # Durable FX plausibility rejections + accept-un-wedges-band (Story S.1)

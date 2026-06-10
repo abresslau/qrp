@@ -84,6 +84,34 @@ def _last_stored_dates(conn: psycopg.Connection, source: str) -> dict[str, date]
     return {c: d for c, d in rows}
 
 
+def _record_rejection(conn, ccy, o, prev, source, reason) -> None:
+    """Persist a plausibility rejection (Story S.1 — FX NFR4's review surface).
+
+    The in-memory ``flagged`` list is the CLI print; THIS row is what survives
+    the process. One OPEN row per (quote, date, source): a daily re-run of the
+    same rejection refreshes, never duplicates. A wedged band (genuine move,
+    e.g. a peg break) therefore shows up as a growing open queue — and
+    ACCEPTING a row (``sym fx review --accept``) inserts the rate into
+    ``fx_rate``, after which ``prev`` advances naturally on the next load.
+    """
+    relative = (
+        abs(o.rate / prev - Decimal(1))
+        if (prev is not None and prev > 0 and o.rate > 0)
+        else None
+    )
+    conn.execute(
+        """
+        INSERT INTO fx_rate_review
+            (quote_currency, as_of_date, rate, prior_rate, relative_move, source, reason)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (quote_currency, as_of_date, source) WHERE NOT reviewed DO UPDATE
+            SET rate = EXCLUDED.rate, prior_rate = EXCLUDED.prior_rate,
+                relative_move = EXCLUDED.relative_move, reason = EXCLUDED.reason
+        """,
+        (ccy, o.as_of_date, o.rate, prev, relative, source, reason),
+    )
+
+
 def load_fx(
     conn: psycopg.Connection,
     source: FxSource,
@@ -92,7 +120,8 @@ def load_fx(
     end_date: date,
     currencies: Sequence[str] | None = None,
 ) -> FxLoadSummary:
-    """Fetch USD-base rates for ``[start_date, end_date]``, plausibility-filter, immutable-insert."""
+    """Fetch USD-base rates for ``[start_date, end_date]``: plausibility-filter,
+    immutable-insert; rejections persist to ``fx_rate_review`` (S.1)."""
     conn.autocommit = True
     ccys = list(currencies) if currencies is not None else _default_currencies(conn)
     summary = FxLoadSummary(start_date=start_date, end_date=end_date)
@@ -110,10 +139,12 @@ def load_fx(
             if o.rate <= 0:
                 summary.implausible += 1
                 summary.flagged.append(f"{ccy}@{o.as_of_date}={o.rate} (non-positive)")
+                _record_rejection(conn, ccy, o, prev, source.SOURCE, "non_positive")
                 continue  # never store a non-positive rate; do NOT advance prev
             if implausible(prev, o.rate):
                 summary.implausible += 1
                 summary.flagged.append(f"{ccy}@{o.as_of_date}={o.rate}")
+                _record_rejection(conn, ccy, o, prev, source.SOURCE, "band_exceeded")
                 continue  # reject; do NOT advance prev to a bad value
             row = conn.execute(
                 "INSERT INTO fx_rate (base_currency, quote_currency, as_of_date, rate, source) "

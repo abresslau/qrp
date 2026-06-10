@@ -211,9 +211,8 @@ def ingest_result(
                 INSERT INTO prices_review
                     (composite_figi, session_date, flag_type, detail, pct_move, source)
                 VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (composite_figi, session_date) DO UPDATE
-                    SET flag_type = EXCLUDED.flag_type,
-                        detail = EXCLUDED.detail,
+                ON CONFLICT (composite_figi, session_date, flag_type) DO UPDATE
+                    SET detail = EXCLUDED.detail,
                         pct_move = EXCLUDED.pct_move,
                         source = EXCLUDED.source
                     WHERE NOT prices_review.reviewed
@@ -249,6 +248,7 @@ def resolve_review(
     session_date: date,
     *,
     resolution: str,
+    flag_type: str | None = None,
 ) -> bool:
     """Confirm or reject a flagged price (a review action, never an ingestion drop).
 
@@ -258,15 +258,19 @@ def resolve_review(
     """
     if resolution not in ("confirmed", "rejected"):
         raise ValueError(f"resolution must be 'confirmed' or 'rejected', got {resolution!r}")
-    updated = conn.execute(
-        """
-        UPDATE prices_review
-           SET reviewed = TRUE, resolution = %s, reviewed_at = now()
-         WHERE composite_figi = %s AND session_date = %s
-        RETURNING composite_figi
-        """,
-        (resolution, composite_figi, session_date),
-    ).fetchone()
+    # flag_type=None resolves every flag at the date (the pre-S.1 behavior);
+    # passing it resolves ONE finding — flags now coexist per type.
+    sql = (
+        "UPDATE prices_review "
+        "   SET reviewed = TRUE, resolution = %s, reviewed_at = now() "
+        " WHERE composite_figi = %s AND session_date = %s"
+    )
+    params: list[object] = [resolution, composite_figi, session_date]
+    if flag_type is not None:
+        sql += " AND flag_type = %s"
+        params.append(flag_type)
+    sql += " RETURNING composite_figi"
+    updated = conn.execute(sql, params).fetchone()
     return updated is not None
 
 
