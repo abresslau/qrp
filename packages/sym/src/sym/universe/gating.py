@@ -25,7 +25,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from sym.universe.events import append_change
-from sym.universe.registry import CORRECT, POLL_BOUNDED, MembershipChange
+from sym.universe.registry import CORRECT, POLL_BOUNDED, MembershipChange, UniverseError
 
 # Defaults (tunable). Churn above this fraction of current membership is gated.
 DEFAULT_CHURN_THRESHOLD = 0.10
@@ -34,6 +34,9 @@ DEFAULT_MIN_CORROBORATIONS = 2
 
 REASON_CHURN = "churn_threshold"
 REASON_PERSIST = "awaiting_persistence"
+# A change the operator already rejected, re-sighted later (a shifted poll date
+# dodges the quad dedupe key). It re-stages for VISIBILITY but never auto-promotes.
+REASON_REJECTED_RESIGHT = "rejected_resight"
 
 PENDING = "pending"
 CONFIRMED = "confirmed"
@@ -66,14 +69,14 @@ def is_promotable(
 ) -> bool:
     """Whether a pending proposal may be auto-promoted to the event log.
 
-    Churn-gated proposals always need an operator (never auto-promote). Others
-    promote once they have persisted ``persist_days`` — meaning the change was
-    STILL BEING SEEN at the end of the window (``last_seen``), not merely first
-    sighted N days ago (a one-shot vendor glitch never re-seen must not
-    auto-promote by aging alone) — or gathered ``min_corroborations`` distinct
-    sources.
+    Churn-gated and rejected-resight proposals always need an operator (never
+    auto-promote). Others promote once they have persisted ``persist_days`` —
+    meaning the change was STILL BEING SEEN at the end of the window
+    (``last_seen``), not merely first sighted N days ago (a one-shot vendor
+    glitch never re-seen must not auto-promote by aging alone) — or gathered
+    ``min_corroborations`` distinct sources.
     """
-    if reason == REASON_CHURN:
+    if reason in (REASON_CHURN, REASON_REJECTED_RESIGHT):
         return False
     persisted = (last_seen - first_seen).days >= persist_days
     corroborated = corroboration_count >= min_corroborations
@@ -109,31 +112,60 @@ def stage_changes(
     ``(universe, raw_identifier, change)`` TRIPLE — its effective date shifts with
     every poll, so the quad dedupe key alone would mint a new proposal row daily
     and persistence would never accrue. EXACT-dated changes keep the quad key.
+
+    A SURPRISING run's re-sightings earn nothing: a churn-gated run is a
+    suspect parse, so its evidence must not bump persistence or corroboration
+    on existing pendings (it must not mint duplicate rows either). A change
+    whose triple matches an operator-REJECTED proposal re-stages with
+    ``reason='rejected_resight'`` — visible in review, never auto-promoted.
     """
     reason = REASON_CHURN if surprising else REASON_PERSIST
     summary = StageSummary(surprising=surprising)
     for ch in changes:
         if ch.effective_date_precision == POLL_BOUNDED:
-            touched = conn.execute(
-                """
-                UPDATE membership_proposal
-                   SET last_seen_date = %s,
-                       seen_count = seen_count + 1,
-                       corroborating_sources = CASE
-                           WHEN corroborating_sources @> %s THEN corroborating_sources
-                           ELSE corroborating_sources || %s END
-                 WHERE universe_id = %s AND raw_identifier = %s
-                   AND change = %s AND status = 'pending'
-                RETURNING proposal_id
-                """,
-                (
-                    as_of_date, Jsonb([ch.source]), Jsonb([ch.source]),
-                    universe_id, ch.raw_identifier, ch.change,
-                ),
-            ).fetchone()
-            if touched is not None:
-                summary.updated += 1
-                continue
+            if surprising:
+                pending = conn.execute(
+                    """
+                    SELECT 1 FROM membership_proposal
+                     WHERE universe_id = %s AND raw_identifier = %s
+                       AND change = %s AND status = 'pending'
+                     LIMIT 1
+                    """,
+                    (universe_id, ch.raw_identifier, ch.change),
+                ).fetchone()
+                if pending is not None:
+                    continue  # already staged; suspect run grants no credit
+            else:
+                touched = conn.execute(
+                    """
+                    UPDATE membership_proposal
+                       SET last_seen_date = %s,
+                           seen_count = seen_count + 1,
+                           corroborating_sources = CASE
+                               WHEN corroborating_sources @> %s THEN corroborating_sources
+                               ELSE corroborating_sources || %s END
+                     WHERE universe_id = %s AND raw_identifier = %s
+                       AND change = %s AND status = 'pending'
+                    RETURNING proposal_id
+                    """,
+                    (
+                        as_of_date, Jsonb([ch.source]), Jsonb([ch.source]),
+                        universe_id, ch.raw_identifier, ch.change,
+                    ),
+                ).fetchone()
+                if touched is not None:
+                    summary.updated += 1
+                    continue
+        rejected = conn.execute(
+            """
+            SELECT 1 FROM membership_proposal
+             WHERE universe_id = %s AND raw_identifier = %s
+               AND change = %s AND status = 'rejected'
+             LIMIT 1
+            """,
+            (universe_id, ch.raw_identifier, ch.change),
+        ).fetchone()
+        row_reason = REASON_REJECTED_RESIGHT if rejected is not None else reason
         inserted = conn.execute(
             """
             INSERT INTO membership_proposal
@@ -147,12 +179,14 @@ def stage_changes(
             (
                 universe_id, ch.raw_identifier, ch.change, ch.effective_date,
                 ch.effective_date_precision, ch.source, as_of_date, as_of_date,
-                Jsonb([ch.source]), reason,
+                Jsonb([ch.source]), row_reason,
             ),
         ).fetchone()
         if inserted is not None:
             summary.staged += 1
             continue
+        if surprising:
+            continue  # exact-key duplicate on a suspect run: no persistence credit
         # Already staged: bump persistence + record a corroborating source. The count
         # reflects rows actually touched — a re-sighting of an already-DECIDED
         # (confirmed/rejected) proposal matches nothing and must not report as updated.
@@ -326,7 +360,25 @@ def reverse_change(
     state machine (closing a wrongly-opened membership, or re-opening a wrongly-
     closed one) — a reversible, appended audit trail, never a destructive edit.
     Returns True if the corrective was newly appended.
+
+    Refuses (``UniverseError``) when the named change was never recorded: the
+    ``correct`` toggle is context-free, so a typo'd reversal would corrupt the
+    projection while reporting success.
     """
+    recorded = conn.execute(
+        """
+        SELECT 1 FROM membership_event
+         WHERE universe_id = %s AND raw_identifier = %s
+           AND change = %s AND effective_date = %s
+         LIMIT 1
+        """,
+        (universe_id, raw_identifier, change, effective_date),
+    ).fetchone()
+    if recorded is None:
+        raise UniverseError(
+            f"no recorded {change} for {raw_identifier!r} in {universe_id!r} "
+            f"effective {effective_date.isoformat()} — nothing to reverse"
+        )
     appended = append_change(
         conn, universe_id,
         MembershipChange(raw_identifier, CORRECT, effective_date, source),

@@ -65,6 +65,78 @@ def test_fmp_snapshot_excludes_dated_history():
     assert any(c.raw_identifier == "ticker:OLD@XNYS" for c in changes)
 
 
+def test_wikipedia_snapshot_excludes_changes_table():
+    from sym.universe.providers.wikipedia import WikipediaIndexSource
+
+    html = """
+    <table class="wikitable sortable">
+    <tr><th>Symbol</th><th>Security</th><th>Date added</th></tr>
+    <tr><td>MMM</td><td>3M</td><td>1976-08-09</td></tr>
+    <tr><td>BRK.B</td><td>Berkshire</td><td></td></tr>
+    </table>
+    <table class="wikitable">
+    <tr><th colspan="2">Added</th><th colspan="2">Removed</th><th>Reason</th></tr>
+    <tr><th>Ticker</th><th>Security</th><th>Ticker</th><th>Security</th><th></th></tr>
+    <tr><td>2023-03-15</td><td>NEW</td><td>NewCo</td><td>OLD</td><td>OldCo</td><td>M</td></tr>
+    </table>
+    """
+
+    class _Client:
+        def page_html(self, title):
+            return html
+
+    src = WikipediaIndexSource(_Client())
+    changes = src.fetch("sp500", date(2000, 1, 1), D)
+    # constituents table (EXACT-dated joins included!) is the snapshot; the dated
+    # "Selected changes" events are NOT — completeness is declared, never inferred.
+    assert src.last_snapshot_tokens == {"ticker:MMM@XNYS", "ticker:BRK.B@XNYS"}
+    assert any(c.raw_identifier == "ticker:OLD@XNYS" for c in changes)
+
+
+def test_fmp_empty_current_snapshot_is_loud_error_and_declares_nothing():
+    # An empty current-constituents half is a loud error ("never 'the index is
+    # empty'") and must leave NO snapshot declared — not an empty set that
+    # silently disables leaver derivation while looking like a declaration.
+    import pytest
+
+    class _Client:
+        def current_constituents(self, slug):
+            return []
+
+        def historical_constituents(self, slug):
+            return [{"date": "June 1, 2026", "symbol": "", "removedTicker": "OLD",
+                     "exchange": "NYSE"}]
+
+    src = FmpIndexSource(_Client())
+    src.last_snapshot_tokens = {"ticker:STALE@XNYS"}  # simulate a previous fetch
+    with pytest.raises(IndexSourceError):
+        src.fetch("sp500", date(2026, 1, 1), D)
+    assert src.last_snapshot_tokens is None
+
+
+def test_failed_fetch_does_not_leak_previous_snapshot():
+    # The attribute is reset on fetch ENTRY so a raising fetch can't leave the
+    # previous call's token set behind for a later reader.
+    class _Client:
+        def __init__(self):
+            self.calls = 0
+
+        def portfolio(self, code):
+            self.calls += 1
+            if self.calls > 1:
+                raise RuntimeError("down")
+            return [{"cod": "PETR4"}]
+
+    src = B3IndexSource(_Client())
+    src.fetch("ibov", D, D)
+    assert src.last_snapshot_tokens == {"ticker:PETR4@BVMF"}
+    try:
+        src.fetch("ibov", D, D)
+    except Exception:
+        pass
+    assert src.last_snapshot_tokens is None
+
+
 def test_criteria_declares_snapshot_tokens():
     class _Conn:
         def execute(self, sql, params=None):

@@ -182,6 +182,8 @@ class FmpIndexSource:
         return changes
 
     def fetch(self, index_key: str, start: date, end: date) -> list[MembershipChange]:
+        # Reset on entry: a raising fetch must not leak the previous call's snapshot.
+        self.last_snapshot_tokens = None
         slug = _FMP_SLUG.get(index_key)
         if slug is None:
             raise IndexSourceError(f"FMP has no constituent feed for index {index_key!r}")

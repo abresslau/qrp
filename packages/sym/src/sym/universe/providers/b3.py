@@ -148,6 +148,9 @@ class B3IndexSource:
         self._specs = {**_B3_SPECS, **(specs or {})}
 
     def fetch(self, index_key: str, start: date, end: date) -> list[MembershipChange]:
+        # Reset on entry: a raising fetch must not leak the PREVIOUS call's
+        # snapshot to a later reader (instances serve multiple indexes).
+        self.last_snapshot_tokens = None
         spec = self._specs.get(index_key)
         if spec is None:
             raise IndexSourceError(f"no B3 spec for index {index_key!r}")

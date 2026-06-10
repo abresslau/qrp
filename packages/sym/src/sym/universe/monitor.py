@@ -54,10 +54,20 @@ DEFAULT_STALE_AFTER = timedelta(days=4)
 MONITOR_SUCCESS = "success"
 MONITOR_GATED = "gated"
 MONITOR_ERROR = "error"
+# Statuses that prove the monitor is ALIVE (fetched + parsed): a gated run is a
+# healthy monitor doing its job, not a frozen one — it must not trip staleness.
+MONITOR_LIVE_STATUSES = (MONITOR_SUCCESS, MONITOR_GATED)
 
 
 @dataclass
 class MonitorSummary:
+    """One monitor run's outcome.
+
+    ``joiners``/``leavers`` count DISCOVERED changes this run (staged, not
+    necessarily applied); ``proposed`` = proposals staged or bumped;
+    ``applied`` = proposals promoted to the event log.
+    """
+
     universe_id: str
     status: str
     source: str | None = None
@@ -240,12 +250,21 @@ def run_monitor(
     # lets absence mean departure — open members missing from it become leave
     # candidates. No declaration (a dated-history feed) means no derivation:
     # absence from an event list says nothing about membership.
+    # An empty declared snapshot is treated like no declaration — "every member
+    # left" must never be inferred from an empty parse (sources declare None for
+    # empty, but the guard is deliberate either way).
     snapshot = getattr(provider, "last_snapshot_tokens", None)
     if snapshot:
+        # A genuine leaver can arrive twice in one run: as a dated provider event
+        # AND as absence from the snapshot (the FMP shape). Count it once.
+        already_leaving = {ch.raw_identifier for ch in discovered if ch.change == LEAVE}
         derived = diff_identifier_sets(
             open_tokens, set(snapshot), as_of_date, changes[0].source
         )
-        discovered.extend(ch for ch in derived if ch.change == LEAVE)
+        discovered.extend(
+            ch for ch in derived
+            if ch.change == LEAVE and ch.raw_identifier not in already_leaving
+        )
 
     joiners = sum(1 for ch in discovered if ch.change == JOIN)
     leavers = sum(1 for ch in discovered if ch.change == LEAVE)
@@ -276,13 +295,18 @@ def run_monitor(
 
 
 def last_successful_monitor(conn: psycopg.Connection, universe_id: str) -> datetime | None:
-    """The most recent successful monitor run for a universe (None if never)."""
+    """The most recent LIVE monitor run for a universe (None if never).
+
+    "Live" = the provider fetched and parsed (``success`` or ``gated``) — a
+    churn-gated run pending operator review is a working monitor, not a frozen
+    one, and must not double-alarm as stale. Only ``error`` runs don't count.
+    """
     row = conn.execute(
         """
         SELECT max(run_at) FROM universe_monitor_log
-         WHERE universe_id = %s AND status = %s
+         WHERE universe_id = %s AND status = ANY(%s)
         """,
-        (universe_id, MONITOR_SUCCESS),
+        (universe_id, list(MONITOR_LIVE_STATUSES)),
     ).fetchone()
     return row[0] if row else None
 
@@ -294,10 +318,11 @@ def stale_monitors(
     now: datetime | None = None,
     kinds: Sequence[str] = ("index",),
 ) -> list[tuple[str, datetime | None]]:
-    """Monitorable universes whose last successful monitor is missing or too old.
+    """Monitorable universes whose last LIVE monitor run is missing or too old.
 
     Returns ``(universe_id, last_success)`` pairs — ``last_success`` is None for a
-    universe that has never had a successful monitor run.
+    universe that has never had a live (``success``/``gated``) monitor run; a
+    gated run counts as alive (see :func:`last_successful_monitor`).
     """
     from datetime import UTC
 
@@ -306,12 +331,12 @@ def stale_monitors(
         """
         SELECT u.universe_id,
                (SELECT max(m.run_at) FROM universe_monitor_log m
-                 WHERE m.universe_id = u.universe_id AND m.status = %s) AS last_success
+                 WHERE m.universe_id = u.universe_id AND m.status = ANY(%s)) AS last_success
           FROM universe u
          WHERE u.kind = ANY(%s)
          ORDER BY u.universe_id
         """,
-        (MONITOR_SUCCESS, list(kinds)),
+        (list(MONITOR_LIVE_STATUSES), list(kinds)),
     ).fetchall()
     stale: list[tuple[str, datetime | None]] = []
     for universe_id, last_success in rows:

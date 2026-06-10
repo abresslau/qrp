@@ -190,6 +190,8 @@ class EtfHoldingsIndexSource:
         self._mic_for_index = mic_for_index or {}
 
     def fetch(self, index_key: str, start: date, end: date) -> list[MembershipChange]:
+        # Reset on entry: a raising fetch must not leak the previous call's snapshot.
+        self.last_snapshot_tokens = None
         etf_key = self._etf_for_index.get(index_key)
         if etf_key is None:
             raise IndexSourceError(f"no ETF proxy configured for index {index_key!r}")

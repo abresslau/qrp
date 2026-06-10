@@ -124,7 +124,11 @@ def run_accuracy_check(
     ``maintained`` explicitly for a comparison on something other than the raw
     projection tokens (the FIGI-level cross-scheme path).
     """
-    conn.autocommit = True
+    # Tolerate a caller that already enabled autocommit: toggling it while an
+    # implicit transaction is open raises in psycopg, so only set when needed —
+    # and callers that SELECT first must enable it before their first query.
+    if not conn.autocommit:
+        conn.autocommit = True
     if maintained is None:
         maintained = maintained_tokens(conn, universe_id)
     result = evaluate(
@@ -221,10 +225,14 @@ def fetch_reference_tokens(
         from sym.universe.providers.index_provider import DEFAULT_SOURCE_PREF
 
         pref = list(DEFAULT_SOURCE_PREF)
-    if reference_archetype == pref[0]:
+    # Anywhere in the preference list, not just pref[0]: a fallback archetype can
+    # SERVE the universe during a primary outage, and a source corroborating its
+    # own output proves nothing.
+    if reference_archetype in pref:
         raise UniverseError(
-            f"accuracy_reference {reference_archetype!r} IS the primary source for "
-            f"{universe_id!r} — the gate needs an independent reference"
+            f"accuracy_reference {reference_archetype!r} appears in {universe_id!r}'s "
+            f"source preference {pref!r} — the gate needs a reference independent of "
+            "every serving source"
         )
     index_key = config.get("index")
     if not index_key:
@@ -236,7 +244,16 @@ def fetch_reference_tokens(
     if not isinstance(source_config, dict):
         source_config = {}
     source = get_index_source(reference_archetype, **source_config)
-    changes = list(source.fetch(index_key, as_of_date, as_of_date))
+    try:
+        changes = list(source.fetch(index_key, as_of_date, as_of_date))
+    except UniverseError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — an unanticipated vendor failure
+        # (JSONDecodeError, KeyError, network) must exit cleanly, not traceback.
+        raise UniverseError(
+            f"reference source {reference_archetype!r} fetch failed for "
+            f"{universe_id!r}: {exc}"
+        ) from exc
     tokens = getattr(source, "last_snapshot_tokens", None) or current_tokens_from_changes(
         changes
     )
@@ -263,11 +280,20 @@ def run_configured_accuracy_check(
     tokens first — a raw cross-scheme comparison diverges toward 1.0 regardless of
     truth.
     """
+    # Enable autocommit BEFORE the first SELECT: psycopg refuses to toggle it once
+    # an implicit transaction is open, and run_accuracy_check writes the audit row.
+    conn.autocommit = True
     reference, reference_archetype, is_proxy = fetch_reference_tokens(
         conn, universe_id, as_of_date=as_of_date
     )
     maintained: set[str] | None = maintained_tokens(conn, universe_id)
-    if maintained and _schemes(maintained) != _schemes(reference):
+    # FIGI fallback on scheme mismatch — and ALSO on zero overlap within a shared
+    # scheme: different MIC conventions for the same listings (ticker:SAP@XETR vs
+    # a cross-listed reference's ticker:SAP@XNYS) would diverge toward 1.0
+    # regardless of truth.
+    if maintained and (
+        _schemes(maintained) != _schemes(reference) or not (maintained & reference)
+    ):
         maintained = open_member_figis(conn, universe_id)
         reference = _reference_as_figi_tokens(conn, reference)
     return run_accuracy_check(

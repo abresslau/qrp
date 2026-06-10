@@ -41,6 +41,7 @@ class _Conn:
         self._maintained = list(maintained)      # open raw_identifier tokens
         self._figis = list(figis)                # open composite_figis
         self._symbology = symbology or {}        # symbol_value -> composite_figi
+        self.event_exists = True                 # answer for reverse's existence guard
         self.checks: list[tuple] = []            # universe_accuracy_check INSERTs
         self.events: list[tuple] = []            # membership_event INSERTs (reverse)
         self.rebuilt = 0
@@ -63,6 +64,8 @@ class _Conn:
             return _Cur(one=None)
         if "FROM securities" in sql:
             return _Cur(one=None)
+        if "SELECT 1 FROM membership_event" in sql:
+            return _Cur(one=(1,) if self.event_exists else None)
         if "INSERT INTO membership_event" in sql:
             self.events.append((params[1], params[2]))
             return _Cur(one=(len(self.events),))
@@ -115,6 +118,40 @@ def test_reference_same_as_primary_refuses():
     conn = _Conn(config={"index": "ibov", "accuracy_reference": "b3"}, source_pref=("b3",))
     with pytest.raises(UniverseError, match="independent"):
         run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+
+
+def test_reference_in_fallback_pref_refuses():
+    # A fallback archetype can SERVE the universe during a primary outage — a
+    # reference anywhere in source_pref corroborates nothing.
+    conn = _Conn(config={"index": "ibov", "accuracy_reference": "wikipedia"},
+                 source_pref=("b3", "wikipedia"))
+    with pytest.raises(UniverseError, match="independent"):
+        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+
+
+def test_reference_fetch_failure_is_universe_error(monkeypatch):
+    class _Boom:
+        def fetch(self, index_key, start, end):
+            raise ValueError("garbled JSON")
+
+    conn = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF"])
+    monkeypatch.setattr(accuracy_mod, "get_index_source", lambda a, **cfg: _Boom())
+    with pytest.raises(UniverseError, match="fetch failed"):
+        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+
+
+def test_autocommit_set_before_first_query(monkeypatch):
+    # psycopg forbids toggling autocommit once an implicit transaction is open —
+    # the runner must set it before its first SELECT.
+    class _Strict(_Conn):
+        def execute(self, sql, params=None):
+            assert self.autocommit is True, f"query before autocommit: {sql[:60]}"
+            return super().execute(sql, params)
+
+    toks = ["ticker:A@BVMF"]
+    conn = _Strict(config=IBOV_CFG, maintained=toks)
+    _patch_source(monkeypatch, toks)
+    run_configured_accuracy_check(conn, "ibov", as_of_date=D)
 
 
 def test_matching_sets_pass_and_audit_row_written(monkeypatch):
@@ -173,6 +210,21 @@ def test_cross_scheme_unresolvable_reference_token_stays_divergent(monkeypatch):
     _patch_source(monkeypatch, ["isin:BRPETRACNPR6", "isin:XXUNKNOWN0000"])
     result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
     assert result.divergence > 0.0
+
+
+def test_same_scheme_zero_overlap_falls_back_to_figis(monkeypatch):
+    # Same ticker: scheme but different MIC conventions (XETR vs XNYS for a
+    # cross-listed reference) would diverge toward 1.0 on raw tokens — zero
+    # overlap with a shared scheme must trigger the FIGI fallback too.
+    conn = _Conn(
+        config=IBOV_CFG,
+        maintained=["ticker:SAP@XETR"],
+        figis=["BBG000000SAP"],
+        symbology={"SAP": "BBG000000SAP"},
+    )
+    _patch_source(monkeypatch, ["ticker:SAP@XNYS"])
+    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    assert result.divergence == 0.0 and result.alarm is False
 
 
 def test_empty_reference_refuses(monkeypatch):
@@ -236,3 +288,22 @@ def test_cli_reverse_bad_date_is_error(monkeypatch, capsys):
     rc = main(["universe", "reverse", "ibov", "ticker:B@BVMF", "leave", "not-a-date"])
     assert rc == 1
     assert "effective_date" in capsys.readouterr().err
+
+
+def test_cli_reverse_refuses_never_recorded_change(monkeypatch, capsys):
+    # A typo'd (token, change, date) must not append a context-free corrective
+    # that corrupts the projection while printing success.
+    conn = _Conn()
+    conn.event_exists = False
+    monkeypatch.setattr(sym.db, "connect", lambda: conn)
+    rc = main(["universe", "reverse", "ibov", "ticker:B@BVMF", "leave", "2026-06-10"])
+    assert rc == 1
+    assert conn.events == [] and conn.rebuilt == 0
+    assert "nothing to reverse" in capsys.readouterr().err
+
+
+def test_cli_accuracy_rejects_out_of_range_threshold(monkeypatch, capsys):
+    monkeypatch.setattr(sym.db, "connect", lambda: _Conn(config=IBOV_CFG))
+    assert main(["universe", "accuracy", "ibov", "--threshold", "1.5"]) == 1
+    assert "threshold" in capsys.readouterr().err
+    assert main(["universe", "accuracy", "ibov", "--threshold", "-0.1"]) == 1

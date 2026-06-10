@@ -86,10 +86,13 @@ class CriteriaProvider:
         self._n = int(n)
 
     def members(self, start: date, end: date) -> Iterator[MembershipChange]:
-        # Evaluate the rule as-of the window end and snapshot it as joins.
+        # Evaluate the rule as-of the window end and snapshot it as joins. An
+        # empty evaluation declares NO snapshot (None, not an empty set) — mass
+        # leaves must never be derived from an empty screen result.
+        self.last_snapshot_tokens = None
         figis = _RULES[self._rule](self._conn, end, self._n)
         tokens = [figi_token(figi) for figi in figis]
-        self.last_snapshot_tokens = set(tokens)
+        self.last_snapshot_tokens = set(tokens) or None
         for token in tokens:
             yield MembershipChange(token, JOIN, end, SOURCE, POLL_BOUNDED)
 

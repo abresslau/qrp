@@ -341,6 +341,8 @@ class WikipediaIndexSource:
         self._specs = {**_BUILTIN_SPECS, **(specs or {})}
 
     def fetch(self, index_key: str, start: date, end: date) -> list[MembershipChange]:
+        # Reset on entry: a raising fetch must not leak the previous call's snapshot.
+        self.last_snapshot_tokens = None
         spec = self._specs.get(index_key)
         if spec is None:
             raise IndexSourceError(f"no Wikipedia spec for index {index_key!r}")

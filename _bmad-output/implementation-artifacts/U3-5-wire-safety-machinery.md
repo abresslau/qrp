@@ -1,6 +1,6 @@
 # Story U3.5: U3-wire — route the monitor through leaver-diff + gating; give the accuracy gate a runner
 
-Status: review
+Status: done
 
 ## Story
 
@@ -68,6 +68,25 @@ In-review mitigations ALREADY APPLIED (do not redo): monitor idempotency guard (
   - [x] `sym universe reverse <id> <raw_identifier> <join|leave> <effective_date>` → `reverse_change` + rebuild
 - [x] Task 6: Docs + ledger (AC: 7)
 - [x] Task 7: Test suite + live ibov verification (AC: 8)
+
+### Review Findings (code review 2026-06-10, commit c931972 — ALL RESOLVED)
+
+- [x] [Review][Decision→Patch] Gated-run re-sightings accrue persistence credit — RESOLVED (option a): surprising runs grant NO credit; existing pendings are neither bumped nor corroborated nor duplicated (pending-existence probe replaces the bump on suspect runs) [gating.py stage_changes]
+- [x] [Review][Decision→Patch] Rejection silently overridden for POLL_BOUNDED changes — RESOLVED (option a): a change whose triple matches a rejected proposal re-stages with `reason='rejected_resight'` (visible in review, `is_promotable` always False) [gating.py]
+- [x] [Review][Decision→Patch] Independence check only tested `pref[0]` — RESOLVED (option a): the reference must not appear ANYWHERE in `source_pref` (tightens the spec's "≠ primary" to its intent) [accuracy.py fetch_reference_tokens]
+- [x] [Review][Patch] [HIGH — confirmed live, fix verified live] autocommit mid-transaction crash: `run_configured_accuracy_check` now enables autocommit BEFORE its first SELECT; `run_accuracy_check` only toggles when needed; CLI sets it after connect. Happy path re-verified against the real DB (dax, 40v40, divergence 0, audit row written) [accuracy.py + cli.py]
+- [x] [Review][Patch] Unexpected exceptions from `source.fetch` wrapped → `UniverseError` (clean exit 1) [accuracy.py]
+- [x] [Review][Patch] Coincident provider leave + derived leave deduped — one departure counts once [monitor.py]
+- [x] [Review][Patch] Wikipedia snapshot-tokens test added (constituents-half only, changes-table excluded) [tests/test_universe_snapshot_tokens.py]
+- [x] [Review][Patch] `last_snapshot_tokens` reset to None on fetch entry in all five sources; criteria declares None for an empty screen; FMP empty-current stays a loud error and declares nothing [providers/*.py]
+- [x] [Review][Patch] `reverse_change` existence guard — refuses (`UniverseError`, "nothing to reverse") when the named change was never recorded; verified live [gating.py]
+- [x] [Review][Patch] `--threshold` validated to [0, 1]; `--as_of_date` help clarifies snapshot references always return current membership [cli.py]
+- [x] [Review][Patch] Vacuous `test_status_constants_unchanged` removed [tests/test_universe_monitor_routing.py]
+- [x] [Review][Patch] Liveness counts gated runs: `MONITOR_LIVE_STATUSES = (success, gated)` in `last_successful_monitor`/`stale_monitors` — a gated universe no longer false-alarms as frozen [monitor.py]
+- [x] [Review][Patch] FIGI fallback also triggers on zero-overlap same-scheme sets (different MIC conventions) [accuracy.py]
+- [x] [Review][Patch] `MonitorSummary` field semantics documented on the dataclass [monitor.py]
+
+Dismissed as noise (5): churn division-by-zero (guarded by `max(current_count, 1)`); NULL `composite_figi` (schema NOT NULL); `IndexSourceError` uncaught (it subclasses `UniverseError` — caught); `reference_source` post-hoc assignment (style); help-text constant interpolation (style).
 
 ## Dev Notes
 
@@ -182,3 +201,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor per task.
 ### Change Log
 
 - 2026-06-10: Story implemented end-to-end (Tasks 1-7), suite 451 green, live ibov verification passed. Status → review.
+- 2026-06-10: Code review (3 adversarial layers) — 14 findings resolved (3 decisions all taken as recommended, 11 patches incl. 1 HIGH confirmed+fixed+re-verified live), 5 dismissed. Suite 451 → 461 green, zero new lint. Spec deviation recorded: AC4's independence check tightened from "≠ primary" to "∉ source_pref". Status → done.

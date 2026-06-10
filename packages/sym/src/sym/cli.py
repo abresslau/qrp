@@ -1031,9 +1031,16 @@ def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
+    if not 0 <= threshold <= 1:
+        print(
+            f"invalid --threshold {threshold!r}: must be a divergence fraction in [0, 1]",
+            file=sys.stderr,
+        )
+        return 1
     load_dotenv()
     try:
         with connect() as conn:
+            conn.autocommit = True
             result = run_configured_accuracy_check(
                 conn, args.universe_id, as_of_date=as_of_date, threshold=threshold
             )
@@ -1366,7 +1373,11 @@ def build_parser() -> argparse.ArgumentParser:
         "reference source (config.accuracy_reference); exit 2 on alarm.",
     )
     u_accuracy.add_argument("universe_id", help="The universe slug.")
-    u_accuracy.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
+    u_accuracy.add_argument(
+        "--as_of_date",
+        help="As-of date stamped on the audit row (ISO; default: today). Snapshot "
+        "references always return CURRENT membership regardless of this date.",
+    )
     u_accuracy.add_argument(
         "--threshold",
         type=float,
