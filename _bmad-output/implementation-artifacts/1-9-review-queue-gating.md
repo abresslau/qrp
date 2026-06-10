@@ -1,6 +1,6 @@
 # Story 1.9: Review-queue gating — make the queue a gate, not a write-only log (chunk-4 D1)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -75,6 +75,18 @@ Live state: 5 open rows (TWTR/ATVI/LEHMQ/ENE/CSGN — the adversarial seed names
 - [Source: packages/sym/migrations/deploy/securities_review_queue.sql] — the gate the schema always expected
 - [Source: packages/sym/src/sym/identity/{figi,review_queue}.py]
 
+### Review Findings (code review 2026-06-10, commit aa68350 — ALL RESOLVED)
+
+- [x] [Review][Patch] [HIGH] `resolve_review` now atomic + error-isolated: the whole action runs in `conn.transaction()`; any `write_security` failure surfaces as a typed `ReviewQueueError` (row stays open, nothing half-commits — tested); the close UPDATE guards `AND resolved_at IS NULL` + RETURNING (concurrent close raises); the outcome (`assigned <FIGI>` / `dismissed`) is appended to `detail` so `list --all` distinguishes them [review_queue.py]
+- [x] [Review][Patch] `--share-class-figi` validated (shape, `.upper()` normalized) and the CLI requires `--figi` with it — verified live (exit 1, clean message) [review_queue.py, cli.py]
+- [x] [Review][Patch] `source_input` guarded (non-dict / blank symbol → typed error); the str-payload branch exercised for real; the vacuous JSON test replaced [review_queue.py, tests]
+- [x] [Review][Patch] Gate tests derive open keys via `source_key(seed.resolution_inputs()[i])` — key-construction drift now breaks the suite [tests]
+- [x] [Review][Patch] FIGI inputs `.strip().upper()`-normalized before the 12-char check — verified live ('nope' → clean exit 1) [review_queue.py]
+- [x] [Review][Patch] Skipped-names line gains "+N more"; `--all` empty message corrected; both tested (incl. a 12-seed overflow case via the extracted `_format_skipped_line`) [cli.py]
+- [x] [Review][Patch] Terminal-state guidance: runbook + dismissal message say it plainly — permanently-dead names come OUT of the seed file (the queue tracks pending decisions, not tombstones); the ISIN-keyed-assignment refusal points at dismiss-then-fix-seed [docs, cli.py, review_queue.py]
+- [x] [Review][Patch] `backfill_names` gate exemption recorded in its docstring (structurally safe: queued inputs have no securities row, never assigns/enqueues) [figi.py]
+- Dismissed (3): age display tz-boundary ±1 day (cosmetic); test fakes not modeling autocommit/savepoint durability (project-wide DB-free convention; the transaction fix is what matters); FIGI structural validation beyond 12-char (BBG prefix isn't universal — over-validation).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -105,3 +117,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-5); suite 495 → 507 green; live gate verified (5 real queued names skipped on a full resolve run; synthetic dismiss→re-queue cycle proven). Status → review.
+- 2026-06-10: Code review (3 adversarial layers; Auditor verified the live DB clean — 5 real rows untouched, zero synthetic residue) — 8 patches applied (HIGH: the steward assignment path now has the `apply_resolutions` discipline it was missing — one transaction, typed errors, no half-committed securities), 0 deferred, 3 dismissed. Suite 507 → 516 green. Status → done.

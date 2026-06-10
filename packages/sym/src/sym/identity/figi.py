@@ -548,6 +548,11 @@ def backfill_names(
     elsewhere never mislabels an existing security. Idempotent and resumable
     (autocommit + chunked): a re-run only touches still-unnamed securities, so it
     also fills any names a later population adds.
+
+    Recorded exemption from the review-queue gate (Story 1.9): this path pairs a
+    conn with the planner but is NOT gated — structurally safe, because queued
+    inputs have no ``securities`` row, so ``unnamed_securities`` can never surface
+    them, and this path never assigns or enqueues.
     """
     conn.autocommit = True
     rows = unnamed_securities(conn)

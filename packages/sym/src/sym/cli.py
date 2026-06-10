@@ -72,11 +72,18 @@ def _cmd_resolve(_args: argparse.Namespace) -> int:
         f"({summary.review_enqueued} review rows enqueued)"
     )
     if summary.skipped_queued:
-        print(
-            f"  {summary.skipped_queued} skipped — open review rows "
-            f"({', '.join(summary.skipped_names[:10])}); see `sym review list`"
-        )
+        print(_format_skipped_line(summary))
     return 0
+
+
+def _format_skipped_line(summary) -> str:
+    shown = ", ".join(summary.skipped_names[:10])
+    more = len(summary.skipped_names) - 10
+    suffix = f", +{more} more" if more > 0 else ""
+    return (
+        f"  {summary.skipped_queued} skipped — open review rows "
+        f"({shown}{suffix}); see `sym review list`"
+    )
 
 
 def _cmd_review_list(args: argparse.Namespace) -> int:
@@ -94,7 +101,7 @@ def _cmd_review_list(args: argparse.Namespace) -> int:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
     if not items:
-        print("no open review items")
+        print("no review items" if args.all else "no open review items")
         return 0
     today = date.today()
     for it in items:
@@ -116,6 +123,9 @@ def _cmd_review_resolve(args: argparse.Namespace) -> int:
     from sym.db import connect
     from sym.identity.review_queue import ReviewQueueError, resolve_review
 
+    if args.share_class_figi and not args.figi:
+        print("--share-class-figi requires --figi", file=sys.stderr)
+        return 1
     load_dotenv()
     try:
         with connect() as conn:
@@ -133,7 +143,8 @@ def _cmd_review_resolve(args: argparse.Namespace) -> int:
     print(
         f"review {args.review_id} {outcome}"
         + (f" — assigned {args.figi}" if outcome == "assigned" else
-           " — input eligible again on the next resolve run")
+           " — input eligible again on the next resolve run "
+           "(permanently-dead name? remove it from the seed file instead)")
     )
     return 0
 

@@ -36,6 +36,9 @@ sym review list                          # FIGI-assignment issues awaiting stewa
 sym review resolve <id> [--figi BBG...]  # assign the steward's pick, or dismiss
 #  ^ open review rows GATE `sym resolve`: queued inputs are skipped (no OpenFIGI
 #    re-query, no auto-assignment) until resolved; dismissal re-admits the input.
+#    Permanently-dead names (delisted, never coming back): dismiss the row AND
+#    remove the entry from the seed file - the queue tracks pending decisions,
+#    not tombstones.
 
 # 3. Universe membership (per universe)
 sym universe add <id> --kind index --index <key> --source-pref wikipedia

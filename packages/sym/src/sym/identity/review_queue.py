@@ -118,10 +118,17 @@ def resolve_review(
 
     Returns ``'assigned'`` or ``'dismissed'``. Assignment builds the seed from
     the queued ``source_input`` and writes through :func:`write_security` (the
-    symbology SCD + collision guard live there — never hand-rolled INSERTs).
+    symbology SCD + collision guard live there — never hand-rolled INSERTs);
+    the write and the close run in ONE transaction, and any write failure
+    surfaces as a typed :class:`ReviewQueueError` with the row left open — never
+    a half-committed security. The outcome is appended to ``detail`` so
+    ``list --all`` can tell assignments from dismissals.
+
     Either way ``resolved_at`` is set, the partial unique index frees the key,
     and the input becomes eligible on the next run (Story 1.4 AC3) — a
-    still-unresolvable dismissal simply re-queues fresh.
+    still-unresolvable dismissal simply re-queues fresh. A permanently-dead name
+    should instead be REMOVED from the seed file (the queue tracks pending
+    decisions, not tombstones).
     """
     row = conn.execute(
         "SELECT source_key, source_input, resolved_at "
@@ -133,18 +140,31 @@ def resolve_review(
     source_key_, source_input, resolved_at = row
     if resolved_at is not None:
         raise ReviewQueueError(f"review {review_id} ({source_key_}) already resolved")
-    outcome = "dismissed"
+    outcome, note, seed = "dismissed", " | resolved: dismissed", None
     if composite_figi is not None:
+        composite_figi = composite_figi.strip().upper()
         if not _FIGI_RE.match(composite_figi):
             raise ReviewQueueError(
                 f"invalid FIGI {composite_figi!r}: expected 12 chars [A-Z0-9]"
             )
+        if share_class_figi is not None:
+            share_class_figi = share_class_figi.strip().upper()
+            if not _FIGI_RE.match(share_class_figi):
+                raise ReviewQueueError(
+                    f"invalid ShareClassFIGI {share_class_figi!r}: expected 12 chars [A-Z0-9]"
+                )
         if isinstance(source_input, str):
             source_input = json.loads(source_input)
+        if not isinstance(source_input, dict) or not source_input.get("symbol_value"):
+            raise ReviewQueueError(
+                f"review {review_id} ({source_key_}) has an unusable source_input — "
+                "cannot reconstruct the seed for assignment"
+            )
         if source_input.get("symbol_type") != "ticker" or not source_input.get("mic"):
             raise ReviewQueueError(
                 f"review {review_id} ({source_key_}) lacks a ticker+MIC input — "
-                "assignment needs the listing (resolve via the seed file instead)"
+                "assignment needs the listing; dismiss the row and fix the entry "
+                "in the seed file instead"
             )
         seed = SeedSecurity(
             name=source_input.get("name") or source_key_,
@@ -154,13 +174,32 @@ def resolve_review(
             isin=None,
             note=f"steward-assigned from review {review_id}",
         )
-        write_security(
-            conn, seed=seed, composite_figi=composite_figi,
-            share_class_figi=share_class_figi,
-        )
-        outcome = "assigned"
-    conn.execute(
-        "UPDATE securities_review_queue SET resolved_at = now() WHERE review_id = %s",
-        (review_id,),
-    )
+        outcome, note = "assigned", f" | resolved: assigned {composite_figi}"
+    with conn.transaction():
+        if seed is not None:
+            try:
+                write_security(
+                    conn, seed=seed, composite_figi=composite_figi,
+                    share_class_figi=share_class_figi,
+                )
+            except Exception as exc:  # noqa: BLE001 — typed surface; txn rolls back,
+                # the row stays open, and the CLI prints a message, not a traceback
+                # (collisions/unknown MICs are REALISTIC here: queue inputs are the
+                # ones that already failed once).
+                raise ReviewQueueError(
+                    f"assignment failed for review {review_id}: "
+                    f"{type(exc).__name__}: {exc}"
+                ) from exc
+        closed = conn.execute(
+            """
+            UPDATE securities_review_queue
+               SET resolved_at = now(),
+                   detail = trim(coalesce(detail, '') || %s)
+             WHERE review_id = %s AND resolved_at IS NULL
+            RETURNING review_id
+            """,
+            (note, review_id),
+        ).fetchone()
+        if closed is None:
+            raise ReviewQueueError(f"review {review_id} was resolved concurrently")
     return outcome
