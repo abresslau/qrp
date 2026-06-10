@@ -148,6 +148,10 @@ def generate() -> dict:
         try:
             conn = psycopg.connect(**base, dbname="sym")
             r["run"](sess.wrap(conn))
+        except Exception as exc:  # noqa: BLE001 — one recipe's failure (engine import,
+            # query drift) must not abort generation for every other package.
+            print(f"  WARNING: recipe '{r['pkg']}' failed: {type(exc).__name__}: {exc}")
+            continue
         finally:
             if conn is not None:
                 conn.close()
@@ -175,8 +179,16 @@ def generate() -> dict:
             else:
                 print(f"  WARNING: no deps derived for '{t}' — leaving hand-declared")
     fk = _fk_referential(base)
-    if not out and not fk:  # total failure (e.g. DB unreachable) — don't clobber a good file
+    # Clobber guards: a fully-empty run (DB unreachable) keeps the file; an empty DERIVED
+    # with a non-empty FK side (every recipe silently captured nothing — signature drift)
+    # must ALSO not wipe previously-derived transform lineage.
+    if not out and not fk:
         print("  WARNING: generation produced nothing — keeping existing derived_lineage.py")
+    elif not out:
+        print(
+            "  WARNING: zero transform lineage derived (FK side only) — keeping existing "
+            "derived_lineage.py; investigate recipe/capture drift before regenerating"
+        )
     else:
         _write(out, fk)
     return {"derived": out, "fk_referential": fk}
@@ -194,7 +206,11 @@ def _write(out: dict, fk: dict) -> None:
     for t in sorted(fk):
         lines.append(f"    {t!r}: {fk[t]!r},")
     lines += ["}", ""]
-    path.write_text("\n".join(lines), encoding="utf-8")
+    # Atomic swap: a process killed mid-write must not leave a half-written module that
+    # breaks the next `lineage.assets` import (and with it the whole code location).
+    tmp = path.with_suffix(".py.tmp")
+    tmp.write_text("\n".join(lines), encoding="utf-8")
+    tmp.replace(path)
 
 
 if __name__ == "__main__":

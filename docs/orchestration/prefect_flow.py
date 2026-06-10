@@ -17,8 +17,10 @@ from __future__ import annotations
 # def sym_eod() -> None:
 #     m = step.submit("monitor")
 #     d = step.submit("fill", wait_for=[m])
-#     b = step.submit("benchmarks", wait_for=[d])
-#     r = step.submit("recompute", wait_for=[b])
+#     mp = step.submit("map", wait_for=[d])
+#     b = step.submit("benchmarks", wait_for=[mp])
+#     x = step.submit("fx", wait_for=[b])
+#     r = step.submit("recompute", wait_for=[x])
 #     step.submit("validate", wait_for=[r])
 #
 # if __name__ == "__main__":

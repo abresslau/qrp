@@ -263,7 +263,8 @@ LINEAGE = {
     ("signals", "score"): _lin(
         composite_figi=[(("sym", "fact_returns"), "composite_figi"),
                         (("sym", "universe_membership"), "composite_figi")],
-        raw=[(("sym", "fact_returns"), "pr"), (("sym", "fundamentals"), "market_cap")],
+        raw=[(("sym", "fact_returns"), "pr"),
+             (("sym", "fundamentals"), "market_cap_usd")],  # the size factor's real input
     ),
     ("optimiser", "weight"): _lin(
         composite_figi=[(("sym", "fact_returns"), "composite_figi"),
@@ -288,7 +289,16 @@ LINEAGE = {
 }
 
 
-_NAME_INDEX = {t: (db, t) for (db, t) in SCHEMAS}
+# Bare-name -> (db, table). Loud on duplicates: a same-named table in two packages
+# would silently last-wins in a dict comprehension and mis-wire every derived dep.
+_NAME_INDEX: dict[str, tuple[str, str]] = {}
+for _db, _t in SCHEMAS:
+    if _t in _NAME_INDEX and _NAME_INDEX[_t] != (_db, _t):
+        raise RuntimeError(
+            f"duplicate bare table name {_t!r}: {_NAME_INDEX[_t]} vs {(_db, _t)} — "
+            "the lineage keyspace must move to (db, table) before adding this asset"
+        )
+    _NAME_INDEX[_t] = (_db, _t)
 
 
 def _resolve(name: str) -> tuple[str, str] | None:
@@ -444,25 +454,15 @@ _RUNNABLE_SYM = [
         [("sym", "securities"), ("sym", "fx_rate")],
         "Shares outstanding + market cap (local and USD via fx_rate).",
         _md(("sym", "fundamentals"), "sym", "fundamentals",
-            "`sym fundamentals` (+ market_cap_usd recompute)", source="yfinance"),
-        ["fundamentals"],
-    ),
-    _sym_asset(
-        "membership_event", ("sym", "membership_event"), [("sym", "universe")],
-        "Append-only universe join/leave event log.",
-        _md(("sym", "membership_event"), "sym", "membership_event", "`sym universe monitor`",
-            source="universe provider (config-driven)"),
-        ["universe", "monitor"],
-    ),
-    _sym_asset(
-        "universe_membership", ("sym", "universe_membership"),
-        [("sym", "membership_event"), ("sym", "universe_member_resolution")],
-        "Point-in-time membership intervals, projected from the event log.",
-        _md(("sym", "universe_membership"), "sym", "universe_membership",
-            "`sym universe refresh` (rebuild_projection)"),
-        ["universe", "refresh"],
+            "`sym fundamentals --all` (+ market_cap_usd recompute)", source="yfinance"),
+        ["fundamentals", "--all"],  # the bare command exits 1 (requires --all/--universe)
     ),
 ]
+
+# membership_event / universe_membership are deliberately NOT runnable assets: their CLI
+# commands (`sym universe monitor|refresh <universe_id>`) require a per-universe argument,
+# so a parameterless materialization would exit 2 on every click. They are modeled as
+# external (lineage-only) specs below; run them via the CLI or the EOD monitor step.
 
 
 # --------------------------------------------------------------------------------------------
@@ -473,12 +473,14 @@ def _spec(key_tuple, deps, group, description, database, table, produced_by,
           source=None, note=None, kinds=("postgres",)) -> AssetSpec:
     md = _md(key_tuple, database, table, produced_by, source=source, note=note)
     derived = DERIVED.get(table)
+    declared_deps = list(deps)
+    cross: list = []
     if derived:
         # UNION auto-derived cross-package sources with the hand-declared deps — derived ADDS or
         # confirms, never silently removes a hand-declared edge (guards incomplete derivation).
         # Unknown source names are dropped, not fabricated into ("sym", name) dangling keys.
         cross = [r for s in derived["deps"] if (r := _resolve(s))]
-        deps = _dedup(cross + list(deps))
+        deps = _dedup(cross + declared_deps)
         if derived.get("column_lineage"):
             # derived column_lineage carries ONLY pass-through KEY_COLUMNS (composite_figi/sym_id),
             # so the upstream column name == the key (column_name=k) by construction.
@@ -488,7 +490,10 @@ def _spec(key_tuple, deps, group, description, database, table, produced_by,
                 for k, srcs in derived["column_lineage"].items()})
         md["lineage_basis"] = "auto-derived (lineage.generate)"
     fk = _fk_parents(table)  # auto FK referential parents
-    _record_edges(deps, table, "auto-derived" if derived else "declared")
+    # Per-edge basis honesty: only the edges the derivation ADDED are 'auto-derived';
+    # hand-declared deps keep 'declared' even when a derivation also exists for the table.
+    _record_edges(declared_deps, table, "declared")
+    _record_edges([c for c in cross if c not in declared_deps], table, "auto-derived")
     _record_edges(fk, table, "referential")
     deps = _dedup(list(deps) + fk)
     return AssetSpec(
@@ -512,9 +517,19 @@ _EXTERNAL = [
     _spec(("sym", "universe"), [], "sym",
           "Universe registry (index/custom-list definitions).",
           "sym", "universe", "`sym universe add`", source="user JSON config"),
+    _spec(("sym", "membership_event"), [("sym", "universe")], "sym",
+          "Append-only universe join/leave event log.",
+          "sym", "membership_event", "`sym universe monitor <id>` / refresh",
+          source="universe provider (config-driven)",
+          note="per-universe CLI arg required — not a one-click runnable"),
     _spec(("sym", "universe_member_resolution"), [("sym", "membership_event")], "sym",
           "Resolved members per universe refresh (feeds the projection).",
           "sym", "universe_member_resolution", "`sym universe refresh`"),
+    _spec(("sym", "universe_membership"),
+          [("sym", "membership_event"), ("sym", "universe_member_resolution")], "sym",
+          "Point-in-time membership intervals, projected from the event log.",
+          "sym", "universe_membership", "`sym universe refresh <id>` (rebuild_projection)",
+          note="per-universe CLI arg required — not a one-click runnable"),
     _spec(("sym", "fact_index_returns"), [("sym", "index_levels")], "sym",
           "Benchmark index returns, derived from index_levels (sym_id chain).",
           "sym", "fact_index_returns", "`sym benchmarks` (recompute_index_returns)"),

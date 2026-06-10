@@ -60,7 +60,11 @@ def render() -> str:
 
 
 def write() -> str:
-    out_dir = Path(__file__).resolve().parents[2] / "docs"  # packages/lineage/docs
+    # Anchor on the repo root (platform.toml), not __file__ parents — installed as a
+    # wheel, parents[2] would silently write field-flow.md into site-packages/docs.
+    from .sym_run import repo_root
+
+    out_dir = repo_root() / "packages" / "lineage" / "docs"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / "field-flow.md"
     path.write_text(render(), encoding="utf-8")

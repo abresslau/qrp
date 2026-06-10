@@ -186,7 +186,7 @@ sym is **scheduler-agnostic** — it carries no Airflow/Prefect dependency. Run 
 daily pipeline either coarse or fine-grained:
 
 ```
-sym eod                       # coarse: monitor -> fill -> benchmarks -> recompute -> validate
+sym eod                       # coarse: monitor -> fill -> map -> benchmarks -> fx -> recompute -> validate
 sym eod --dry-run             # print the step plan
 sym eod --steps fill,recompute    # run a subset (one task per step under an orchestrator)
 sym eod --skip benchmarks

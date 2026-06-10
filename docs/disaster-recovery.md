@@ -71,5 +71,7 @@ function of the restored raw inputs (each row stamped with its `input_hash`). Th
 why excluding `fact_returns` from the backup is safe — and why the deterministic
 `recompute` command is version-controlled alongside the migrations.
 
-> `sym recompute` lands with the returns engine (Epic 3, Story 3.x). Until then the
-> backup captures everything needed; step 4 is the documented final step of recovery.
+> `sym recompute` defaults to a ONE-YEAR lookback — a full-history rebuild after a
+> restore needs an explicit range: `sym recompute --start_date 1990-01-01`. (Index
+> returns: `fact_index_returns` is recomputable too but is deliberately kept IN the
+> dump — small, conservative.)

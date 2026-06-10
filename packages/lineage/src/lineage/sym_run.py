@@ -17,15 +17,23 @@ from pathlib import Path
 from dagster import MaterializeResult, MetadataValue
 
 
+# Cap a sym subcommand: one hung vendor socket must not block the Dagster slot
+# forever (retries never fire when the op never finishes).
+SYM_RUN_TIMEOUT_S = 3600
+
+
 @lru_cache
 def repo_root() -> Path:
     """Locate the monorepo root (the dir containing platform.toml), searching upward
-    from the current working directory, then from this file. Falls back to the known path."""
+    from the current working directory, then from this file."""
     for base in (Path.cwd(), Path(__file__).resolve()):
         for parent in (base, *base.parents):
             if (parent / "platform.toml").is_file():
                 return parent
-    return Path("C:/Projects/qrp")
+    raise FileNotFoundError(
+        "platform.toml not found above the CWD or this file — run from inside the "
+        "qrp checkout (a hardcoded machine-path fallback would fail opaquely elsewhere)"
+    )
 
 
 def run_sym(context, *args: str, db: str = "sym") -> MaterializeResult:
@@ -36,12 +44,13 @@ def run_sym(context, *args: str, db: str = "sym") -> MaterializeResult:
     context.log.info(f"materialize via: {pretty}")
     started = time.monotonic()
     proc = subprocess.run(
-        cmd, cwd=str(repo_root()), capture_output=True, text=True
+        cmd, cwd=str(repo_root()), capture_output=True, text=True, timeout=SYM_RUN_TIMEOUT_S
     )
     duration = round(time.monotonic() - started, 2)
     out_tail = (proc.stdout or "")[-2000:]
     if proc.returncode != 0:
-        context.log.error((proc.stderr or "")[-2000:])
+        # sym prints its actionable summary/[FAIL] lines to STDOUT — log both streams.
+        context.log.error(f"{out_tail}\n{(proc.stderr or '')[-2000:]}")
         raise RuntimeError(f"`{pretty}` exited {proc.returncode}")
     return MaterializeResult(
         metadata={
