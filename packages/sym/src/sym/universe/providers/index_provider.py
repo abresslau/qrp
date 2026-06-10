@@ -69,8 +69,10 @@ class IndexProvider:
         for archetype in self._pref:
             try:
                 changes = list(self._source(archetype).fetch(self._index, start, end))
-            except (IndexSourceError, UnknownArchetypeError) as exc:
-                attempts.append(f"{archetype}: {exc}")
+            except Exception as exc:  # noqa: BLE001 — ANY source failure falls through to
+                # the next archetype: an unanticipated JSONDecodeError/KeyError from one
+                # vendor must not kill the whole refresh when a fallback could serve.
+                attempts.append(f"{archetype}: {type(exc).__name__}: {exc}")
                 continue
             if not changes:
                 attempts.append(f"{archetype}: produced no changes")

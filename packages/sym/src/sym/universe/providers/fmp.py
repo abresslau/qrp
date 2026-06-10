@@ -9,9 +9,11 @@ is testable without the network and a real outage raises :class:`IndexSourceErro
 (loud → the orchestrator falls back) rather than a silent empty result.
 
 FMP free-tier note: an API key is required (``FMP_API_KEY``); the free tier is
-US-only and may gate the historical-constituent endpoint. The provider verifies
-expected-vs-returned counts so a throttled partial fetch is an error, not a quiet
-short read.
+US-only and may gate the historical-constituent endpoint (a gated history is
+swallowed — current-snapshot-only — and the membership log carries no signal of
+the degradation). The only payload sanity checks are non-list rejection and the
+empty-current-snapshot error; there is NO expected-vs-returned count verification,
+so a throttled partial list would pass silently.
 """
 
 from __future__ import annotations
@@ -117,7 +119,10 @@ class HttpFmpClient:
                 continue
             if resp.status_code != 200:
                 raise IndexSourceError(f"FMP returned HTTP {resp.status_code} for {path}")
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise IndexSourceError(f"FMP returned non-JSON for {path}") from exc
             if not isinstance(data, list):
                 raise IndexSourceError(f"FMP returned a non-list payload for {path}")
             return data

@@ -210,50 +210,63 @@ class HttpWikipediaClient:
                 continue
             if resp.status_code != 200:
                 raise IndexSourceError(f"Wikipedia returned HTTP {resp.status_code} for {title!r}")
-            payload = resp.json()
+            try:
+                payload = resp.json()
+            except ValueError as exc:
+                raise IndexSourceError(f"Wikipedia returned non-JSON for {title!r}") from exc
             if "error" in payload:
                 raise IndexSourceError(f"Wikipedia API error for {title!r}: {payload['error']}")
-            return payload["parse"]["text"]
+            text = payload.get("parse", {}).get("text")
+            if not text:  # warnings-only / unexpected shape — must be a source error,
+                raise IndexSourceError(  # not a KeyError that bypasses the fallback chain
+                    f"Wikipedia response for {title!r} has no parse.text"
+                )
+            return text
         raise IndexSourceError(f"Wikipedia unreachable after {self._max_retries}: {last}")
 
 
 def _constituent_changes(
     tables: list[list[list[str]]], mic: str, at: date, *, yahoo_suffix: bool = False
 ) -> list[MembershipChange]:
-    """Current members from the constituents table (join at Date added, else poll)."""
-    for table in tables:
-        if not table:
+    """Current members from the constituents table (join at Date added, else poll).
+
+    Of the tables carrying a Symbol/Ticker-ish column, the LARGEST is taken as the
+    constituents table — the "Selected changes" table also has Ticker headers, and
+    if it precedes the constituents table a first-match would return a handful of
+    recent adds as the entire index (non-empty, so it would pass every guard).
+    """
+    candidates = [
+        t for t in tables if t and _header_index(t[0], "Symbol", "Ticker") is not None
+    ]
+    if not candidates:
+        raise IndexSourceError("no constituents table with a Symbol column found")
+    table = max(candidates, key=len)
+    header = table[0]
+    sym_i = _header_index(header, "Symbol", "Ticker")
+    date_i = _header_index(header, "Date added", "Date first added")
+    changes: list[MembershipChange] = []
+    for row in table[1:]:
+        if sym_i >= len(row):
             continue
-        header = table[0]
-        sym_i = _header_index(header, "Symbol", "Ticker")
-        if sym_i is None:
+        symbol = row[sym_i].strip()
+        if not symbol:
             continue
-        date_i = _header_index(header, "Date added", "Date first added")
-        changes: list[MembershipChange] = []
-        for row in table[1:]:
-            if sym_i >= len(row):
-                continue
-            symbol = row[sym_i].strip()
-            if not symbol:
-                continue
-            has_date = date_i is not None and date_i < len(row)
-            added = _parse_wiki_date(row[date_i]) if has_date else None
-            if yahoo_suffix:
-                base, row_mic = split_yahoo_suffix(symbol, mic)
-                token = ticker_token(base, row_mic)
-            else:
-                token = ticker_token(symbol, mic)
-            if added is not None:
-                changes.append(
-                    MembershipChange(token, JOIN, added, ARCHETYPE_WIKIPEDIA, EXACT)
-                )
-            else:
-                changes.append(
-                    MembershipChange(token, JOIN, at, ARCHETYPE_WIKIPEDIA, POLL_BOUNDED)
-                )
-        if changes:
-            return changes
-    raise IndexSourceError("no constituents table with a Symbol column found")
+        has_date = date_i is not None and date_i < len(row)
+        added = _parse_wiki_date(row[date_i]) if has_date else None
+        if yahoo_suffix:
+            base, row_mic = split_yahoo_suffix(symbol, mic)
+        else:
+            base, row_mic = symbol, mic
+        if not base:
+            continue  # garbled cell (e.g. '.DE') would mint a poison 'ticker:@MIC' token
+        token = ticker_token(base, row_mic)
+        if added is not None:
+            changes.append(MembershipChange(token, JOIN, added, ARCHETYPE_WIKIPEDIA, EXACT))
+        else:
+            changes.append(MembershipChange(token, JOIN, at, ARCHETYPE_WIKIPEDIA, POLL_BOUNDED))
+    if not changes:
+        raise IndexSourceError("constituents table parsed to zero members")
+    return changes
 
 
 def _changes_table_events(

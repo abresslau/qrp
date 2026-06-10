@@ -121,6 +121,15 @@ class HttpB3Client:
             results = payload.get("results")
             if results is None:
                 raise IndexSourceError(f"B3 response for {index_code!r} has no 'results'")
+            page = payload.get("page") or {}
+            total_pages = page.get("totalPages")
+            if isinstance(total_pages, int) and total_pages > 1:
+                # pageSize=500 covers every current B3 index; if an index ever outgrows
+                # one page, truncated membership must be an error, not silent truth.
+                raise IndexSourceError(
+                    f"B3 portfolio for {index_code!r} spans {total_pages} pages "
+                    "(pageSize=500 exceeded) — pagination not implemented"
+                )
             return results
         raise IndexSourceError(f"B3 unreachable after {self._max_retries}: {last}")
 

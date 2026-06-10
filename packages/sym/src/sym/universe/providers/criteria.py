@@ -24,34 +24,34 @@ from sym.universe.registry import CRITERIA, JOIN, POLL_BOUNDED, MembershipChange
 SOURCE = "criteria"
 
 
-def _top_n_market_cap(conn: psycopg.Connection, as_of_date: date, n: int) -> list[str]:
-    """The ``n`` largest securities by **point-in-time** market cap as of ``as_of_date``.
+# A market-cap input older than this is too stale to rank against live names (a
+# delisted mega-cap's final close must not compete with current prices forever).
+MAX_INPUT_AGE_DAYS = 400
 
-    Market cap is recomputed for the date — the latest raw close on/before ``as_of_date``
-    times the latest shares-outstanding observation on/before ``as_of_date`` — so it is
-    never stale between sparse shares observations.
+
+def _top_n_market_cap(conn: psycopg.Connection, as_of_date: date, n: int) -> list[str]:
+    """The ``n`` largest securities by **USD market cap** as of ``as_of_date``.
+
+    Ranks ``fundamentals.market_cap_usd`` (maintained by ``recompute_market_cap_usd``)
+    rather than ``shares × raw close``: raw closes mix currencies (and pence-quoted
+    listings) in one ordering, which is meaningless for a cross-listed screen. The
+    latest observation on/before ``as_of_date`` is used, bounded by
+    ``MAX_INPUT_AGE_DAYS`` so dead names age out of the screen.
     """
     rows = conn.execute(
         """
-        WITH shares AS (
-            SELECT DISTINCT ON (composite_figi) composite_figi, shares_outstanding
+        SELECT composite_figi FROM (
+            SELECT DISTINCT ON (composite_figi) composite_figi, market_cap_usd
               FROM fundamentals
-             WHERE as_of_date <= %s AND shares_outstanding IS NOT NULL
+             WHERE as_of_date <= %s
+               AND as_of_date > %s::date - %s
+               AND market_cap_usd IS NOT NULL AND market_cap_usd > 0
              ORDER BY composite_figi, as_of_date DESC
-        ),
-        px AS (
-            SELECT DISTINCT ON (composite_figi) composite_figi, close
-              FROM prices_raw
-             WHERE session_date <= %s
-             ORDER BY composite_figi, session_date DESC
-        )
-        SELECT s.composite_figi
-          FROM shares s JOIN px p USING (composite_figi)
-         WHERE s.shares_outstanding > 0 AND p.close > 0
-         ORDER BY (s.shares_outstanding * p.close) DESC, s.composite_figi
+        ) latest
+         ORDER BY market_cap_usd DESC, composite_figi
          LIMIT %s
         """,
-        (as_of_date, as_of_date, n),
+        (as_of_date, as_of_date, MAX_INPUT_AGE_DAYS, n),
     ).fetchall()
     return [r[0] for r in rows]
 

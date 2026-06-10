@@ -19,10 +19,18 @@ SOURCE = "custom_list"
 
 
 def member_token(sec: SeedSecurity) -> str:
-    """The resolution token for a seed entry: ticker:T@MIC preferred, else isin:X."""
+    """The resolution token for a seed entry: ticker:T@MIC preferred, else isin:X.
+
+    A seed with neither (ticker+mic) nor isin is a hard error — falling through
+    would mint a poison ``isin:None`` token into the append-only log.
+    """
     if sec.ticker and sec.mic:
         return f"ticker:{sec.ticker}@{sec.mic}"
-    return f"isin:{sec.isin}"
+    if sec.isin:
+        return f"isin:{sec.isin}"
+    raise ValueError(
+        f"seed entry {sec!r} needs ticker+mic or isin to form a resolution token"
+    )
 
 
 class CustomListProvider:
