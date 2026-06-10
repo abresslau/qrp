@@ -108,7 +108,7 @@ def _current_member_flags(
                EXISTS (SELECT 1 FROM trading_calendar_version v
                         WHERE v.is_current AND v.mic = s.mic)
           FROM universe_membership um
-          JOIN securities s USING (composite_figi)
+          LEFT JOIN securities s USING (composite_figi)
          WHERE um.valid_to IS NULL
     """
     params: list[object] = []
@@ -116,9 +116,12 @@ def _current_member_flags(
         sql += " AND um.universe_id = %s"
         params.append(universe_id)
     rows = conn.execute(sql, params).fetchall()
-    out: list[tuple[str, str, MemberFlags]] = []
+    out: list[tuple[str, str, MemberFlags | None]] = []
     for uid, figi, status, hn, hsy, hg, hp, hf, hc in rows:
-        out.append((uid, figi, MemberFlags(hn, hsy, hg, hp, hf, status, hc)))
+        # LEFT JOIN (not INNER): a member with no securities master row must be
+        # REPORTED as the worst incompleteness, not silently dropped from the check.
+        flags = MemberFlags(hn, hsy, hg, hp, hf, status, hc) if status is not None else None
+        out.append((uid, figi, flags))
     return out
 
 
@@ -132,10 +135,32 @@ def evaluate_completeness(
     missing metadata; warn = expected gaps).
     """
     conn.autocommit = True
+    if universe_id is not None:
+        known = conn.execute(
+            "SELECT 1 FROM universe WHERE universe_id = %s", (universe_id,)
+        ).fetchone()
+        if known is None:
+            # A typo'd universe id must not yield a vacuous zero-member PASS.
+            raise ValueError(f"unknown universe {universe_id!r}")
     members = _current_member_flags(conn, universe_id)
+    # Purge log rows for ex-members in scope: upsert-only would report departed
+    # members as incomplete forever.
+    purge_sql = (
+        "DELETE FROM universe_member_completeness c WHERE NOT EXISTS ("
+        "SELECT 1 FROM universe_membership um WHERE um.universe_id = c.universe_id "
+        "AND um.composite_figi = c.composite_figi AND um.valid_to IS NULL)"
+    )
+    purge_params: list[object] = []
+    if universe_id is not None:
+        purge_sql += " AND c.universe_id = %s"
+        purge_params.append(universe_id)
+    conn.execute(purge_sql, purge_params)
     failures: list[str] = []
     warnings: list[str] = []
     for uid, figi, flags in members:
+        if flags is None:  # no securities master row — the worst gap there is
+            failures.append(f"{uid}/{figi}: no securities master row")
+            continue
         c = classify_member(flags)
         conn.execute(
             """

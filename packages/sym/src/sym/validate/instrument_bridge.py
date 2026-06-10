@@ -71,6 +71,14 @@ def check_equity_instrument_bridge(conn: psycopg.Connection) -> CheckResult:
     }
     unmapped = find_unmapped(security_figis, equity_mapped_figis)
     orphans = find_orphan_instruments(equity_sym_ids, figi_xref_sym_ids)
+    # Third hole kind: a many-to-one bridge — one equity instrument carrying multiple
+    # composite_figi xrefs. The 1:1 claim fails silently here otherwise, and cross-asset
+    # joins through sym_id double-count.
+    many = conn.execute(
+        "SELECT sym_id, count(*) FROM instrument_xref WHERE source = %s "
+        "GROUP BY sym_id HAVING count(*) > 1",
+        (SRC_COMPOSITE_FIGI,),
+    ).fetchall()
     failures = [
         f"securities {figi}: no equity-instrument mapping (run backfill_equity_instruments)"
         for figi in sorted(unmapped)
@@ -78,6 +86,10 @@ def check_equity_instrument_bridge(conn: psycopg.Connection) -> CheckResult:
     failures += [
         f"instrument {sym_id} (equity): no composite_figi xref (partial insert; manual fix)"
         for sym_id in sorted(orphans)
+    ]
+    failures += [
+        f"instrument {sym_id}: {n} composite_figi xrefs (bridge must be 1:1; manual merge)"
+        for sym_id, n in sorted(many)
     ]
     return CheckResult.from_items(
         "equity_instrument_bridge",

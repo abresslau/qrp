@@ -69,11 +69,16 @@ def check_price_calendar_consistency(conn: psycopg.Connection) -> CheckResult:
         sessions = _current_sessions(conn, mic)
         if not sessions:
             continue  # no calendar -> reported by check_calendar_coverage
+        # Bound the comparison to the snapshot's covered span: bars before the
+        # calendar's first session (pre-1990 history) or after its last are not
+        # "off-calendar vendor noise" — the calendar simply doesn't cover them.
+        lo, hi = min(sessions), max(sessions)
         price_dates = {
             r[0] for r in conn.execute(
                 "SELECT DISTINCT p.session_date FROM prices_raw p "
-                "JOIN securities s USING (composite_figi) WHERE s.mic = %s",
-                (mic,),
+                "JOIN securities s USING (composite_figi) "
+                "WHERE s.mic = %s AND p.session_date BETWEEN %s AND %s",
+                (mic, lo, hi),
             ).fetchall()
         }
         for d in sorted(off_calendar(price_dates, sessions)):
@@ -126,15 +131,19 @@ def check_calendar_coverage(conn: psycopg.Connection) -> CheckResult:
 
 
 def check_unpriced_securities(conn: psycopg.Connection) -> CheckResult:
-    """Classify active securities holding no prices into expected vs unexpected."""
+    """Classify securities holding no prices into expected vs unexpected.
+
+    Scans ALL lifecycle statuses — an active-only filter would make the
+    delisted/suspended → "expected, warn" classification unreachable and leave an
+    unpriced delisted security reported by no check at all.
+    """
     rows = conn.execute(
         """
         SELECT s.composite_figi, s.status,
                EXISTS (SELECT 1 FROM trading_calendar_version v
                         WHERE v.is_current AND v.mic = s.mic) AS has_calendar
           FROM securities s
-         WHERE s.status = 'active'
-           AND NOT EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)
+         WHERE NOT EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)
         """
     ).fetchall()
     failures: list[str] = []
@@ -144,8 +153,8 @@ def check_unpriced_securities(conn: psycopg.Connection) -> CheckResult:
         (failures if severity == "fail" else warnings).append(f"{figi}: {reason}")
     return CheckResult.from_items(
         "unpriced_securities",
-        checked=conn.execute("SELECT count(*) FROM securities WHERE status='active'").fetchone()[0],
+        checked=conn.execute("SELECT count(*) FROM securities").fetchone()[0],
         failures=failures,
         warnings=warnings,
-        detail=f"{len(rows)} active securities unpriced ({len(failures)} unexpected)",
+        detail=f"{len(rows)} securities unpriced ({len(failures)} unexpected)",
     )

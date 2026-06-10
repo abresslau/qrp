@@ -77,6 +77,13 @@ def check_projection_reconciliation(conn: psycopg.Connection) -> CheckResult:
             warnings.append(
                 f"{uid}: pit_valid_from {pit} precedes earliest recorded leave {earliest_leave}"
             )
+        elif earliest_leave is not None and pit is None:
+            # NULL pit with dated leaves is the MOST dishonest state — queries have no
+            # refusal boundary at all over a window with known survivorship gaps.
+            warnings.append(
+                f"{uid}: pit_valid_from is NULL but dated leaves exist "
+                f"(earliest {earliest_leave}) — no PIT refusal boundary"
+            )
 
     return CheckResult.from_items(
         "projection_reconciliation",

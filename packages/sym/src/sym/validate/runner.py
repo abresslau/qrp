@@ -27,20 +27,41 @@ from sym.validate.symbology import check_identity_completeness, check_ticker_col
 
 
 def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[CheckResult]:
-    """Run every validation check (V1 refreshes the completeness log; rest read-only)."""
-    return [
-        evaluate_completeness(conn, universe_id),       # V1
-        check_referential_integrity(conn),              # V2
-        check_equity_instrument_bridge(conn),            # B7 — sym_id/composite_figi bridge 1:1
-        check_identity_completeness(conn),              # V3
-        check_ticker_collisions(conn),                  # V3
-        check_price_calendar_consistency(conn),         # V4
-        check_calendar_coverage(conn),                  # V4
-        check_unpriced_securities(conn),                # V4
-        check_projection_reconciliation(conn),          # V5
-        check_universe_readiness(conn),                 # V6
-        check_fx_coverage(conn),                        # FX4 — FX coverage SLA
+    """Run every validation check (V1 refreshes the completeness log; rest read-only).
+
+    Each check is error-isolated: a raising check becomes a FAIL result (with the
+    exception as detail) instead of aborting the suite — one missing table must not
+    cost the run-log row and every downstream check.
+    """
+    checks: list[tuple[str, object]] = [
+        ("completeness", lambda: evaluate_completeness(conn, universe_id)),     # V1
+        ("referential_integrity", lambda: check_referential_integrity(conn)),  # V2
+        ("equity_instrument_bridge",                                            # B7 — 1:1 bridge
+         lambda: check_equity_instrument_bridge(conn)),
+        ("identity_completeness", lambda: check_identity_completeness(conn)),  # V3
+        ("ticker_collisions", lambda: check_ticker_collisions(conn)),          # V3
+        ("price_calendar_consistency",                                          # V4
+         lambda: check_price_calendar_consistency(conn)),
+        ("calendar_coverage", lambda: check_calendar_coverage(conn)),          # V4
+        ("unpriced_securities", lambda: check_unpriced_securities(conn)),      # V4
+        ("projection_reconciliation",                                           # V5
+         lambda: check_projection_reconciliation(conn)),
+        ("universe_readiness", lambda: check_universe_readiness(conn)),        # V6
+        ("fx_coverage", lambda: check_fx_coverage(conn)),                      # FX4 — SLA
     ]
+    results: list[CheckResult] = []
+    for name, check in checks:
+        try:
+            results.append(check())
+        except Exception as exc:  # noqa: BLE001 — isolate; the suite must always report
+            results.append(
+                CheckResult.from_items(
+                    name, checked=0,
+                    failures=[f"check raised: {type(exc).__name__}: {str(exc)[:300]}"],
+                    detail="check crashed — treated as FAIL",
+                )
+            )
+    return results
 
 
 def summarize(results: list[CheckResult]) -> tuple[int, int, int, str]:

@@ -37,6 +37,15 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
     """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of_date``."""
     as_of_date = as_of_date or date.today()
     needed = needed_currencies(conn)
+    if not needed:
+        # Vacuous-pass guard: zero non-USD priced currencies means coverage is
+        # UNVERIFIABLE (pre-load warehouse), not healthy.
+        return CheckResult.from_items(
+            "fx_coverage",
+            checked=0,
+            warnings=["no priced non-USD securities — FX coverage unverifiable"],
+            detail="no non-USD priced-instrument currencies to check",
+        )
     fx_count = conn.execute("SELECT count(*) FROM fx_rate").fetchone()[0]
     if fx_count == 0:
         return CheckResult.from_items(
@@ -54,4 +63,9 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
             warnings.append(f"{ccy}: stale {r.days_stale}d (last observed {r.observed_date})")
         elif r.is_filled and r.days_stale > WEEKEND_SPAN_DAYS:
             warnings.append(f"{ccy}: carried {r.days_stale}d (last observed {r.observed_date})")
-    return CheckResult.from_items("fx_coverage", checked=len(needed), warnings=warnings)
+    return CheckResult.from_items(
+        "fx_coverage",
+        checked=len(needed),
+        warnings=warnings,
+        detail=f"{len(needed)} priced non-USD currencies checked as-of {as_of_date}",
+    )
