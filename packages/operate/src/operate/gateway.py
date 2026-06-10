@@ -66,6 +66,10 @@ class DbOperateGateway:
         op = OPS.get(op_key)
         if op is None:
             return {"ok": False, "status": "rejected", "reason": f"unknown op {op_key!r}"}
+        if any(a.startswith("-") for a in args):
+            # args ride straight onto the sym CLI argv; flag-like values would let a caller
+            # inject arbitrary options (e.g. mode switches) past the allowlist.
+            return {"ok": False, "status": "rejected", "reason": "flag-like args are not allowed"}
         if op.takes_universe and not args:
             return {"ok": False, "status": "rejected", "reason": "this op requires a universe id"}
         if op.writes and not confirm:
@@ -74,13 +78,17 @@ class DbOperateGateway:
                 "status": "rejected",
                 "reason": f"{op.label} writes sym data — re-run with confirm=true",
             }
+        # The 2-hour staleness window unwedges rows orphaned by a process crash (daemon threads
+        # die with the API): an op killed mid-run stops blocking re-runs once the window passes.
+        # Generous vs the executor's 1800s subprocess timeout.
         busy = self._conn.execute(
             "SELECT count(*) FROM qrp.job WHERE op = %s AND args = %s::jsonb "
-            "AND status IN ('queued', 'running')",
+            "AND status IN ('queued', 'running') "
+            "AND created_at > now() - interval '2 hours'",
             (op_key, json.dumps(args)),
         ).fetchone()[0]
         if busy:
-            return {"ok": False, "status": "rejected", "reason": "an identical run is in progress"}
+            return {"ok": False, "status": "conflict", "reason": "an identical run is in progress"}
 
         job_id = self._conn.execute(
             "INSERT INTO qrp.job (op, args, status) VALUES (%s, %s::jsonb, 'queued') "

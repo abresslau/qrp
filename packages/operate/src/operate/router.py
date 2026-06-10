@@ -77,4 +77,9 @@ def get_job(job_id: int, gw: DbOperateGateway = Depends(_gateway)) -> dict:
 
 @router.post("/run", response_model=RunResult)
 def run_op(body: RunRequest = Body(...), gw: DbOperateGateway = Depends(_gateway)) -> dict:
-    return gw.run(body.op, body.args, body.confirm)
+    res = gw.run(body.op, body.args, body.confirm)
+    if not res["ok"]:
+        # Honest status codes: 409 for a lock/duplicate conflict, 422 for validation rejections.
+        code = 409 if res["status"] == "conflict" else 422
+        raise HTTPException(status_code=code, detail=res["reason"])
+    return res

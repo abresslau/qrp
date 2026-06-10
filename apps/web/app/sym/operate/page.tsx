@@ -54,13 +54,17 @@ export default function OperatePage() {
 
   async function run(op: OpDef) {
     const args = op.takes_universe ? [universe] : [];
-    const res: RunResult = await fetch("/api/operate/run", {
+    const r = await fetch("/api/operate/run", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ op: op.key, args, confirm }),
-    }).then((r) => r.json());
+    });
+    // Rejections now arrive as 409 (conflict) / 422 (validation) with FastAPI's {detail}.
+    const res: RunResult & { detail?: string } = await r.json();
     setMsg(
-      res.ok ? `Started ${op.label} (job #${res.job_id})` : `Rejected: ${res.reason ?? "unknown"}`,
+      r.ok
+        ? `Started ${op.label} (job #${res.job_id})`
+        : `Rejected: ${res.detail ?? res.reason ?? "unknown"}`,
     );
     loadJobs();
   }

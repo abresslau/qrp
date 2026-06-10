@@ -12,6 +12,7 @@ their own writes, and sym's pipeline_run_log/validation_run_log stay the system-
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -56,9 +57,14 @@ OPS: dict[str, Op] = {
 
 
 def _advisory_key(op: str, args: list[str]) -> int:
-    """Stable 63-bit advisory-lock key from op+args (Postgres bigint)."""
-    h = hash((op, tuple(args))) & 0x7FFFFFFFFFFFFFFF
-    return h
+    """Stable 63-bit advisory-lock key from op+args (Postgres bigint).
+
+    hashlib, not ``hash()`` — Python's ``hash()`` is salted per process (PYTHONHASHSEED),
+    so two processes would compute different keys for the same op and the cross-process
+    lock would guard nothing.
+    """
+    digest = hashlib.sha256("\x00".join([op, *args]).encode()).digest()
+    return int.from_bytes(digest[:8], "big") & 0x7FFFFFFFFFFFFFFF
 
 
 def _now() -> datetime:
@@ -67,7 +73,10 @@ def _now() -> datetime:
 
 def _run_job(job_id: int, op: Op, args: list[str]) -> None:
     """Worker body (daemon thread): hold an advisory lock, run the subprocess, record result."""
-    conn = connect()  # qrp.job ledger lives in the qrp database
+    try:
+        conn = connect()  # qrp.job ledger lives in the qrp database
+    except Exception:  # noqa: BLE001 — can't reach the ledger, so can't mark the row failed;
+        return  # the busy-check's staleness window unwedges the orphaned 'queued' row
     conn.autocommit = True
     key = _advisory_key(op.key, args)
     try:
