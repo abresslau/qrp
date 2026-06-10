@@ -1,6 +1,6 @@
 # Story O.3: Actuation origin guard (chunk-1 D4, guard half)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -52,6 +52,17 @@ Chunk-1 review (2026-06-10), ledger **D4 (API hardening)**: same-origin/CSRF gua
 - [Source: _bmad-output/implementation-artifacts/deferred-work.md — chunk-1 D4]
 - [Source: services/api/src/qrp_api/main.py — CORS config, create_app]
 
+### Review Findings (code review 2026-06-10, commit 1904f91 — ALL RESOLVED)
+
+- [x] [Review][Patch] `TrustedHostMiddleware` added (localhost/127.0.0.1/testserver) — the DNS-rebinding companion; verified live (rebound Host → 400) and in tests [main.py]
+- [x] [Review][Patch] Test suite 6 → 13: PUT/PATCH/DELETE parametrized; `Origin: null` denied-by-design; empty-string fail-closed; pre-routing 403 on a nonexistent path (the REAL structural property); pass-tests assert the deterministic 422; fixture client [tests]
+- [x] [Review][Patch] All four secure-by-accident decisions documented in the guard docstring (null-Origin, empty-string, no Referer fallback, http-scope-only/WS caveat) + the load-bearing registration-order comment at the middleware site [main.py]
+- [x] [Review][Patch] `ALLOWED_ORIGINS` is an immutable tuple, env-overridable via `QRP_ALLOWED_ORIGINS` (the Next-bumps-to-:3001 lockout has a recourse) [main.py]
+- [x] [Review][Patch] 403 echo truncated to 100 chars (attacker-controlled input); tested [main.py]
+- [x] [Review][Patch] `httpx2` relocated to `services/api/pyproject.toml`'s own dev group per the workspace convention (a mid-sync collision with the running API stripped the venv — recovered with a full `uv sync --all-packages --all-groups` after stopping services) [pyproject]
+- [x] [Review][Patch] Ledger blank line removed [deferred-work.md]
+- Dismissed (5): `httpx2`-typosquat claim (FALSE POSITIVE — verified live: starlette 1.2.1's TestClient error names `httpx2`; it is the successor package, locked from PyPI, `httpx` absent); "structural test proves nothing" (inverted — pre-routing coverage IS the guarantee, now tested explicitly per the patch above); duplicate-Origin headers (browsers never send them; non-browser callers aren't the CSRF threat model); CORS methods/headers tightening (the guard supersedes; console-breakage risk for no gain); HEAD observability (no HEAD routes exist; the `_MUTATING` exemption is structural).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -78,3 +89,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-3); api test suite 0 → 6 green; live verification of all four postures. Status → review.
+- 2026-06-10: Code review (3 adversarial layers) — 7 patches applied (TrustedHost DNS-rebinding companion; all guarded verbs + null/empty Origin tested; decisions documented; env-overridable origins; echo truncation; dep relocation), 5 dismissed — including the Blind layer's `httpx2`-typosquat "High", DISPROVEN live by the Auditor (starlette 1.2.1's own error names httpx2; it is the successor package). The Auditor independently verified postures the story hadn't tested (PUT/PATCH/DELETE, null Origin, pre-routing 403s, both console proxy paths). api suite 6 → 13. Status → done.

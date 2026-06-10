@@ -1643,16 +1643,6 @@ name = "qrp"
 version = "0.0.0"
 source = { virtual = "." }
 
-[package.dev-dependencies]
-dev = [
-    { name = "httpx2" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [{ name = "httpx2", specifier = ">=2.3.0" }]
-
 [[package]]
 name = "qrp-api"
 version = "0.1.0"
@@ -1672,6 +1662,11 @@ dependencies = [
     { name = "uvicorn", extra = ["standard"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "httpx2" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "altdata", editable = "packages/altdata" },
@@ -1687,6 +1682,9 @@ requires-dist = [
     { name = "signals", editable = "packages/signals" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "httpx2", specifier = ">=2.3.0" }]
 
 [[package]]
 name = "requests"

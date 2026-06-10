@@ -29,7 +29,3 @@ members = [
 [tool.ruff]
 line-length = 100
 
-[dependency-groups]
-dev = [
-    "httpx2>=2.3.0",
-]

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
@@ -12,8 +15,22 @@ from qrp_api.config import enabled_modules, modules, platform_config, platform_n
 
 # ONE origin list for both the CORS middleware and the actuation guard (Story
 # O.3) — drift between two lists recreates the misconfiguration class the
-# guard exists to close.
-ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+# guard exists to close. Env-overridable because Next auto-bumps the console
+# to :3001 when :3000 is busy — without an override every console mutation
+# would 403 with no recourse.
+ALLOWED_ORIGINS: tuple[str, ...] = tuple(
+    origin.strip()
+    for origin in os.environ.get(
+        "QRP_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+)
+
+# Hostnames this API will answer for (DNS-rebinding companion to the origin
+# guard): a rebound hostname resolving to 127.0.0.1 serves a page that is
+# SAME-origin from the browser's view — the Host check refuses it regardless.
+# "testserver" is starlette's TestClient default base host.
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "testserver"]
 
 _MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
@@ -61,10 +78,15 @@ def create_app() -> FastAPI:
     name = platform_name()
     app = FastAPI(title=f"{name} API", version="0.1.0")
 
+    # Middleware REGISTRATION ORDER IS LOAD-BEARING: Starlette runs the
+    # LAST-registered middleware OUTERMOST. TrustedHost and CORS register
+    # first; the origin guard registers last and therefore runs FIRST — a
+    # foreign-origin actuation is refused before CORS or anything else sees it.
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
     # Dev: the Next.js console proxies /api/* (same-origin); these origins cover direct calls.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
+        allow_origins=list(ALLOWED_ORIGINS),
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -75,13 +97,24 @@ def create_app() -> FastAPI:
 
         Browsers attach Origin to every cross-site (and same-site POST)
         request, so a malicious page driving-by localhost actuation arrives
-        WITH a foreign Origin — refused here before any route logic. Headless
-        clients (curl, schedulers) send no Origin and pass: the guard targets
+        WITH a foreign Origin — refused here before any route logic (the
+        guard runs PRE-ROUTING: even nonexistent paths 403). Headless clients
+        (curl, schedulers) send no Origin and pass: the guard targets
         browser-ambient CSRF, not API access. CORS preflights are OPTIONS and
         therefore untouched. Defense-in-depth alongside CORS: JSON bodies
         force a preflight today, but that protection is one content-type or
-        config change away from gone — this check is explicit and structural
-        (app-wide, covers every current and future mutating route).
+        config change away from gone — this check is explicit and structural.
+
+        Recorded decisions (deny-by-design, not by accident):
+        * ``Origin: null`` (sandboxed iframes, file:// pages, opaque origins)
+          is FOREIGN — denied by the membership check.
+        * An empty-string Origin is present-but-foreign — denied (fail-closed).
+        * No Referer fallback for Origin-less requests — allow-on-absent is
+          the accepted localhost posture; a token scheme has no session to
+          bind to here.
+        * This middleware covers the HTTP scope only. No WebSocket routes
+          exist; a future WS actuation endpoint needs its own origin check
+          (cross-site WebSocket hijacking sends no preflight at all).
         """
         if (
             request.method in _MUTATING
@@ -90,7 +123,8 @@ def create_app() -> FastAPI:
         ):
             return JSONResponse(
                 status_code=403,
-                content={"detail": f"origin {origin!r} may not actuate this API"},
+                # Truncate the echo: the header is attacker-controlled input.
+                content={"detail": f"origin {origin[:100]!r} may not actuate this API"},
             )
         return await call_next(request)
 
