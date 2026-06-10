@@ -20,7 +20,7 @@ from sym.universe.registry import (
 
 def _change(change="join", precision="exact"):
     return MembershipChange(
-        raw_identifier="AAPL",
+        raw_identifier="ticker:AAPL@XNAS",  # append_change validates token shape (poison guard)
         change=change,
         effective_date=date(2024, 1, 2),
         source="test",

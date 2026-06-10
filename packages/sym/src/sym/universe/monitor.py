@@ -26,6 +26,7 @@ import psycopg
 from sym.universe.events import append_change
 from sym.universe.projection import rebuild_projection
 from sym.universe.registry import (
+    CRITERIA,
     CUSTOM_LIST,
     JOIN,
     LEAVE,
@@ -124,8 +125,28 @@ def _write_monitor_log(conn: psycopg.Connection, summary: MonitorSummary) -> int
     return row[0]
 
 
+def _open_tokens(conn: psycopg.Connection, universe_id: str) -> set[str]:
+    """Tokens whose LATEST log event is a join — i.e. currently-open members per the log.
+
+    The snapshot-source idempotency guard: a constituents snapshot re-states every
+    member on every run with a fresh as-of date, and the dedupe key includes the
+    effective date — without this, each daily monitor would re-append the whole
+    membership as 'new joiners' and grow the log unboundedly.
+    """
+    rows = conn.execute(
+        """
+        SELECT DISTINCT ON (raw_identifier) raw_identifier, change
+          FROM membership_event
+         WHERE universe_id = %s
+         ORDER BY raw_identifier, effective_date DESC, event_id DESC
+        """,
+        (universe_id,),
+    ).fetchall()
+    return {raw for raw, change in rows if change == JOIN}
+
+
 def _resolver(conn: psycopg.Connection, kind: str, client: object | None):
-    if kind == CUSTOM_LIST:
+    if kind in (CUSTOM_LIST, CRITERIA):
         return make_local_resolve_fn(conn)
     if client is None:
         from sym.identity.figi import HttpOpenFigiClient
@@ -151,7 +172,6 @@ def run_monitor(
     import sym.universe.providers  # noqa: F401  (ensure providers self-register)
 
     conn.autocommit = True
-    as_of_date = as_of_date or date.today()
     row = conn.execute(
         "SELECT kind, config, source_pref FROM universe WHERE universe_id = %s", (universe_id,)
     ).fetchone()
@@ -159,9 +179,21 @@ def run_monitor(
         raise UnknownUniverseError(f"unknown universe {universe_id!r}")
     kind, config, source_pref = row
     config = dict(config or {})
+    if as_of_date is None:
+        # Prefer the latest exchange session over the host clock (local-tz skew near
+        # midnight would stamp events on a non-session date) when a calendar is set.
+        as_of_date = date.today()
+        mic = config.get("calendar_mic")
+        if mic:
+            as_of_date = _latest_session_on_or_before(conn, mic, as_of_date) or as_of_date
     provider_config = dict(config)
     if source_pref is not None and "source_pref" not in provider_config:
         provider_config["source_pref"] = source_pref
+    # A criteria provider evaluates a rule against the DB (parity with refresh —
+    # without the connection the provider constructor raises and the universe is
+    # unmonitorable).
+    if kind == CRITERIA:
+        provider_config["conn"] = conn
 
     try:
         provider = get_provider(kind, **provider_config)
@@ -184,8 +216,17 @@ def run_monitor(
         changes = align_changes(conn, changes, calendar_mic)
 
     source = changes[0].source.split(":")[0]
+    # Idempotency vs snapshot re-statement: a join for an already-open member (or a
+    # leave for a not-open one) is the provider re-stating current membership with a
+    # fresh date, not a change — appending it would bloat the append-only log daily
+    # and make the joiner/leaver counts meaningless.
+    open_tokens = _open_tokens(conn, universe_id)
     joiners = leavers = 0
     for ch in changes:
+        if ch.change == JOIN and ch.raw_identifier in open_tokens:
+            continue
+        if ch.change == LEAVE and ch.raw_identifier not in open_tokens:
+            continue
         if append_change(conn, universe_id, ch):  # True only if newly inserted
             if ch.change == JOIN:
                 joiners += 1

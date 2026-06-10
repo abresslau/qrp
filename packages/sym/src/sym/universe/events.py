@@ -35,6 +35,11 @@ def append_change(
     """
     validate_change(change.change)
     validate_precision(change.effective_date_precision)
+    # Poison guard: the log is append-only, so a malformed token (e.g. a garbled
+    # provider cell minting 'ticker:@MIC') would recur in every resolution run forever.
+    from sym.universe.resolution import _parse_token  # lazy: avoids identity-layer import cost
+
+    _parse_token(change.raw_identifier)
     row = conn.execute(
         """
         INSERT INTO membership_event

@@ -41,8 +41,15 @@ class Interval:
     source: str | None = None
 
 
-def _intervals_for_figi(events: Sequence[MembershipEvent]) -> list[Interval]:
-    """Run the join/leave/correct state machine over one FIGI's ordered events."""
+def _intervals_for_figi(
+    events: Sequence[MembershipEvent], counters: dict[str, int] | None = None
+) -> list[Interval]:
+    """Run the join/leave/correct state machine over one FIGI's ordered events.
+
+    ``counters`` (optional) accumulates ``orphan_leaves`` — leaves with no open
+    interval (a member whose join predates the log floor); tolerated, but surfaced
+    so incompleteness is visible rather than silent.
+    """
     ordered = sorted(events, key=lambda e: (e.effective_date, e.event_id))
     intervals: list[Interval] = []
     open_from: date | None = None
@@ -62,27 +69,35 @@ def _intervals_for_figi(events: Sequence[MembershipEvent]) -> list[Interval]:
             open_from, open_raw, open_source = e.effective_date, e.raw_identifier, e.source
         elif closing and open_from is not None:
             close(e.effective_date)
+        elif e.change == LEAVE and counters is not None:
+            counters["orphan_leaves"] = counters.get("orphan_leaves", 0) + 1
+
     if open_from is not None:
         intervals.append(Interval(open_from, None, open_raw, open_source))
 
     # Coalesce adjacent intervals (prev.valid_to == next.valid_from) into one --
     # this is what makes a FIGI-level ticker rename a single continuous interval.
+    # The coalesced interval carries the LATEST segment's raw token: after a rename
+    # the member's current identifier is the meaningful one (the accuracy gate
+    # compares these tokens against fresh provider snapshots).
     coalesced: list[Interval] = []
     for iv in intervals:
         if coalesced and coalesced[-1].valid_to == iv.valid_from:
             prev = coalesced[-1]
-            coalesced[-1] = Interval(prev.valid_from, iv.valid_to, prev.raw_identifier, prev.source)
+            coalesced[-1] = Interval(prev.valid_from, iv.valid_to, iv.raw_identifier, iv.source)
         else:
             coalesced.append(iv)
     return coalesced
 
 
-def project_membership(events: Iterable[MembershipEvent]) -> dict[str, list[Interval]]:
+def project_membership(
+    events: Iterable[MembershipEvent], counters: dict[str, int] | None = None
+) -> dict[str, list[Interval]]:
     """Project events into per-FIGI membership intervals (pure, deterministic)."""
     by_figi: dict[str, list[MembershipEvent]] = defaultdict(list)
     for e in events:
         by_figi[e.composite_figi].append(e)
-    return {figi: _intervals_for_figi(evs) for figi, evs in by_figi.items()}
+    return {figi: _intervals_for_figi(evs, counters) for figi, evs in by_figi.items()}
 
 
 def _membership_events(
@@ -100,7 +115,8 @@ def _membership_events(
           FROM membership_event e
           JOIN universe_member_resolution r
             ON r.universe_id = e.universe_id AND r.raw_identifier = e.raw_identifier
-         WHERE e.universe_id = %s AND r.resolution_status = 'resolved'
+         WHERE e.universe_id = %s
+           AND r.resolution_status <> 'unresolved' AND r.composite_figi IS NOT NULL
     """
     params: list[object] = [universe_id]
     if through is not None:
@@ -115,6 +131,25 @@ def _membership_events(
 class ProjectionSummary:
     figis: int = 0
     intervals: int = 0
+    excluded_unresolved: int = 0  # log members with no resolved FIGI — absent from the read-model
+    orphan_leaves: int = 0  # leaves with no open interval (join predates the log floor)
+
+
+def _excluded_unresolved(conn: psycopg.Connection, universe_id: str) -> int:
+    """Distinct log members the projection cannot place (unresolved/no FIGI)."""
+    row = conn.execute(
+        """
+        SELECT count(DISTINCT e.raw_identifier)
+          FROM membership_event e
+          LEFT JOIN universe_member_resolution r
+            ON r.universe_id = e.universe_id AND r.raw_identifier = e.raw_identifier
+         WHERE e.universe_id = %s
+           AND (r.raw_identifier IS NULL OR r.resolution_status = 'unresolved'
+                OR r.composite_figi IS NULL)
+        """,
+        (universe_id,),
+    ).fetchone()
+    return row[0] if row else 0
 
 
 def rebuild_projection(conn: psycopg.Connection, universe_id: str) -> ProjectionSummary:
@@ -122,9 +157,15 @@ def rebuild_projection(conn: psycopg.Connection, universe_id: str) -> Projection
 
     Deterministic full rebuild (DELETE + re-INSERT in one transaction); the
     EXCLUDE constraint is the loud backstop if the projector ever overlaps.
+    Members the projection must EXCLUDE (unresolved) are counted on the summary —
+    silent disappearance from the read-model is the failure mode to avoid.
     """
-    projected = project_membership(_membership_events(conn, universe_id))
-    summary = ProjectionSummary()
+    counters: dict[str, int] = {}
+    projected = project_membership(_membership_events(conn, universe_id), counters)
+    summary = ProjectionSummary(
+        excluded_unresolved=_excluded_unresolved(conn, universe_id),
+        orphan_leaves=counters.get("orphan_leaves", 0),
+    )
     with conn.transaction():
         conn.execute("DELETE FROM universe_membership WHERE universe_id = %s", (universe_id,))
         for figi, intervals in projected.items():

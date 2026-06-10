@@ -34,14 +34,16 @@ def test_open_ended_when_no_leave():
 
 
 def test_ticker_rename_same_figi_stays_one_continuous_interval():
-    # leave(FB)@5 + join(META)@5 on the SAME FIGI -> coalesced to one interval.
+    # leave(FB)@5 + join(META)@5 on the SAME FIGI -> coalesced to one interval that
+    # carries the LATEST token (the member's current identifier, post-rename) so the
+    # accuracy gate compares it against fresh provider snapshots.
     events = [
         _ev("join", 2, 1, raw="ticker:FB@XNAS"),
         _ev("leave", 5, 2, raw="ticker:FB@XNAS"),
         _ev("join", 5, 3, raw="ticker:META@XNAS"),
     ]
     out = project_membership(events)
-    assert out[X] == [Interval(date(2024, 1, 2), None, "ticker:FB@XNAS", "test")]
+    assert out[X] == [Interval(date(2024, 1, 2), None, "ticker:META@XNAS", "test")]
 
 
 def test_correct_toggles_state():

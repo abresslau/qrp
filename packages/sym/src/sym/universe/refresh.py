@@ -101,6 +101,13 @@ def refresh_universe(
         provider_config["conn"] = conn
     provider = get_provider(kind, **provider_config)
     changes = list(provider.members(fetch_start, as_of_date))
+    # Calendar-snap parity with run_monitor: the same provider change must land on the
+    # same effective date from either path, or the dedupe key sees two distinct events.
+    calendar_mic = config.get("calendar_mic")
+    if calendar_mic and changes:
+        from sym.universe.monitor import align_changes
+
+        changes = align_changes(conn, changes, calendar_mic)
     appended = append_changes(conn, universe_id, changes)
 
     # Derive the index honesty boundary from the data on first refresh (unless
@@ -129,7 +136,9 @@ def refresh_universe(
             )
         resolve_fn = make_openfigi_resolve_fn(conn, client)
 
-    res = resolve_universe_members(conn, universe_id, resolve_fn)
+    # Explicit refresh retries members frozen `unresolved` (upgrade-only) — a transient
+    # OpenFIGI outage must not be permanent. The daily monitor does NOT retry (quota).
+    res = resolve_universe_members(conn, universe_id, resolve_fn, retry_unresolved=True)
     proj = rebuild_projection(conn, universe_id)
     return RefreshSummary(
         appended=appended,
