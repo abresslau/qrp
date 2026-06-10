@@ -144,3 +144,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 
 - Local-first resolution: a seed whose ticker+MIC already maps in `security_symbology` (e.g. steward-assigned via `sym review resolve --figi`) should count as assigned WITHOUT an OpenFIGI query — today the next `sym resolve` re-queries the four steward-assigned delisting names, gets no-match, and re-queues them once before the gate holds again. Pairs with the quota goal of Story 1.9.
 - Delisting-fixture price histories: TWTR/ATVI/LEHMQ/CSGN now exist in `securities` (steward-assigned 2026-06-10) but have no prices — yfinance drops delisted tickers, so the terminated histories the survivorship fixtures exist for need the second-vendor adapter (EODHD, already on this ledger) or a manual import. Until then they surface in `unpriced_securities`. ENE (review #4) stays OPEN by design — the seed note marks it as the permanent queue-routing fixture; the gate makes it free.
+
+## Deferred from: code review of 1-10-symbology-scd-transitions (2026-06-10)
+
+- Dual-listing representation: a security legitimately fed under two listing MICs would ping-pong SCD transitions on alternating writes (composite FIGIs are country-level, so NYSE/NASDAQ dual-feeds are plausible). No alternating writer exists today (the bridge only creates missing securities); needs a representation design before one does. Pairs with the relisting securities.mic/currency scope-out above.

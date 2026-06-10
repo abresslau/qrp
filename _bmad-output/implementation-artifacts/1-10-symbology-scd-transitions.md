@@ -1,6 +1,6 @@
 # Story 1.10: Symbology SCD transitions — renames close the old row (chunk-4 D2)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -64,6 +64,19 @@ Chunk-4 review (2026-06-10), ledger **D2**: no writer ever closes a `security_sy
 - [Source: _bmad-output/implementation-artifacts/deferred-work.md — chunk-4 D2]
 - [Source: packages/sym/src/sym/identity/symbology.py; packages/sym/src/sym/validate/symbology.py]
 
+### Review Findings (code review 2026-06-10, commit 24a0923 — ALL RESOLVED)
+
+- [x] [Review][Patch] [HIGH] Backdated writes now REFUSE (`SymbologyTransitionError`) — verified live (state unchanged after the refusal) [symbology.py]
+- [x] [Review][Patch] The drift sweep runs on the idempotent path too, keyed per-row on (value, mic) — pre-1.10 duplicate-opens self-heal on the next routine write of the current value (tested: survivor untouched, stale row closed) [symbology.py]
+- [x] [Review][Patch] Restructured around one fetch of the type's open rows: same-day drift (>1 differing same-day open) refuses; in-place and close UPDATEs precisely keyed by the old (value, mic); mutation phase in `conn.transaction()` (savepoint under caller transactions, real txn under autocommit) [symbology.py]
+- [x] [Review][Patch] Closed-row overlap reasoning recorded at the backdating guard (a non-backdated new row starts at/after every open row's start, so no closed range can overlap it) [symbology.py]
+- [x] [Review][Patch] Check upgraded: `s.status <> 'delisted'` (suspended no longer exempt); `checked` = rows scanned (2,199 live); OVERLAP detection added (same figi/type ranges, both-open pairs excluded — the V3 AC fully restored) [validate/symbology.py]
+- [x] [Review][Patch] Bridge isolates `SymbologyCollisionError`/`SymbologyTransitionError` per member (`skipped_collision` counter; tested: collision doesn't abort the loop) [universe/ingest.py]
+- [x] [Review][Patch] Live round-trip on synthetic `BBG000000ZZ9` against the REAL constraints: rename closed A at the boundary + opened B; same-day B→C rewrote in place; backdated D refused; the check PASSed with the transition history present (closed-with-successor not false-warned); cleaned up (2,201 → 2,199 rows) [live verification]
+- [x] [Review][Patch] §4 notes the refusal semantics + full audit scope; dual-listing representation design on the ledger [docs, ledger]
+- [x] [Review][Defer] Dual-listing representation design — ledger
+- Dismissed (3): country_iso-only refresh on the no-op path (country derives from the static exchange table); fakes not modeling EXCLUDE/CHECK (project DB-free convention — the live round-trip patch is the compensator); the "no schema backstop" partial-unique-index suggestion (the audit check + refusal guards are the chosen mechanism; an index migration can ride the next schema batch).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -94,3 +107,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-4); suite 516 → 525 green; live audit clean. Status → review.
+- 2026-06-10: Code review (3 adversarial layers) — 8 patches applied (HIGH: backdated writes refused; drift sweep on the no-op path; same-day drift refused; bridge isolation; overlap detection; live round-trip proved the transition branch against the real EXCLUDE/CHECK constraints — the prior "live audit clean" was correctly called vacuous), 1 deferred (dual-listing design → ledger), 3 dismissed. Suite 525 → 530 green. Status → done.

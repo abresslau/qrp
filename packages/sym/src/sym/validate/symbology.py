@@ -89,6 +89,7 @@ def check_symbology_transitions(conn: psycopg.Connection) -> CheckResult:
     ``valid_to`` (the boundary-day handoff) — a gap is a WARN: the identifier
     history has a hole the as-of query answers with nothing.
     """
+    total = conn.execute("SELECT count(*) FROM security_symbology").fetchone()[0]
     duplicate_open = conn.execute(
         """
         SELECT composite_figi, symbol_type, count(*)
@@ -99,12 +100,29 @@ def check_symbology_transitions(conn: psycopg.Connection) -> CheckResult:
         """
     ).fetchall()
     failures = [f"{figi}/{stype}: {n} open rows" for figi, stype, n in duplicate_open]
+    # Overlapping effective ranges within one (figi, type) — the other half of
+    # the V3 overlap AC. Both-open pairs are excluded (already reported above);
+    # the schema EXCLUDE can't catch these because it keys on (type, value, mic).
+    overlaps = conn.execute(
+        """
+        SELECT DISTINCT a.composite_figi, a.symbol_type
+          FROM security_symbology a
+          JOIN security_symbology b
+            ON b.composite_figi = a.composite_figi
+           AND b.symbol_type = a.symbol_type
+           AND b.ctid <> a.ctid
+           AND daterange(a.valid_from, a.valid_to, '[)')
+            && daterange(b.valid_from, b.valid_to, '[)')
+         WHERE NOT (a.valid_to IS NULL AND b.valid_to IS NULL)
+        """
+    ).fetchall()
+    failures += [f"{figi}/{stype}: overlapping effective ranges" for figi, stype in overlaps]
     orphans = conn.execute(
         """
         SELECT c.composite_figi, c.symbol_type, c.symbol_value, c.valid_to
           FROM security_symbology c
           JOIN securities s USING (composite_figi)
-         WHERE c.valid_to IS NOT NULL AND s.status = 'active'
+         WHERE c.valid_to IS NOT NULL AND s.status <> 'delisted'
            AND NOT EXISTS (
                SELECT 1 FROM security_symbology n
                 WHERE n.composite_figi = c.composite_figi
@@ -119,8 +137,11 @@ def check_symbology_transitions(conn: psycopg.Connection) -> CheckResult:
     ]
     return CheckResult.from_items(
         "symbology_transitions",
-        checked=len(duplicate_open) + len(orphans),
+        checked=total,
         failures=failures,
         warnings=warnings,
-        detail=f"{len(duplicate_open)} duplicate-open, {len(orphans)} closed-without-successor",
+        detail=(
+            f"{total} symbology rows; {len(duplicate_open)} duplicate-open, "
+            f"{len(overlaps)} overlapping, {len(orphans)} closed-without-successor"
+        ),
     )

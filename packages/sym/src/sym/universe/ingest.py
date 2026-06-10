@@ -18,7 +18,12 @@ from datetime import date
 
 import psycopg
 
-from sym.identity.symbology import ExchangeLookupError, write_security
+from sym.identity.symbology import (
+    ExchangeLookupError,
+    SymbologyCollisionError,
+    SymbologyTransitionError,
+    write_security,
+)
 from sym.identity.universe import TICKER, SeedSecurity
 from sym.ingest.pipeline import OVERWRITE, LoadSummary, run_load
 from sym.universe.registry import InvalidMemberIdentifierError
@@ -32,6 +37,7 @@ class BridgeSummary:
     skipped_no_mic: int = 0
     skipped_no_exchange: int = 0
     skipped_bad_token: int = 0
+    skipped_collision: int = 0  # recycled identifier / transition refusal (1.10)
 
 
 def ensure_universe_securities(conn: psycopg.Connection, universe_id: str) -> BridgeSummary:
@@ -74,6 +80,12 @@ def ensure_universe_securities(conn: psycopg.Connection, universe_id: str) -> Br
                 )
         except ExchangeLookupError:
             summary.skipped_no_exchange += 1
+            continue
+        except (SymbologyCollisionError, SymbologyTransitionError):
+            # A recycled identifier or a refused transition is ONE member's
+            # problem — skip-and-count, never abort the bridge run (the per-item
+            # transaction above already rolled this member back).
+            summary.skipped_collision += 1
             continue
         if created:
             summary.created += 1

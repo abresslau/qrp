@@ -130,8 +130,10 @@ This transition is IMPLEMENTED by the write path (Story 1.10):
 `write_security` reconciles each identifier type — a differing open row is
 closed at the new row's `valid_from` (a same-day change updates in place, per
 the same-day SCD rule), and the `symbology_transitions` check in `sym validate`
-audits the invariant (one open row per security per type; closed rows need a
-successor). A relisting's `securities.mic`/`currency_code` staleness is a known
+audits the invariant (one open row per security per type; no overlapping
+ranges; closed rows need a successor). Backdated transitions and same-day
+duplicate-open drift are REFUSED by the write path (`SymbologyTransitionError`)
+— operator surgery, never silent state. A relisting's `securities.mic`/`currency_code` staleness is a known
 scope-out (deferred-work ledger).
 
 ## 5. Membership-event correction semantics (`change='correct'`)

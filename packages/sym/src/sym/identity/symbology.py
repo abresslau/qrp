@@ -20,6 +20,10 @@ class SymbologyCollisionError(Exception):
     """An open symbology row for (type, value, mic) belongs to a different security."""
 
 
+class SymbologyTransitionError(Exception):
+    """A transition that needs operator surgery: backdated write or same-day drift."""
+
+
 class ExchangeLookupError(LookupError):
     """The listing MIC is absent from the exchange reference table."""
 
@@ -68,46 +72,93 @@ def _reconcile_symbology(
         """,
         (symbol_type, symbol_value, mic),
     ).fetchone()
-    if holder is not None:
-        if holder[0] != composite_figi:
-            raise SymbologyCollisionError(
-                f"{symbol_type} {symbol_value!r}@{mic} is currently held by "
-                f"{holder[0]}, refusing to attach to {composite_figi} "
-                "(recycled identifier — close the old row first)"
-            )
-        return  # identical open row — idempotent re-run
-    # Same-day change: rewrite in place (the CHECK forbids a zero-length close).
-    rewritten = conn.execute(
+    if holder is not None and holder[0] != composite_figi:
+        raise SymbologyCollisionError(
+            f"{symbol_type} {symbol_value!r}@{mic} is currently held by "
+            f"{holder[0]}, refusing to attach to {composite_figi} "
+            "(recycled identifier — close the old row first)"
+        )
+
+    open_rows = conn.execute(
         """
-        UPDATE security_symbology
-           SET symbol_value = %s, mic = %s, country_iso = %s
-         WHERE composite_figi = %s AND symbol_type = %s
-           AND valid_from = %s AND valid_to IS NULL
-        RETURNING composite_figi
+        SELECT symbol_value, mic, valid_from FROM security_symbology
+         WHERE composite_figi = %s AND symbol_type = %s AND valid_to IS NULL
         """,
-        (symbol_value, mic, country_iso, composite_figi, symbol_type, valid_from),
+        (composite_figi, symbol_type),
     ).fetchall()
-    # Close EVERY earlier differing open row of this type (defensive plural:
-    # pre-1.10 data may carry duplicate opens — see the symbology_transitions check).
-    conn.execute(
-        """
-        UPDATE security_symbology
-           SET valid_to = %s
-         WHERE composite_figi = %s AND symbol_type = %s
-           AND valid_to IS NULL AND valid_from < %s
-        """,
-        (valid_from, composite_figi, symbol_type, valid_from),
-    )
-    if rewritten:
-        return
-    conn.execute(
-        """
-        INSERT INTO security_symbology
-            (composite_figi, symbol_type, symbol_value, mic, country_iso, valid_from)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (composite_figi, symbol_type, symbol_value, mic, country_iso, valid_from),
-    )
+
+    def _matches(value: str, row_mic: str | None) -> bool:
+        return value == symbol_value and (row_mic or "") == (mic or "")
+
+    differing = [r for r in open_rows if not _matches(r[0], r[1])]
+    # Backdated write: an open row NEWER than the incoming valid_from can be
+    # neither rewritten (different day) nor closed (the valid_to > valid_from
+    # CHECK forbids it) — silent acceptance would mint exactly the duplicate-open
+    # state the symbology_transitions check audits. Refuse: operator surgery.
+    # This refusal is ALSO what keeps closed rows out of the EXCLUDE's way: a
+    # non-backdated new row starts at/after every open row's valid_from, so no
+    # closed range (which ends at such a boundary) can overlap it.
+    later = [r for r in differing if r[2] > valid_from]
+    if later:
+        raise SymbologyTransitionError(
+            f"{composite_figi}/{symbol_type}: open row {later[0][0]!r} starts "
+            f"{later[0][2]}, AFTER the incoming valid_from {valid_from} — a "
+            "backdated transition needs operator surgery, refusing"
+        )
+    same_day = [r for r in differing if r[2] == valid_from]
+    if len(same_day) > 1:
+        raise SymbologyTransitionError(
+            f"{composite_figi}/{symbol_type}: {len(same_day)} duplicate-open rows "
+            f"share valid_from {valid_from} — fix the drift first "
+            "(see the symbology_transitions check)"
+        )
+    earlier = [r for r in differing if r[2] < valid_from]
+
+    # Mutations run in one (sub)transaction: callers already wrap per-item, in
+    # which case this is a savepoint; under bare autocommit it is a real txn.
+    with conn.transaction():
+        # Close EVERY earlier differing open row, precisely keyed — the sweep
+        # runs on the idempotent path too, so pre-1.10 duplicate-open drift
+        # self-heals on the next routine write of the current value.
+        for old_value, old_mic, _vf in earlier:
+            conn.execute(
+                """
+                UPDATE security_symbology
+                   SET valid_to = %s
+                 WHERE composite_figi = %s AND symbol_type = %s
+                   AND symbol_value = %s
+                   AND coalesce(mic::text, '') = coalesce(%s::text, '')
+                   AND valid_to IS NULL
+                """,
+                (valid_from, composite_figi, symbol_type, old_value, old_mic),
+            )
+        if holder is not None:
+            return  # identical open row — idempotent re-run (drift swept above)
+        if same_day:
+            # Same-day change: rewrite in place (the CHECK forbids a zero-length
+            # close), keyed by the OLD identity so only that row moves.
+            old_value, old_mic, _vf = same_day[0]
+            conn.execute(
+                """
+                UPDATE security_symbology
+                   SET symbol_value = %s, mic = %s, country_iso = %s
+                 WHERE composite_figi = %s AND symbol_type = %s
+                   AND symbol_value = %s
+                   AND coalesce(mic::text, '') = coalesce(%s::text, '')
+                   AND valid_to IS NULL
+                """,
+                (symbol_value, mic, country_iso, composite_figi, symbol_type,
+                 old_value, old_mic),
+            )
+            return
+        conn.execute(
+            """
+            INSERT INTO security_symbology
+                (composite_figi, symbol_type, symbol_value, mic, country_iso, valid_from)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (composite_figi, symbol_type, symbol_value, mic, country_iso, valid_from),
+        )
 
 
 def write_security(
