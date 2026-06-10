@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
-import traceback
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler as _default_http_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -64,7 +65,11 @@ def _error_body(status_code: int, message: str, detail: object = None) -> dict:
     error: dict = {"type": _error_type_for(status_code), "message": message}
     if detail is not None:
         error["detail"] = detail
-    return {"error": error, "detail": message}
+    # The mirror carries the STRUCTURED detail when one exists — for framework
+    # 422s this is byte-compatible with FastAPI's original contract (the errors
+    # array in top-level detail), which also keeps the committed generated TS
+    # HTTPValidationError type correct.
+    return {"error": error, "detail": detail if detail is not None else message}
 
 
 def _error_response(status_code: int, message: str, detail: object = None) -> JSONResponse:
@@ -170,25 +175,47 @@ def create_app() -> FastAPI:
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_envelope(request: Request, exc: StarletteHTTPException):
         # Routers keep raising HTTPException(status, detail) — translated here
-        # into the spec'd envelope; the status code is NEVER re-coded.
+        # into the spec'd envelope; the status code is NEVER re-coded and the
+        # exception's HEADERS are forwarded (Allow on 405, WWW-Authenticate on
+        # a future 401 — RFC semantics the default handler preserves).
+        if exc.status_code < 400:
+            # An exotic 3xx HTTPException is a redirect — enveloping it would
+            # lose Location; defer to the framework default.
+            return await _default_http_handler(request, exc)
         message = exc.detail if isinstance(exc.detail, str) else "request failed"
         detail = None if isinstance(exc.detail, str) else exc.detail
-        return _error_response(exc.status_code, message, detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_error_body(exc.status_code, message, detail),
+            headers=exc.headers,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def validation_envelope(request: Request, exc: RequestValidationError):
+        # jsonable_encoder: Pydantic v2 error ctx values can be raw objects —
+        # without it a 422 would die as a serialization 500.
         return _error_response(
-            422, "request validation failed", detail=exc.errors()
+            422, "request validation failed", detail=jsonable_encoder(exc.errors())
         )
 
     @app.exception_handler(Exception)
     async def unhandled_envelope(request: Request, exc: Exception):
-        # NEVER leak a traceback: class name only. The full exception still
-        # reaches the server log via stderr (uvicorn's default behavior is
-        # suppressed by handling, so print explicitly).
-        traceback.print_exc()
-        return _error_response(
-            500, f"internal error ({type(exc).__name__}) — see the API log"
+        # NEVER leak a traceback: class name only. Starlette's
+        # ServerErrorMiddleware RE-RAISES after this handler returns (the
+        # response still reaches the client), so uvicorn logs the full
+        # traceback itself — printing here would double-log.
+        headers = {}
+        origin = request.headers.get("origin")
+        if origin in ALLOWED_ORIGINS:
+            # ServerErrorMiddleware sits OUTSIDE CORSMiddleware: without this
+            # a direct-origin browser call could not READ the 500 envelope.
+            headers["access-control-allow-origin"] = origin
+        return JSONResponse(
+            status_code=500,
+            content=_error_body(
+                500, f"internal error ({type(exc).__name__}) — see the API log"
+            ),
+            headers=headers,
         )
 
     @app.get("/api/health", response_model=HealthResponse)

@@ -61,10 +61,11 @@ export default function OperatePage() {
     });
     // Errors carry the spec'd envelope {error:{type,message}} (Story O.4);
     // `detail` remains as the legacy mirror during the migration.
+    // .catch: a proxy 502 or empty body is not JSON — degrade, don't throw.
     const res: RunResult & {
       detail?: string;
       error?: { type: string; message: string };
-    } = await r.json();
+    } = await r.json().catch(() => ({}) as RunResult);
     setMsg(
       r.ok
         ? `Started ${op.label} (job #${res.job_id})`

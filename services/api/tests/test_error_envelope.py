@@ -14,12 +14,16 @@ from qrp_api.main import ALLOWED_ORIGINS, create_app
 
 @pytest.fixture(scope="module")
 def client() -> TestClient:
+    from qrp_api.main import _use_route_names_as_operation_ids
+
     app = create_app()
 
     @app.get("/api/_test_boom")
     def _boom():
         raise RuntimeError("secret traceback content")
 
+    # the fixture route must not silently bypass the operation_id audit
+    _use_route_names_as_operation_ids(app)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -50,13 +54,27 @@ def test_framework_validation_error_wrapped(client):
     resp = client.post("/api/operate/run", json={})
     body = _assert_envelope(resp, 422, "validation")
     assert body["error"]["detail"]  # the field-error structure rides inside
+    # the legacy mirror carries the ARRAY — byte-compatible with FastAPI's
+    # original 422 contract (and the committed generated TS type).
+    assert isinstance(body["detail"], list)
+    assert body["detail"] == body["error"]["detail"]
 
 
 def test_route_422_detail_string_wrapped(client):
-    # A router-raised HTTPException(422, "...") keeps its message.
+    # A router-raised HTTPException(422, "...") keeps its message; the mirror
+    # equals the message for string-detail raises (the actual contract).
     resp = client.post("/api/operate/run", json={"op": "nope"})
     body = _assert_envelope(resp, 422, "validation")
     assert "unknown op" in body["error"]["message"]
+    assert body["detail"] == body["error"]["message"]
+
+
+def test_405_keeps_the_allow_header(client):
+    # exc.headers forwarded: routing raises 405 WITH Allow (RFC 9110).
+    resp = client.post("/api/health")
+    assert resp.status_code == 405
+    assert "allow" in {k.lower() for k in resp.headers}
+    assert resp.json()["error"]["type"] == "error"  # other-4xx catch-all
 
 
 def test_unhandled_exception_is_500_envelope_without_traceback(client):
@@ -73,6 +91,14 @@ def test_success_bodies_unwrapped(client):
     assert "error" not in resp.json()
 
 
+def test_unhandled_500_carries_cors_for_allowed_origin(client):
+    # ServerErrorMiddleware sits outside CORS — the handler stamps ACAO so a
+    # direct-origin browser can READ the 500 envelope.
+    resp = client.get("/api/_test_boom", headers={"Origin": ALLOWED_ORIGINS[0]})
+    assert resp.status_code == 500
+    assert resp.headers.get("access-control-allow-origin") == ALLOWED_ORIGINS[0]
+
+
 def test_type_vocabulary_mapping():
     from qrp_api.main import _error_type_for
 
@@ -84,6 +110,3 @@ def test_type_vocabulary_mapping():
     assert _error_type_for(500) == "internal"
     assert _error_type_for(418) == "error"
 
-
-def test_allowed_origins_import_still_used():
-    assert ALLOWED_ORIGINS  # imported for parity with the guard tests

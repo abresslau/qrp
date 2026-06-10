@@ -1,6 +1,6 @@
 # Story O.4: Error envelope rollout (chunk-1 D6)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -48,6 +48,17 @@ Chunk-1 review (2026-06-10), ledger **D6**. The spec (architecture-qrp.md §Form
 - [Source: deferred-work.md — chunk-1 D6]
 - [Source: services/api/src/qrp_api/main.py; apps/web/app/sym/operate/page.tsx]
 
+### Review Findings (code review 2026-06-10, commit 9d348a2 — ALL RESOLVED)
+
+- [x] [Review][Patch] [HIGH] `exc.headers` forwarded (live: 405 carries `allow: GET`); 3xx HTTPExceptions re-dispatch to the framework default (Location preserved) [main.py]
+- [x] [Review][Patch] `print_exc()` dropped; the comment now states the TRUTH (ServerErrorMiddleware re-raises; uvicorn logs the traceback; the handler only shapes the body) [main.py]
+- [x] [Review][Patch] Mirror fidelity restored: structured detail mirrors as-is — the framework 422's top-level `detail` is the errors ARRAY again (live-verified), byte-compatible with the original FastAPI contract and the committed TS types; string details mirror the message (tested both) [main.py]
+- [x] [Review][Patch] `exc.errors()` routed through `jsonable_encoder` [main.py]
+- [x] [Review][Patch] Unhandled 500s stamp ACAO for allowed origins (tested) [main.py]
+- [x] [Review][Patch] Docs corrected: `unknown` renders via the neutral fallback pill (no degraded branch exists); the two accepted un-enveloped paths recorded (TrustedHost 400, CORS preflights) [architecture-qrp.md]
+- [x] [Review][Patch] Tests: padding non-test dropped; mirror contracts asserted both ways; the fixture re-runs the operation_id audit; the console guards `r.json()` against non-JSON bodies — api suite 21 → 22 [tests, page.tsx]
+- Dismissed (4): 500 class-name disclosure (deliberate, tested, owner-operated); the two-`detail`s naming collision (the mirror is transitional by design — documented); 502/504 → `internal` (spec-silent; reasonable choice now recorded); pinning the Starlette-layering comment with a dedicated test (the guard-403 envelope test already pins the live shape).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -76,3 +87,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-4); api suite 13 → 21 green; all five live paths verified. Status → review.
+- 2026-06-10: Code review (3 adversarial layers; the Auditor live-proved the dropped 405 Allow header AND empirically disproved the dev's own uvicorn-suppression comment with a double-traceback) — 7 patches applied (headers forwarded; honest comment; the mirror now restores FastAPI's original 422 contract exactly; jsonable_encoder; ACAO on 500s; doc corrections; test hygiene), 4 dismissed. api suite 21 → 22. Status → done.
