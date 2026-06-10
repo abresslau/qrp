@@ -139,3 +139,8 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of U1-7-resolution-watermark (2026-06-10)
 
 - Sequence-based resolution watermark: the timestamp watermark's races (now() is transaction-START time so an in-flight resolution run committing after capture carries a pre-capture stamp; equal-timestamp boundary at the watermark; DB clock monotonicity) are documented capture-discipline preconditions, not enforced guarantees. If pins become load-bearing for backtests, replace with a monotonic bigint resolution-version column (the event-side event_id pattern) — schema change.
+
+## Deferred from: stewarding the review queue (2026-06-10)
+
+- Local-first resolution: a seed whose ticker+MIC already maps in `security_symbology` (e.g. steward-assigned via `sym review resolve --figi`) should count as assigned WITHOUT an OpenFIGI query — today the next `sym resolve` re-queries the four steward-assigned delisting names, gets no-match, and re-queues them once before the gate holds again. Pairs with the quota goal of Story 1.9.
+- Delisting-fixture price histories: TWTR/ATVI/LEHMQ/CSGN now exist in `securities` (steward-assigned 2026-06-10) but have no prices — yfinance drops delisted tickers, so the terminated histories the survivorship fixtures exist for need the second-vendor adapter (EODHD, already on this ledger) or a manual import. Until then they surface in `unpriced_securities`. ENE (review #4) stays OPEN by design — the seed note marks it as the permanent queue-routing fixture; the gate makes it free.
