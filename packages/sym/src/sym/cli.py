@@ -71,6 +71,70 @@ def _cmd_resolve(_args: argparse.Namespace) -> int:
         f"{summary.share_class_conflict} share_class_conflict "
         f"({summary.review_enqueued} review rows enqueued)"
     )
+    if summary.skipped_queued:
+        print(
+            f"  {summary.skipped_queued} skipped — open review rows "
+            f"({', '.join(summary.skipped_names[:10])}); see `sym review list`"
+        )
+    return 0
+
+
+def _cmd_review_list(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.identity.review_queue import list_reviews
+
+    load_dotenv()
+    try:
+        with connect() as conn:
+            items = list_reviews(conn, include_resolved=args.all)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    if not items:
+        print("no open review items")
+        return 0
+    today = date.today()
+    for it in items:
+        age = (today - it["created_at"].date()).days
+        state = "resolved" if it["resolved_at"] else f"open {age}d"
+        print(
+            f"  #{it['review_id']:<4} {it['source_key']:<28} {it['status']:<22} "
+            f"candidates={it['candidate_count']} [{state}]"
+            + (f" — {it['detail']}" if it["detail"] else "")
+        )
+    print(f"{len(items)} item(s)")
+    return 0
+
+
+def _cmd_review_resolve(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.identity.review_queue import ReviewQueueError, resolve_review
+
+    load_dotenv()
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            outcome = resolve_review(
+                conn, args.review_id,
+                composite_figi=args.figi, share_class_figi=args.share_class_figi,
+            )
+    except ReviewQueueError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"review {args.review_id} {outcome}"
+        + (f" — assigned {args.figi}" if outcome == "assigned" else
+           " — input eligible again on the next resolve run")
+    )
     return 0
 
 
@@ -1405,6 +1469,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     u_reverse.add_argument("effective_date", help="The wrong change's effective date (ISO).")
     u_reverse.set_defaults(func=_cmd_universe_reverse)
+
+    p_review = sub.add_parser(
+        "review",
+        help="Steward the securities review queue: list open items, resolve them "
+        "(the queue GATES resolution runs until items are closed).",
+    )
+    r_sub = p_review.add_subparsers(dest="review_command", required=True, metavar="<command>")
+    r_list = r_sub.add_parser("list", help="List review-queue items (open by default).")
+    r_list.add_argument("--all", action="store_true", help="Include resolved items.")
+    r_list.set_defaults(func=_cmd_review_list)
+    r_resolve = r_sub.add_parser(
+        "resolve",
+        help="Close a review item: with --figi assigns the security first; "
+        "without, dismisses it (eligible for auto-retry next run).",
+    )
+    r_resolve.add_argument("review_id", type=int, help="The review row id (see `review list`).")
+    r_resolve.add_argument("--figi", help="Steward-picked CompositeFIGI to assign.")
+    r_resolve.add_argument(
+        "--share-class-figi", dest="share_class_figi", help="Optional ShareClassFIGI."
+    )
+    r_resolve.set_defaults(func=_cmd_review_resolve)
 
     return parser
 

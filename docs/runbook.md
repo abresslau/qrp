@@ -32,6 +32,10 @@ sqitch deploy --verify <target>          # via Docker: sqitch/sqitch + host.dock
 # 2. Reference + identity
 sym snapshot-calendar                    # exchange calendars (versioned)
 sym resolve                              # seed -> CompositeFIGI (OpenFIGI)
+sym review list                          # FIGI-assignment issues awaiting stewarding
+sym review resolve <id> [--figi BBG...]  # assign the steward's pick, or dismiss
+#  ^ open review rows GATE `sym resolve`: queued inputs are skipped (no OpenFIGI
+#    re-query, no auto-assignment) until resolved; dismissal re-admits the input.
 
 # 3. Universe membership (per universe)
 sym universe add <id> --kind index --index <key> --source-pref wikipedia

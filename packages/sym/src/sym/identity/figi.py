@@ -404,6 +404,8 @@ class ResolutionSummary:
     securities_created: int = 0
     names_written: int = 0
     review_enqueued: int = 0
+    skipped_queued: int = 0  # seeds gated out by an OPEN review row (1.4 AC2)
+    skipped_names: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)  # per-security write failures
 
 
@@ -478,9 +480,28 @@ def resolve_universe(
     client: OpenFigiClient,
     securities: Sequence[SeedSecurity],
 ) -> ResolutionSummary:
-    """Resolve seed securities via OpenFIGI and persist the outcomes."""
+    """Resolve seed securities via OpenFIGI and persist the outcomes.
+
+    The review queue GATES the run (Story 1.9 / 1.4 AC2): a seed any of whose
+    resolution-input keys has an OPEN review row is excluded — not sent to
+    OpenFIGI (quota), not assigned (the steward is mid-review) — and counted on
+    ``skipped_queued``. The check covers EVERY input key, not just the primary:
+    the queued row may carry the ISIN-fallback key while the seed leads with its
+    ticker. Closing the row (``sym review resolve``) re-admits the input.
+    """
+    from sym.identity.review_queue import open_review_keys, source_key
+
+    open_keys = open_review_keys(conn)
+    eligible: list[SeedSecurity] = []
+    skipped: list[SeedSecurity] = []
+    for seed in securities:
+        keys = {source_key(query) for query in seed.resolution_inputs()}
+        (skipped if keys & open_keys else eligible).append(seed)
     exch_codes = read_exch_codes(conn)
-    return apply_resolutions(conn, plan_resolutions(securities, client, exch_codes))
+    summary = apply_resolutions(conn, plan_resolutions(eligible, client, exch_codes))
+    summary.skipped_queued = len(skipped)
+    summary.skipped_names = [seed.name for seed in skipped]
+    return summary
 
 
 @dataclass

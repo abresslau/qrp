@@ -11,7 +11,7 @@
 
 Backlogged by decision (D1/D2, accepted recommendations):
 
-- **D1 — review-queue gating story (Story 1.4 AC2, VIOLATED):** the queue is write-only — nothing reads it, every resolution run re-queries OpenFIGI for every seed, and a queued-ambiguous input can be auto-assigned while its review row is open. Wire `plan_resolutions`/callers to exclude open-queue items and surface resolution-as-a-gate. Mitigation applied in-review: `enqueue_review` now REFRESHES the open row's status/candidates/detail so the operator sees the latest evidence.
+- **D1 — review-queue gating story — ✅ DONE (Story 1.9, 2026-06-10):** the queue gates `resolve_universe` (a seed any of whose input keys has an OPEN row is skipped — no OpenFIGI query, no assignment, counted on `skipped_queued`); `sym review list` / `sym review resolve <id> [--figi ...]` give the steward the close path (assignment via `write_security`; dismissal re-admits the input, the freed key re-queues a recurrence). Live: the 5 real queued names (TWTR/ATVI/LEHMQ/ENE/CSGN) now skip every run. Story 1.4 AC2/AC3 hold.
 - **D2 — symbology SCD transition story:** no writer ever closes a `security_symbology` row (a ticker rename leaves two open ticker rows); the data-conventions SQ→XYZ worked example describes unimplemented behavior; the V3 overlap/closed-without-successor AC was dropped. Mitigation applied in-review: a recycled identifier held by a different FIGI now raises `SymbologyCollisionError` (was a silent skip with no breadcrumb).
 
 Deferred findings:
