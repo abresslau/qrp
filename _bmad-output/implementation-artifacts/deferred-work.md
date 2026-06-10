@@ -148,3 +148,8 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of 1-10-symbology-scd-transitions (2026-06-10)
 
 - Dual-listing representation: a security legitimately fed under two listing MICs would ping-pong SCD transitions on alternating writes (composite FIGIs are country-level, so NYSE/NASDAQ dual-feeds are plausible). No alternating writer exists today (the bridge only creates missing securities); needs a representation design before one does. Pairs with the relisting securities.mic/currency scope-out above.
+
+## Deferred from: code review of A-1-analytics-boundaries (2026-06-10)
+
+- **Types freshness is not an enforced gate:** O.2's API surface (`/api/operate/history`, `heartbeat_at`, `takes_scope`) sat stale in the committed `lib/api-types.ts` until A.1's regen caught it up. The "CI freshness check" is a script with no runner (no remote/CI exists) — staleness is only caught when someone happens to regen. Candidate: a pre-commit hook or a `sym validate`-style local gate that diffs `gen:types` output against the committed file.
+- **NaN weight hypothetical:** a NUMERIC `'NaN'` weight would slip analytics' `total_w <= 0` guard (NaN comparisons are False) and serialize NaN metrics. No writer produces NaN today (`upload_weights` takes floats from validated API input) — revisit only if a new weights writer appears.

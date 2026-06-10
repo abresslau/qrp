@@ -79,3 +79,5 @@ def portfolio_analytics(
         return gw.analytics(pid, benchmark, window)
     except ValueError as exc:  # unknown window code
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LookupError as exc:  # nonexistent portfolio
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

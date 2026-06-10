@@ -14,6 +14,7 @@ import math
 from datetime import date
 
 import psycopg
+from portfolios.gateway import portfolio_exists, read_latest_weights
 
 # Annualisation: trading days per year (daily return series).
 ANN = 252
@@ -95,8 +96,6 @@ class DbAnalyticsGateway:
         # Weights through the OWNING package's seam (Story A.1) — the SQL has one
         # owner; the weight×return series is still assembled IN-APP (cross-database:
         # weights here, fact_returns in the sym package), never a cross-DB SQL join.
-        from portfolios.gateway import read_latest_weights
-
         as_of_date, raw_weights = read_latest_weights(self._conn, pid)
         if as_of_date is None:
             return None, {}, []
@@ -157,6 +156,10 @@ class DbAnalyticsGateway:
         if w not in VALID_WINDOWS:
             # Don't silently compute full-history metrics while echoing the bogus label.
             raise ValueError(f"unknown window {window!r} (one of {', '.join(VALID_WINDOWS)})")
+        if not portfolio_exists(self._conn, pid):
+            # Nonexistent portfolio is a 404, not an empty-metrics 200 — an
+            # existing portfolio with no weights yet still gets the warning body.
+            raise LookupError(f"portfolio {pid} not found")
         as_of_date, port_series, currencies = self._portfolio_daily(pid)
         bench_meta, bench_series = self._benchmark_daily(benchmark_id)
 

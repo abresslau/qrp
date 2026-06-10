@@ -1,6 +1,6 @@
 # Story A.1: Analytics boundaries — own prefix, owned weights reads (chunk-1 D7)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -48,6 +48,21 @@ Chunk-1 review (2026-06-10), ledger **D7**. Verified live:
 - [Source: deferred-work.md — chunk-1 D7; architecture-qrp.md §typed-seam rule (types regen)]
 - [Source: packages/analytics/src/analytics/{router,gateway}.py; packages/portfolios/src/portfolios/gateway.py; apps/web/components/analytics-panel.tsx]
 
+### Review Findings (code review 2026-06-10, commit 914646b — ALL RESOLVED)
+
+- [x] [Review][Patch] Two-statement read race in the seam: a concurrent weight write between `max(as_of_date)` and the row fetch yields a partial/mismatched vector — collapse to ONE query (`WHERE as_of_date = (SELECT max(...))`) [portfolios/gateway.py:27-37]
+- [x] [Review][Patch] The seam is the least-typed code in the diff: annotate `conn: psycopg.Connection` and `-> tuple[date | None, dict[str, Decimal]]` [portfolios/gateway.py:18]
+- [x] [Review][Patch] Undeclared cross-package dependency: analytics imports `portfolios` but its pyproject doesn't declare it (operate→sym is the established convention); also hoist the import from inside `_portfolio_daily` to module level [packages/analytics/pyproject.toml, analytics/gateway.py:98]
+- [x] [Review][Patch] The grep-test checks ONE module while AC2 claims the PACKAGE: walk every module under `packages/analytics/src` instead of `inspect.getsource(analytics.gateway)` [test_analytics_boundaries.py:378-383]
+- [x] [Review][Patch] No toggle-off test for the motivating defect class: analytics disabled ⇒ zero `/api/analytics/*` routes [test_analytics_boundaries.py]
+- [x] [Review][Patch] Seam contract test never verifies `portfolio_id` reaches the SQL params — the fake ignores `params`; a hard-coded pid would pass [test_analytics_boundaries.py:399-404]
+- [x] [Review][Patch] Nonexistent portfolio and weightless portfolio are indistinguishable — router 200s on garbage pids: add `portfolios.gateway.portfolio_exists` seam + 404 in the analytics router (existing-but-weightless keeps the 200-empty) [analytics/router.py:72]
+- [x] [Review][Patch] Console fetch parses error responses as success — no `r.ok` check, so a 404/422/500 envelope is stored as `Analytics`; worst pairing with a breaking rename [analytics-panel.tsx:53-55]
+- [x] [Review][Patch] OVERNIGHT.md still documents the OLD path (`/api/portfolios/{id}/analytics`) — the operator doc now describes a 404 [OVERNIGHT.md:142]
+- [x] [Review][Defer] Types freshness is not an enforced gate: O.2's surface sat stale in the committed types until this regen caught it up — the "CI check" is a script with no runner [process] — deferred, pre-existing
+- [x] [Review][Defer] NUMERIC NaN weight would slip the `total_w <= 0` guard (NaN comparisons are False) — no writer produces NaN today [analytics/gateway.py:103-106] — deferred, pre-existing
+- Dismissed (5): conn-passing through the seam (the recorded design — connection topology is restructure-paired work); "DB-free" docstring (accurate — `create_app()` builds no DB connection; sibling test files do the same); no `__init__` re-export (docstring-only `__init__` is the repo convention; the module path IS the export); the call-site comment (it explicitly states seam ownership; "here" contrasts databases, accurately); unbounded `limit` on operate history (false positive — `Query(ge=1, le=500)`).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -72,9 +87,14 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor.
 - packages/analytics/src/analytics/router.py (modified — own prefix)
 - apps/web/components/analytics-panel.tsx (modified — new path)
 - apps/web/lib/api-types.ts (regenerated)
-- services/api/tests/test_analytics_boundaries.py (new — 3 tests)
-- _bmad-output/implementation-artifacts/deferred-work.md (modified — D7 split)
+- services/api/tests/test_analytics_boundaries.py (new — 3 tests; review round: rewritten, 6 tests)
+- _bmad-output/implementation-artifacts/deferred-work.md (modified — D7 split + review defers)
+- packages/analytics/pyproject.toml (review round — portfolios dependency declared)
+- packages/analytics/src/analytics/router.py (review round — LookupError → 404)
+- OVERNIGHT.md (review round — endpoint doc updated to the new path)
+- uv.lock (review round — analytics→portfolios edge)
 
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-4); api suite 22 → 25 green; live verified both directions (new path 200 w/ real metrics, old path 404). Status → review.
+- 2026-06-10: Code review (3 adversarial layers) — 9 patches applied (seam hardened: single-query read + full types + `portfolio_exists`; declared dependency + hoisted import; nonexistent portfolio now 404 LIVE-VERIFIED with the envelope while weightless stays 200-warning; console guards `r.ok`; package-wide grep-test, toggle-off test, params-asserting fake; OVERNIGHT.md path fixed), 2 deferred (types-freshness gate, NaN hypothetical), 5 dismissed (incl. 2 false positives). api suite 25 → 28; sym 544, operate 14, lint clean. Status → done.

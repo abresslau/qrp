@@ -38,7 +38,10 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
 
   useEffect(() => {
     fetch("/api/analytics/benchmarks", { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) throw new Error(`benchmarks ${r.status}`);
+        return r.json();
+      })
       .then((d: Benchmark[]) => {
         setBenches(d);
         const sp = d.find((x) => x.name === "S&P 500") ?? d[0];
@@ -51,7 +54,11 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
     if (bench == null) return;
     setLoading(true);
     fetch(`/api/analytics/portfolios/${pid}?benchmark=${bench}&window=${win}`, { cache: "no-store" })
-      .then((r) => r.json())
+      .then((r) => {
+        // an error envelope must never be stored as Analytics
+        if (!r.ok) throw new Error(`analytics ${r.status}`);
+        return r.json();
+      })
       .then((d: Analytics) => setA(d))
       .catch(() => setA(null))
       .finally(() => setLoading(false));

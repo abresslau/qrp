@@ -139,7 +139,7 @@ commits/pushes/deploys; never mutate sym's schema; never fabricate data; documen
   constant, dates with <99% weight priced dropped). Benchmark = `fact_index_returns` 1D `ret`
   for an `instrument` of kind 'index' (17 available: S&P 500=2048, IBOVESPA=2058, …, deep daily
   history 1990→).
-- **Endpoints**: `GET /api/analytics/benchmarks`; `GET /api/portfolios/{id}/analytics?benchmark=<sym_id>&window=`
+- **Endpoints**: `GET /api/analytics/benchmarks`; `GET /api/analytics/portfolios/{id}?benchmark=<sym_id>&window=`
   (ALL|YTD|1M|3M|6M|1Y|2Y|3Y). Metrics: ann return/vol, Sharpe, beta, Jensen alpha, correlation,
   active return, tracking error, information ratio + benchmark stats. rf=0, ANN=252. Pydantic
   response_models added; `gen:types` re-run.

@@ -11,30 +11,43 @@ unresolved identifiers are reported, never fabricated.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import psycopg
 
 
-def read_latest_weights(conn, portfolio_id: int):
+def read_latest_weights(
+    conn: psycopg.Connection, portfolio_id: int
+) -> tuple[date | None, dict[str, Decimal]]:
     """The latest stored weight vector for a portfolio — THE weights read.
 
     Returns ``(as_of_date | None, {composite_figi: Decimal weight})``. This is
     the cross-package seam (Story A.1): other modules (analytics) consume
     weights through THIS function so the `portfolio_weight` SQL has exactly one
     owner. Decimals as stored — representation is the consumer's choice.
+    ONE statement — date selection and row fetch share a snapshot, so a
+    concurrent weight write can't yield a torn vector.
     """
-    as_of_date = conn.execute(
-        "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s",
-        (portfolio_id,),
-    ).fetchone()[0]
-    if as_of_date is None:
-        return None, {}
     rows = conn.execute(
-        "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
-        "WHERE portfolio_id = %s AND as_of_date = %s",
-        (portfolio_id, as_of_date),
+        "SELECT as_of_date, composite_figi, weight FROM portfolios.portfolio_weight "
+        "WHERE portfolio_id = %s AND as_of_date = ("
+        "  SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s"
+        ")",
+        (portfolio_id, portfolio_id),
     ).fetchall()
-    return as_of_date, {figi: weight for figi, weight in rows}
+    if not rows:
+        return None, {}
+    return rows[0][0], {figi: weight for _, figi, weight in rows}
+
+
+def portfolio_exists(conn: psycopg.Connection, portfolio_id: int) -> bool:
+    """Whether the portfolio row exists — lets consumers tell a nonexistent
+    portfolio (404) apart from an existing one with no weights yet (empty)."""
+    row = conn.execute(
+        "SELECT 1 FROM portfolios.portfolio WHERE portfolio_id = %s",
+        (portfolio_id,),
+    ).fetchone()
+    return row is not None
 
 
 class DbPortfolioGateway:
