@@ -1,6 +1,6 @@
 # Story O.2: Operate hardening — heartbeat, provenance, history, allowlist (chunk-1 D2)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -75,6 +75,20 @@ Chunk-1 review (2026-06-10), ledger **D2 (Operate architecture)**. Investigation
 - [Source: _bmad-output/implementation-artifacts/deferred-work.md — chunk-1 D2]
 - [Source: db/deploy/jobs.sql; packages/operate/src/operate/*.py; packages/sym/src/sym/ingest/pipeline.py]
 
+### Review Findings (code review 2026-06-10, commit 7b4a282 — ALL RESOLVED)
+
+- [x] [Review][Patch] [HIGH] `_kill_tree` (taskkill /T /F on Windows) on the timeout path AND on executor-fatal exit — the sym grandchild no longer survives its job row; orphaned ≠ work stopped documented in the gateway comment + repair error text [executor.py, gateway.py]
+- [x] [Review][Patch] Beats are best-effort (`except psycopg.Error: pass`) — a DB hiccup no longer abandons a healthy child (tested with a flaky conn) [executor.py]
+- [x] [Review][Patch] Timeout path: `_kill_tree` guards `wait`'s `TimeoutExpired` (the real failure message always lands — constraint 6); the failed row now persists the output tail; reader joined via the shared `_tail()` helper [executor.py]
+- [x] [Review][Patch] Drain pinned to `encoding='utf-8', errors='replace'` (the cp1252 deadlock vector — asserted in tests) + `[output truncated]` marker when the reader outlives the join [executor.py]
+- [x] [Review][Patch] Beats stamped with server `now()` in SQL; the stale window is `_STALE_S = 3 × _BEAT_S`, interpolated into both gateway predicates — one knob (tested) [executor.py, gateway.py]
+- [x] [Review][Patch] Orphan read-repair: list/get persist `status='orphaned'` + `finished_at` + the caveat message — verified LIVE (manufactured dead-running job 5: API read `orphaned`, STORED row converged to `('orphaned', finalized)`, cleaned) [gateway.py]
+- [x] [Review][Patch] `/history` catches `psycopg.Error` mid-query → 503 "run log unavailable" (tested with `UndefinedColumn`) [router.py]
+- [x] [Review][Patch] Arg symmetry: no-arg ops reject extras; `takes_universe` requires exactly one id (tested) [gateway.py]
+- [x] [Review][Patch] Record corrections: constraint 3's `db/sqitch.plan` reference was stale — `qrp.job` lives in project `qrp_core` (`packages/operate/db/`) since `relocate_qrp`; the implementation deviated correctly. Timeout fires up to one beat (~10s) after the 1800s deadline (poll granularity) — accepted slack [this section]
+- Dismissed (5): heartbeat-uncommitted (false positive — `conn.autocommit = True` at `_run_job` top, outside the blind layer's hunk); child env scoping (localhost; children need PG*/PATH + load .env); scope-regex alphabet (operator-created lowercase slugs); `RunHistoryRow` nullability (columns are NOT NULL in schema); pre-migration-DB gate (both registered, single environment).
+- Dismissed (5): "beats may be uncommitted" (false positive — `conn.autocommit = True` at the top of `_run_job`, outside the diff hunk); child env scoping (localhost single-operator; children need PG*/PATH and load .env themselves); scope-regex alphabet (universe ids are operator-created lowercase slugs by convention); `RunHistoryRow` nullability (schema declares those columns NOT NULL); pre-migration-DB compat gate (both migrations registered; single environment).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -109,3 +123,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-6); sym suite 530 → 531, operate suite 0 → 8, all green; live end-to-end verified (heartbeats, orphan logic, qrp-job↔run-log correlation, history endpoint, scope guard). Status → review.
+- 2026-06-10: Code review (3 adversarial layers; Auditor independently reproduced EVERY live claim — registries, correlation, endpoint — and passed all 7 ACs/constraints) — 9 patches applied (HIGH: process-TREE kill so the sym grandchild can't outlive its job row; best-effort beats; utf-8 drain pinning; server-time stamps; orphan read-repair verified live on a manufactured dead row), 0 deferred, 5 dismissed (1 blind false-positive on autocommit). Operate suite 8 → 14. Status → done.

@@ -103,6 +103,10 @@ def pipeline_history(limit: int = Query(default=50, ge=1, le=500)) -> list[dict]
         raise HTTPException(status_code=503, detail=f"sym database unreachable: {exc}") from exc
     try:
         return run_history(conn, limit)
+    except psycopg.Error as exc:
+        # Mid-query failures (disconnect, missing column on a pre-migration DB)
+        # degrade to the same honest 503, never a raw 500.
+        raise HTTPException(status_code=503, detail=f"sym run log unavailable: {exc}") from exc
     finally:
         conn.close()
 

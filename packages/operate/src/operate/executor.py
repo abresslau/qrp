@@ -20,14 +20,37 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+import psycopg
+
 from operate.db import connect
 
 # Tail of combined stdout/stderr kept on the job row (chars).
 _OUTPUT_TAIL = 12000
-# Child-process budget and heartbeat cadence (Story O.2). The gateway's orphan
-# window is 3x the beat — keep them in step.
+# Child-process budget and heartbeat cadence (Story O.2). The orphan window is
+# DERIVED (3x the beat) and interpolated into the gateway's SQL — one knob.
 _TIMEOUT_S = 1800
 _BEAT_S = 10.0
+_STALE_S = int(_BEAT_S * 3)
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the child AND its descendants.
+
+    ``proc.kill()`` alone kills ``uv``; the sym GRANDCHILD survives and keeps
+    writing to the warehouse after the job row says failed — on Windows the
+    only reliable tree-kill is taskkill /T. ``wait`` is guarded so a hung
+    reaped-state read can't displace the real failure message (constraint 6).
+    """
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True
+        )
+    else:
+        proc.kill()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 @dataclass(frozen=True)
@@ -108,6 +131,7 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
         return  # the busy-check's staleness window unwedges the orphaned 'queued' row
     conn.autocommit = True
     key = _advisory_key(op.key, args)
+    proc: subprocess.Popen | None = None
     try:
         got = conn.execute("SELECT pg_try_advisory_lock(%s)", (key,)).fetchone()[0]
         if not got:
@@ -129,12 +153,17 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
                 # Popen + poll (not subprocess.run): the supervisor must HEARTBEAT
                 # while the child runs — a dead supervisor then reads as a stale
                 # beat (-> orphaned), not as 'running' forever (ADR-5's heartbeat).
+                # encoding/errors pinned: text=True alone decodes with cp1252 on
+                # Windows, and ONE undecodable byte would kill the drain thread,
+                # fill the pipe, and deadlock the child until the timeout kill.
                 proc = subprocess.Popen(
                     argv,
                     cwd=None,  # sym is a workspace member; `uv run sym` resolves from the qrp env
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     env=env,
                 )
             except FileNotFoundError as exc:
@@ -154,26 +183,39 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
 
             reader = threading.Thread(target=_drain, daemon=True)
             reader.start()
+
+            def _tail() -> str:
+                reader.join(timeout=5)
+                text = "".join(chunks)[-_OUTPUT_TAIL:]
+                if reader.is_alive():
+                    text += "\n[output truncated: drain incomplete]"
+                return text
+
             deadline = time.monotonic() + _TIMEOUT_S
             while True:
-                conn.execute(
-                    "UPDATE qrp.job SET heartbeat_at=%s WHERE job_id=%s", (_now(), job_id)
-                )
+                try:
+                    # Server-time stamp (now() in SQL): the beat is COMPARED
+                    # against server now() by the orphan window — a client clock
+                    # skew must not eat the margin. Best-effort: a DB hiccup on
+                    # one beat must not abandon a healthy child.
+                    conn.execute(
+                        "UPDATE qrp.job SET heartbeat_at = now() WHERE job_id=%s", (job_id,)
+                    )
+                except psycopg.Error:
+                    pass
                 returncode = proc.poll()
                 if returncode is not None:
                     break
                 if time.monotonic() > deadline:
-                    proc.kill()
-                    proc.wait(timeout=30)
+                    _kill_tree(proc)
                     conn.execute(
-                        "UPDATE qrp.job SET status='failed', error=%s, finished_at=%s "
-                        "WHERE job_id=%s",
-                        (f"op timed out after {_TIMEOUT_S}s", _now(), job_id),
+                        "UPDATE qrp.job SET status='failed', error=%s, output=%s, "
+                        "finished_at=%s WHERE job_id=%s",
+                        (f"op timed out after {_TIMEOUT_S}s", _tail(), _now(), job_id),
                     )
                     return
                 time.sleep(_BEAT_S)
-            reader.join(timeout=5)
-            tail = "".join(chunks)[-_OUTPUT_TAIL:]
+            tail = _tail()
             status = "success" if returncode == 0 else "failed"
             conn.execute(
                 "UPDATE qrp.job SET status=%s, exit_code=%s, output=%s, finished_at=%s "
@@ -183,6 +225,13 @@ def _run_job(job_id: int, op: Op, args: list[str]) -> None:
         finally:
             conn.execute("SELECT pg_advisory_unlock(%s)", (key,))
     except Exception as exc:  # noqa: BLE001 — never let a worker die silently
+        # A fatal supervisor error must not leave a live child writing to the
+        # warehouse behind a failed/orphaned row — kill the tree first.
+        if proc is not None and proc.poll() is None:
+            try:
+                _kill_tree(proc)
+            except Exception:  # noqa: BLE001
+                pass
         try:
             conn.execute(
                 "UPDATE qrp.job SET status='failed', error=%s, finished_at=%s WHERE job_id=%s",

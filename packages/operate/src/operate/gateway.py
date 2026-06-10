@@ -7,7 +7,7 @@ import re
 
 import psycopg
 
-from operate.executor import OPS, launch
+from operate.executor import _STALE_S, OPS, launch
 
 # Load scopes runnable through the API: universe scopes only (the CLI accepts
 # more; the API allowlist stays narrow until something needs widening).
@@ -49,26 +49,45 @@ class DbOperateGateway:
             "heartbeat_at": heartbeat.isoformat() if heartbeat else None,
         }
 
-    # 'running' with a stale beat (3x the executor's 10s cadence) reads as
-    # ORPHANED: the supervising process died. Read-time reclassification is
-    # sufficient — Postgres frees advisory locks on disconnect, so the dead
-    # run's lock is already gone and nothing needs a reaper.
+    # 'running' with a stale beat (3x the executor's cadence, derived from
+    # _STALE_S — one knob) reads as ORPHANED: the supervising process died.
+    # Postgres frees advisory locks on disconnect, so the dead run's lock is
+    # already gone and nothing needs a reaper. CAVEAT (documented, by design):
+    # orphaned means the SUPERVISOR died — the child OS process may have kept
+    # running; check sym's run logs before assuming the work stopped.
     _COLS = (
         "job_id, op, args, "
         "CASE WHEN status = 'running' "
         "      AND coalesce(heartbeat_at, started_at, created_at) "
-        "          < now() - interval '30 seconds' "
+        f"          < now() - interval '{_STALE_S} seconds' "
         "     THEN 'orphaned' ELSE status END AS status, "
         "exit_code, output, error, created_at, started_at, finished_at, heartbeat_at"
     )
 
+    def _repair_orphans(self) -> None:
+        """Persist the orphan classification (read-repair, no reaper).
+
+        The CASE in ``_COLS`` keeps API reads correct between repairs; this
+        write keeps STORAGE honest too — ad-hoc SQL and future consumers must
+        not see eternal 'running' rows for jobs whose supervisor died.
+        """
+        self._conn.execute(
+            "UPDATE qrp.job SET status='orphaned', finished_at=now(), error=%s "
+            "WHERE status='running' AND coalesce(heartbeat_at, started_at, created_at) "
+            f"      < now() - interval '{_STALE_S} seconds'",
+            ("supervisor died (stale heartbeat); the child process may have kept "
+             "running — check sym run logs (triggered_by) before re-running",),
+        )
+
     def list(self, limit: int = 50) -> list[dict]:
+        self._repair_orphans()
         rows = self._conn.execute(
             f"SELECT {self._COLS} FROM qrp.job ORDER BY created_at DESC LIMIT %s", (limit,)
         ).fetchall()
         return [self._row(r) for r in rows]
 
     def get(self, job_id: int) -> dict | None:
+        self._repair_orphans()
         r = self._conn.execute(
             f"SELECT {self._COLS} FROM qrp.job WHERE job_id = %s", (job_id,)
         ).fetchone()
@@ -87,14 +106,22 @@ class DbOperateGateway:
             # args ride straight onto the sym CLI argv; flag-like values would let a caller
             # inject arbitrary options (e.g. mode switches) past the allowlist.
             return {"ok": False, "status": "rejected", "reason": "flag-like args are not allowed"}
-        if op.takes_universe and not args:
-            return {"ok": False, "status": "rejected", "reason": "this op requires a universe id"}
+        if op.takes_universe and len(args) != 1:
+            return {
+                "ok": False,
+                "status": "rejected",
+                "reason": "this op requires exactly one universe id",
+            }
         if op.takes_scope and (len(args) != 1 or not _SCOPE_RE.match(args[0])):
             return {
                 "ok": False,
                 "status": "rejected",
                 "reason": "this op requires exactly one scope arg shaped universe:<id>",
             }
+        if not (op.takes_universe or op.takes_scope) and args:
+            # symmetry with the flag guard: no-arg ops must not forward arbitrary
+            # positionals onto the sym CLI past the allowlist.
+            return {"ok": False, "status": "rejected", "reason": "this op takes no args"}
         if op.writes and not confirm:
             return {
                 "ok": False,
@@ -110,7 +137,7 @@ class DbOperateGateway:
             "AND ((status = 'queued' AND created_at > now() - interval '2 hours') "
             "  OR (status = 'running' "
             "      AND coalesce(heartbeat_at, started_at, created_at) "
-            "          > now() - interval '30 seconds'))",
+            f"          > now() - interval '{_STALE_S} seconds'))",
             (op_key, json.dumps(args)),
         ).fetchone()[0]
         if busy:
