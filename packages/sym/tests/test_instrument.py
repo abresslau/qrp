@@ -14,8 +14,13 @@ from sym.identity.instrument import (
 class _FakeConn:
     """Records executes; returns canned rows for the queries ensure_instrument runs."""
 
-    def __init__(self, existing_xref: dict[tuple[str, str], int] | None = None):
+    def __init__(
+        self,
+        existing_xref: dict[tuple[str, str], int] | None = None,
+        kinds: dict[int, str] | None = None,
+    ):
         self.existing = existing_xref or {}
+        self.kinds = kinds or {}
         self.inserts: list[str] = []
         self._last_params = None
 
@@ -28,12 +33,20 @@ class _FakeConn:
             self.inserts.append("instrument")
         return self
 
+    def transaction(self):
+        import contextlib
+
+        return contextlib.nullcontext()
+
     def fetchone(self):
         sql = self._last_sql
         if "SELECT sym_id FROM instrument_xref" in sql:
             source, value = self._last_params
             sid = self.existing.get((source, value))
             return (sid,) if sid is not None else None
+        if "SELECT kind FROM instrument" in sql:
+            (sid,) = self._last_params
+            return (self.kinds.get(sid, "equity"),)
         if "RETURNING sym_id" in sql:
             return (999,)  # new instrument id
         return None

@@ -159,8 +159,11 @@ class HttpOpenFigiClient:
 
     @staticmethod
     def _parse_item(item: dict) -> list[FigiRecord]:
-        # A successful item carries "data"; a no-match carries "warning";
-        # a malformed job carries "error". Both non-data cases mean "no records".
+        # A successful item carries "data"; a genuine no-match carries "warning";
+        # a job-level "error" means OUR request was malformed (a code bug, not a
+        # vendor miss) — loud, never silently classified as no_figi_found.
+        if item.get("error"):
+            raise OpenFigiError(f"OpenFIGI rejected a job (malformed request): {item['error']}")
         data = item.get("data")
         if not data:
             return []
@@ -209,7 +212,10 @@ class HttpOpenFigiClient:
                 continue
             if resp.status_code != 200:
                 raise OpenFigiError(f"OpenFIGI returned HTTP {resp.status_code}")
-            return resp.json()
+            try:
+                return resp.json()
+            except ValueError as exc:
+                raise OpenFigiError(f"OpenFIGI returned non-JSON: {exc}") from exc
         raise OpenFigiError(f"OpenFIGI unreachable after {self._max_retries} attempts: {last_exc}")
 
     def map_identifiers(self, inputs: Sequence[ResolutionInput]) -> list[list[FigiRecord]]:
@@ -330,9 +336,14 @@ def plan_resolutions(
     planned: list[SeedSecurity] = []
     inputs_by_seed: list[list[ResolutionInput]] = []
     queries: list[ResolutionInput] = []
-    for seed in securities:
+    # Seeds with NO resolution input become explicit no_figi_found outcomes — a
+    # silent drop would desync callers that zip results against their seed list
+    # (and the seed would never reach the review queue).
+    no_input: list[tuple[int, SeedSecurity]] = []
+    for idx, seed in enumerate(securities):
         inputs = seed.resolution_inputs()
         if not inputs:
+            no_input.append((idx, seed))
             continue
         query = inputs[0]
         if query.symbol_type == TICKER and query.mic:
@@ -366,6 +377,18 @@ def plan_resolutions(
         classify(seed, query, recs)
         for seed, query, recs in zip(planned, queries, records, strict=True)
     ]
+    # Re-insert no-input seeds at their original positions so the output aligns 1:1
+    # with the input order (callers zip strictly against their seed list).
+    for idx, seed in no_input:
+        resolutions.insert(
+            idx,
+            Resolution(
+                seed,
+                NO_FIGI_FOUND,
+                ResolutionInput(TICKER, seed.ticker or "", seed.mic),
+                detail="no resolution input (missing ticker+MIC and ISIN)",
+            ),
+        )
     detect_share_class_conflicts(resolutions)
     return resolutions
 
@@ -381,6 +404,7 @@ class ResolutionSummary:
     securities_created: int = 0
     names_written: int = 0
     review_enqueued: int = 0
+    errors: list[str] = field(default_factory=list)  # per-security write failures
 
 
 def apply_resolutions(
@@ -389,46 +413,54 @@ def apply_resolutions(
     """Persist classified resolutions: one transaction per security.
 
     Assignments write ``securities`` + ``security_symbology``; every other
-    outcome enqueues a review row. Each security commits independently so one
-    bad row never rolls back the whole run.
+    outcome enqueues a review row. Each security commits independently AND is
+    error-isolated — one bad row (e.g. a seed MIC missing from the exchange
+    table) is recorded on ``summary.errors`` and never halts the run.
     """
     summary = ResolutionSummary()
     for res in resolutions:
-        with conn.transaction():
-            if res.outcome == ASSIGNED:
-                assert res.composite_figi is not None
-                created = write_security(
-                    conn,
-                    seed=res.seed,
-                    composite_figi=res.composite_figi,
-                    share_class_figi=res.share_class_figi,
-                )
-                summary.assigned += 1
-                if created:
-                    summary.securities_created += 1
-                if res.name:
-                    write_name(conn, res.composite_figi, res.name)
-                    summary.names_written += 1
-            else:
-                source_input = {
-                    "name": res.seed.name,
-                    "category": res.seed.category,
-                    "symbol_type": res.query.symbol_type,
-                    "symbol_value": res.query.symbol_value,
-                    "mic": res.query.mic,
-                }
-                enqueued = enqueue_review(
-                    conn,
-                    query=res.query,
-                    status=res.outcome,
-                    candidates=res.candidates,
-                    detail=res.detail,
-                    source_input=source_input,
-                )
-                setattr(summary, res.outcome, getattr(summary, res.outcome) + 1)
-                if enqueued:
-                    summary.review_enqueued += 1
+        try:
+            _apply_one(conn, res, summary)
+        except Exception as exc:  # noqa: BLE001 — isolate; the txn rolled back
+            summary.errors.append(f"{res.seed.name}: {type(exc).__name__}: {str(exc)[:200]}")
     return summary
+
+
+def _apply_one(conn: psycopg.Connection, res: Resolution, summary: ResolutionSummary) -> None:
+    with conn.transaction():
+        if res.outcome == ASSIGNED:
+            assert res.composite_figi is not None
+            created = write_security(
+                conn,
+                seed=res.seed,
+                composite_figi=res.composite_figi,
+                share_class_figi=res.share_class_figi,
+            )
+            summary.assigned += 1
+            if created:
+                summary.securities_created += 1
+            if res.name:
+                write_name(conn, res.composite_figi, res.name)
+                summary.names_written += 1
+        else:
+            source_input = {
+                "name": res.seed.name,
+                "category": res.seed.category,
+                "symbol_type": res.query.symbol_type,
+                "symbol_value": res.query.symbol_value,
+                "mic": res.query.mic,
+            }
+            enqueued = enqueue_review(
+                conn,
+                query=res.query,
+                status=res.outcome,
+                candidates=res.candidates,
+                detail=res.detail,
+                source_input=source_input,
+            )
+            setattr(summary, res.outcome, getattr(summary, res.outcome) + 1)
+            if enqueued:
+                summary.review_enqueued += 1
 
 
 def read_exch_codes(conn: psycopg.Connection) -> dict[str, str]:
@@ -436,7 +468,9 @@ def read_exch_codes(conn: psycopg.Connection) -> dict[str, str]:
     rows = conn.execute(
         "SELECT mic, exch_code FROM exchange WHERE exch_code IS NOT NULL"
     ).fetchall()
-    return {mic.strip(): code for mic, code in rows}
+    # Strip BOTH sides: a CHAR-padded exch_code would stamp exchCode='US ' on every
+    # job and turn the whole universe into silent no_figi_found.
+    return {mic.strip(): code.strip() for mic, code in rows}
 
 
 def resolve_universe(

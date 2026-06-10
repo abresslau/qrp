@@ -16,6 +16,10 @@ import psycopg
 from sym.identity.universe import SeedSecurity
 
 
+class SymbologyCollisionError(Exception):
+    """An open symbology row for (type, value, mic) belongs to a different security."""
+
+
 class ExchangeLookupError(LookupError):
     """The listing MIC is absent from the exchange reference table."""
 
@@ -43,30 +47,33 @@ def _insert_symbology(
 ) -> None:
     # Guard against re-inserting an identical currently-effective row (the
     # EXCLUDE constraint would otherwise reject the overlap on a re-run).
+    # A RECYCLED identifier — the open (type, value, mic) row belonging to a
+    # DIFFERENT figi — must be loud, not a silent skip: the new security would
+    # quietly end up with no symbology row and no breadcrumb to why.
+    holder = conn.execute(
+        """
+        SELECT composite_figi FROM security_symbology
+         WHERE symbol_type = %s AND symbol_value = %s
+           AND coalesce(mic::text, '') = coalesce(%s::text, '')
+           AND valid_to IS NULL
+        """,
+        (symbol_type, symbol_value, mic),
+    ).fetchone()
+    if holder is not None:
+        if holder[0] != composite_figi:
+            raise SymbologyCollisionError(
+                f"{symbol_type} {symbol_value!r}@{mic} is currently held by "
+                f"{holder[0]}, refusing to attach to {composite_figi} "
+                "(recycled identifier — close the old row first)"
+            )
+        return  # identical open row — idempotent re-run
     conn.execute(
         """
         INSERT INTO security_symbology
             (composite_figi, symbol_type, symbol_value, mic, country_iso, valid_from)
-        SELECT %s, %s, %s, %s, %s, %s
-        WHERE NOT EXISTS (
-            SELECT 1 FROM security_symbology
-             WHERE symbol_type = %s
-               AND symbol_value = %s
-               AND coalesce(mic::text, '') = coalesce(%s::text, '')
-               AND valid_to IS NULL
-        )
+        VALUES (%s, %s, %s, %s, %s, %s)
         """,
-        (
-            composite_figi,
-            symbol_type,
-            symbol_value,
-            mic,
-            country_iso,
-            valid_from,
-            symbol_type,
-            symbol_value,
-            mic,
-        ),
+        (composite_figi, symbol_type, symbol_value, mic, country_iso, valid_from),
     )
 
 

@@ -66,6 +66,15 @@ def write_name(
         )
         return UPDATED
 
+    if current is not None and as_of_date < current[1]:
+        # Backdated write: closing the current row at as_of_date would violate the
+        # valid_to > valid_from CHECK. Retro corrections need a dedicated path; an
+        # explicit error beats an opaque CheckViolation escaping mid-transaction.
+        raise ValueError(
+            f"backdated name write for {composite_figi}: as_of_date {as_of_date} "
+            f"precedes the current row's valid_from {current[1]}"
+        )
+
     if current is not None:
         conn.execute(
             """

@@ -57,8 +57,15 @@ def set_status(
     """Change a security's status without touching ``delist_date``.
 
     Reactivating a delisted security (``status='active'``) also clears
-    ``delist_date`` so the row satisfies ``active_no_delist_chk``.
+    ``delist_date`` so the row satisfies ``active_no_delist_chk``. Delisting
+    through this function is refused: a delisted row without a ``delist_date``
+    is invisible to the post-delist price check — use :func:`delist_security`.
     """
+    if status == DELISTED:
+        raise ValueError(
+            "set_status cannot delist (no delist_date would be stamped, exempting "
+            "the security from the post-delist price check) — use delist_security"
+        )
     clear_delist = status == ACTIVE
     updated = conn.execute(
         """

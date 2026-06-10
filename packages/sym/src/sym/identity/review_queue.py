@@ -36,9 +36,11 @@ def enqueue_review(
     detail: str | None = None,
     source_input: dict | None = None,
 ) -> bool:
-    """Insert one OPEN review row; a no-op if an open row for the key already exists.
+    """Insert one OPEN review row, or REFRESH the open row's evidence for the key.
 
-    Returns True if a row was inserted, False if an open duplicate suppressed it.
+    Returns True if a row was inserted, False if an open row existed (its
+    status/candidates/detail are updated in place — the operator must see the
+    LATEST classification, not the evidence from the first sighting).
     """
     payload = source_input or {
         "symbol_type": query.symbol_type,
@@ -50,8 +52,12 @@ def enqueue_review(
         INSERT INTO securities_review_queue
             (source_key, source_input, candidates, status, detail)
         VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (source_key) WHERE resolved_at IS NULL DO NOTHING
-        RETURNING review_id
+        ON CONFLICT (source_key) WHERE resolved_at IS NULL DO UPDATE
+            SET status = EXCLUDED.status,
+                candidates = EXCLUDED.candidates,
+                detail = EXCLUDED.detail,
+                source_input = EXCLUDED.source_input
+        RETURNING review_id, (xmax = 0) AS inserted
         """,
         (
             source_key(query),
@@ -61,4 +67,4 @@ def enqueue_review(
             detail,
         ),
     ).fetchone()
-    return row is not None
+    return bool(row and row[1])

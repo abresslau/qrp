@@ -17,7 +17,7 @@ unchanged classification is a no-op; a changed one closes the prior row
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Protocol
 
@@ -167,6 +167,7 @@ class ClassificationSummary:
     rows_closed: int = 0
     unchanged: int = 0
     failed: int = 0
+    failures: list[str] = field(default_factory=list)  # attributable per-figi reasons
 
     @property
     def coverage(self) -> float:
@@ -276,6 +277,16 @@ def apply_classifications(
                     _update_in_place(conn, classification)
                     summary.rows_updated += 1
                     continue
+                if current is not None and as_of_date < current[1]:
+                    # Backdated write: closing at as_of_date would violate the
+                    # valid_to > valid_from CHECK — record WHY, don't let the
+                    # CheckViolation vanish into an anonymous count.
+                    summary.failed += 1
+                    summary.failures.append(
+                        f"{classification.composite_figi}: backdated ({as_of_date} < "
+                        f"current valid_from {current[1]})"
+                    )
+                    continue
                 if current is not None:
                     conn.execute(
                         """
@@ -289,9 +300,13 @@ def apply_classifications(
                     summary.rows_closed += 1
                 _insert_row(conn, classification, valid_from=as_of_date)
                 summary.rows_inserted += 1
-        except psycopg.Error:
-            # A single security's write failing must not abort the whole run.
+        except psycopg.Error as exc:
+            # A single security's write failing must not abort the whole run —
+            # but it must be attributable, not an anonymous counter.
             summary.failed += 1
+            summary.failures.append(
+                f"{classification.composite_figi}: {type(exc).__name__}: {str(exc)[:160]}"
+            )
     return summary
 
 
@@ -373,5 +388,7 @@ def classify_universe(
     plans = plan_classifications(active, source)
     summary = apply_classifications(conn, plans, as_of_date=as_of_date)
     summary.active_total = len(active)
-    summary.classified = len(plans)
+    # Coverage counts what actually LANDED: failed writes are not classified, and
+    # counting them would overstate coverage against the AC#2 threshold.
+    summary.classified = len(plans) - summary.failed
     return summary
