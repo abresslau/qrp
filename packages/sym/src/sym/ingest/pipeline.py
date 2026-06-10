@@ -121,6 +121,8 @@ def fetch_with_retry(
     sleep: Callable[[float], None] = time.sleep,
 ) -> OhlcvResult:
     """Fetch with capped exponential backoff + jitter, then re-raise (AR-13 429)."""
+    if retries < 1:
+        raise ValueError(f"retries must be >= 1, got {retries}")
     last: Exception | None = None
     for attempt in range(retries):
         try:
@@ -244,7 +246,11 @@ def _write_run_log(
     finished_at: datetime,
 ) -> int:
     """Write one run-level log record (FR-8) and return its run_id."""
-    detail = "; ".join(f"{figi}: {msg}" for figi, msg in summary.errors[:5]) or None
+    # Cap the joined detail: an uncapped vendor traceback could blow the column limit
+    # and lose the whole run record at the finish line.
+    detail = ("; ".join(f"{figi}: {msg}" for figi, msg in summary.errors[:5]) or None)
+    if detail is not None:
+        detail = detail[:2000]
     row = conn.execute(
         """
         INSERT INTO pipeline_run_log
@@ -299,6 +305,8 @@ def run_load(
     if securities is None:
         securities = read_active_with_cursor(conn)
     if limit is not None:
+        if limit < 0:
+            raise ValueError(f"limit must be >= 0, got {limit}")  # [:-n] would drop the tail
         securities = securities[:limit]
 
     for figi, mic, cursor in securities:
@@ -329,11 +337,34 @@ def run_load(
                 continue
             expected = expected_trading_days(conn, mic, start_date, end_date)
             if mode == OVERWRITE:
-                # Replace the window atomically, only AFTER a non-empty fetch — so neither a vendor
-                # failure (raises) nor a gap (empty bars) leaves a deleted-but-unreloaded hole.
+                # Replace ONLY the span the re-fetch actually covered (clamped to the fetched
+                # min/max): deleting the full requested window against a partial fetch would
+                # destroy bars the vendor didn't return. Stale review-flags and gap rows for
+                # the replaced span go with it (they describe the deleted data), and the
+                # cursor is re-derived from what is actually stored (GREATEST alone could
+                # leave it stranded past the data). Atomic, only AFTER a non-empty fetch.
+                fetched_dates = [b.date for b in result.bars]
+                del_start = max(start_date, min(fetched_dates))
+                del_end = min(end_date, max(fetched_dates))
                 with conn.transaction():
-                    _delete_prices_range(conn, figi, start_date, end_date)
+                    _delete_prices_range(conn, figi, del_start, del_end)
+                    conn.execute(
+                        "DELETE FROM prices_review WHERE composite_figi = %s "
+                        "AND session_date BETWEEN %s AND %s",
+                        (figi, del_start, del_end),
+                    )
+                    conn.execute(
+                        "DELETE FROM price_gaps WHERE composite_figi = %s "
+                        "AND session_date BETWEEN %s AND %s",
+                        (figi, del_start, del_end),
+                    )
                     result_summary = ingest_result(conn, result, expected_sessions=expected)
+                    conn.execute(
+                        "UPDATE pipeline_backfill_progress SET cursor_date = "
+                        "(SELECT max(session_date) FROM prices_raw WHERE composite_figi = %s) "
+                        "WHERE composite_figi = %s",
+                        (figi, figi),
+                    )
             else:
                 result_summary = ingest_result(conn, result, expected_sessions=expected)
         except Exception as exc:  # noqa: BLE001 - isolate one figi's failure
@@ -345,9 +376,12 @@ def run_load(
         summary.rows += result_summary.bars_written
         summary.flags += len(result_summary.flags)
         summary.gaps += len(result_summary.gaps)
-        if gap_aware:
-            # We requested down to `start_date`; whatever Yahoo returned, that floor is
-            # now covered — record it so a later same-floor backfill skips this name.
+        if gap_aware and result.bars:
+            # We requested down to `start_date` and got data — that floor is covered;
+            # record it so a later same-floor backfill skips this name. A fully EMPTY
+            # response is NOT recorded: it can be a vendor outage that returns empty
+            # instead of raising, and marking the floor would convert a one-day hiccup
+            # into permanently-skipped history.
             record_floor_reached(conn, figi, start_date)
 
     summary.run_id = _write_run_log(

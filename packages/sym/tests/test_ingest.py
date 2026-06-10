@@ -29,8 +29,11 @@ def _result(bars, splits=(), dividends=(), figi="BBG000B9XRY4", source="yfinance
 
 
 class _Cursor:
+    def __init__(self, row=None):
+        self._row = row
+
     def fetchone(self):
-        return None
+        return self._row
 
     def fetchall(self):
         return []
@@ -43,6 +46,9 @@ class _FakeConn:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        # Model INSERT ... RETURNING: a fresh fake DB never conflicts, so every insert lands.
+        if "INSERT" in sql.upper() and "RETURNING" in sql.upper():
+            return _Cursor(("x",))
         return _Cursor()
 
     def transaction(self):

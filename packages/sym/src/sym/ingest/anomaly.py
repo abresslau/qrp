@@ -40,8 +40,14 @@ def detect_anomalies(
     bars: Sequence[OhlcvBar],
     splits: Sequence[SplitEvent],
     expected_sessions: set[date] | None = None,
+    prior_bar: tuple[date, Decimal] | None = None,
 ) -> list[PriceFlag]:
     """Suspect dates for a security — split-aware ±50% jumps + non-trading-day prices.
+
+    ``prior_bar`` is the last STORED (date, raw close) before this batch: without it the
+    first fetched bar has nothing to compare against, and since the daily forward fill
+    fetches exactly ONE new bar, jump detection would never fire in steady-state
+    operation — only inside multi-bar backfills.
 
     At most one flag per date (a jump takes precedence; a coincident non-trading-day
     is folded into its detail) so the write is a clean UPSERT on (figi, date).
@@ -50,8 +56,15 @@ def detect_anomalies(
     flags: dict[date, PriceFlag] = {}
 
     previous: tuple[date, Decimal] | None = None
+    if prior_bar is not None:
+        prior_factor = cumulative_split_factor(splits, prior_bar[0])
+        if prior_factor > 0:
+            previous = (prior_bar[0], prior_bar[1] / prior_factor)
     for bar in ordered:
-        adjusted = bar.close / cumulative_split_factor(splits, bar.date)
+        factor = cumulative_split_factor(splits, bar.date)
+        if factor <= 0:
+            continue  # corrupt vendor split ratio — cannot adjust; never divide by it
+        adjusted = bar.close / factor
         if previous is not None:
             _, prev_adjusted = previous
             if prev_adjusted > 0:
@@ -65,8 +78,8 @@ def detect_anomalies(
                     )
         previous = (bar.date, adjusted)
 
-    if expected_sessions is not None:
-        for bar in ordered:
+    if expected_sessions:  # empty set = no calendar coverage for this MIC -> unknown,
+        for bar in ordered:  # not "every day is closed" (which would flag every bar)
             if bar.date in expected_sessions:
                 continue
             existing = flags.get(bar.date)

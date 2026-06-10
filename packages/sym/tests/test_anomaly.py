@@ -52,6 +52,9 @@ class _FakeConn:
         self.calls.append((sql, params))
         if sql.upper().lstrip().startswith("UPDATE"):
             return _Cursor(self._update_row)
+        # Model INSERT ... RETURNING: a fresh fake DB never conflicts, so every insert lands.
+        if "INSERT" in sql.upper() and "RETURNING" in sql.upper():
+            return _Cursor(("x",))
         return _Cursor()
 
     def transaction(self):

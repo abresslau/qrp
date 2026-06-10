@@ -53,7 +53,12 @@ def detect_gaps(expected_sessions: set[date], bar_dates: set[date]) -> list[date
 
 @dataclass
 class IngestSummary:
-    """What an ingest of one security wrote."""
+    """What an ingest of one security wrote.
+
+    ``bars_written``/``actions_written`` count rows that actually LANDED — an
+    ``ON CONFLICT DO NOTHING`` skip is not a write, so a re-run over existing
+    history honestly reports zero (and the run log can tell a no-op from a load).
+    """
 
     figi: str
     source: str
@@ -63,6 +68,7 @@ class IngestSummary:
     rejected: list[tuple[date, str]] = field(default_factory=list)
     flags: list[PriceFlag] = field(default_factory=list)
     cursor_date: date | None = None
+    error: str | None = None  # set when the figi's ingest failed (batch isolation)
 
 
 def expected_trading_days(
@@ -83,20 +89,23 @@ def expected_trading_days(
     return {row[0] for row in rows}
 
 
-def _insert_bar(conn: psycopg.Connection, figi: str, bar: OhlcvBar, result: OhlcvResult) -> None:
-    conn.execute(
+def _insert_bar(conn: psycopg.Connection, figi: str, bar: OhlcvBar, result: OhlcvResult) -> bool:
+    """Insert one raw bar; True only when a row actually landed (ON CONFLICT skips)."""
+    row = conn.execute(
         """
         INSERT INTO prices_raw
             (composite_figi, session_date, open, high, low, close, volume,
              currency_code, source)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (composite_figi, session_date) DO NOTHING
+        RETURNING composite_figi
         """,
         (
             figi, bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume,
             result.currency, result.source,
         ),
-    )
+    ).fetchone()
+    return row is not None
 
 
 def _insert_action(
@@ -108,16 +117,18 @@ def _insert_action(
     value: object,
     currency: str | None,
     source: str,
-) -> None:
-    conn.execute(
+) -> bool:
+    row = conn.execute(
         """
         INSERT INTO corporate_actions
             (composite_figi, ex_date, action_type, value, currency_code, source)
         VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (composite_figi, ex_date, action_type) DO NOTHING
+        RETURNING composite_figi
         """,
         (figi, ex_date, action_type, value, currency, source),
-    )
+    ).fetchone()
+    return row is not None
 
 
 def ingest_result(
@@ -137,29 +148,35 @@ def ingest_result(
     summary = IngestSummary(figi=figi, source=result.source)
 
     valid: list[OhlcvBar] = []
+    seen_dates: set[date] = set()
     for bar in result.bars:
         ok, reason = validate_bar(bar)
+        if ok and bar.date in seen_dates:
+            # Two bars for one date: DO NOTHING would silently keep the first and drop
+            # the conflict — surface it instead of letting it vanish.
+            ok, reason = False, "duplicate date in vendor payload"
         if ok:
+            seen_dates.add(bar.date)
             valid.append(bar)
         else:
             summary.rejected.append((bar.date, reason or "invalid"))
 
     with conn.transaction():
-        for bar in valid:
-            _insert_bar(conn, figi, bar, result)
-        summary.bars_written = len(valid)
+        summary.bars_written = sum(_insert_bar(conn, figi, bar, result) for bar in valid)
 
-        for split in result.splits:
+        summary.actions_written = sum(
             _insert_action(
                 conn, figi, ex_date=split.ex_date, action_type="split",
                 value=split.ratio, currency=None, source=result.source,
             )
-        for dividend in result.dividends:
+            for split in result.splits
+        ) + sum(
             _insert_action(
                 conn, figi, ex_date=dividend.ex_date, action_type="dividend",
                 value=dividend.amount, currency=result.currency, source=result.source,
             )
-        summary.actions_written = len(result.splits) + len(result.dividends)
+            for dividend in result.dividends
+        )
 
         if expected_sessions is not None:
             summary.gaps = detect_gaps(expected_sessions, {bar.date for bar in valid})
@@ -175,7 +192,19 @@ def ingest_result(
 
         # Stage-1 anomaly annotation (AR-9 / NFR-1): flag suspect prices that DID
         # land, in the same transaction. Idempotent; never clobber a human review.
-        summary.flags = detect_anomalies(valid, result.splits, expected_sessions)
+        # Seed the jump check with the last STORED bar before this batch — the daily
+        # forward fill fetches one bar, so without the seed it would never be compared.
+        prior_bar = None
+        first_new = min((b.date for b in valid), default=None)
+        if first_new is not None:
+            row = conn.execute(
+                "SELECT session_date, close FROM prices_raw "
+                "WHERE composite_figi = %s AND session_date < %s "
+                "ORDER BY session_date DESC LIMIT 1",
+                (figi, first_new),
+            ).fetchone()
+            prior_bar = (row[0], row[1]) if row else None
+        summary.flags = detect_anomalies(valid, result.splits, expected_sessions, prior_bar)
         for flag in summary.flags:
             conn.execute(
                 """
@@ -252,6 +281,8 @@ def ingest_results(
     for result in results:
         try:
             summaries.append(ingest_result(conn, result))
-        except psycopg.Error:
-            summaries.append(IngestSummary(figi=result.figi, source=result.source))
+        except Exception as exc:  # noqa: BLE001 — isolate ANY per-figi failure, and say so
+            summaries.append(
+                IngestSummary(figi=result.figi, source=result.source, error=str(exc)[:200])
+            )
     return summaries
