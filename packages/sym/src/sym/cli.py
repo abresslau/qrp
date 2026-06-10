@@ -627,11 +627,11 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                     conn, _fx_source(args.source), end_date=end_date, start_date=start_date,
                     currencies=_fx_currencies(args),
                 )
-                window = (
-                    f"[{start_date} .. {end_date}]" if start_date else f"[tail .. {end_date}]"
-                )
+                # Use the resolved window (s.start_date), not the request: in the tail case
+                # the caller passed start_date=None and fill_fx resolved the real start.
                 print(
-                    f"fx load {window}: {s.currencies} currencies, inserted={s.inserted}, "
+                    f"fx load [{s.start_date} .. {s.end_date}]: {s.currencies} currencies, "
+                    f"inserted={s.inserted}, "
                     f"skipped={s.skipped_existing}, implausible={s.implausible}"
                 )
                 if s.flagged:

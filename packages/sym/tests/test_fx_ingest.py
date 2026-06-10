@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sym.fx.ingest import DEFAULT_FX_FLOOR, FxLoadSummary, fill_fx, load_fx
+from sym.fx.ingest import DEFAULT_FX_FLOOR, fill_fx, load_fx
 from sym.fx.source import FxObservation
 
 END = date(2026, 6, 5)  # a Friday
@@ -75,23 +75,29 @@ class _FakeSource:
 def test_tail_on_empty_table_starts_at_floor():
     # start_date=None + nothing stored -> fill from the ECB-inception floor.
     conn, src = _Conn(max_stored=None), _FakeSource()
-    fill_fx(conn, src, end_date=END)
+    s = fill_fx(conn, src, end_date=END)
     assert src.calls == [(["BRL", "GBP"], DEFAULT_FX_FLOOR, END)]
+    # The summary surfaces the resolved window so the caller can display it.
+    assert s.start_date == DEFAULT_FX_FLOOR and s.end_date == END
 
 
 def test_tail_resumes_after_latest_stored_date():
     # start_date=None + data through 06-03 -> resume at 06-04 (last + 1 day).
     conn, src = _Conn(max_stored=date(2026, 6, 3)), _FakeSource()
-    fill_fx(conn, src, end_date=END)
+    s = fill_fx(conn, src, end_date=END)
     assert src.calls == [(["BRL", "GBP"], date(2026, 6, 4), END)]
+    assert s.start_date == date(2026, 6, 4) and s.end_date == END  # resolved tail surfaced
 
 
 def test_tail_already_current_is_noop():
-    # Latest stored == end -> resolved start (end + 1 day) > end: no fetch, empty summary.
+    # Latest stored == end -> resolved start (end + 1 day) > end: no fetch, zero counters,
+    # but the resolved window is still surfaced (so the operator sees why nothing loaded).
     conn, src = _Conn(max_stored=END), _FakeSource()
-    summary = fill_fx(conn, src, end_date=END)
+    s = fill_fx(conn, src, end_date=END)
     assert src.calls == [] and conn.inserted == []
-    assert summary == FxLoadSummary()
+    assert (s.currencies, s.inserted, s.skipped_existing, s.implausible) == (0, 0, 0, 0)
+    assert s.flagged == []
+    assert s.start_date == date(2026, 6, 6) and s.end_date == END
 
 
 def test_explicit_start_ignores_stored_max():
@@ -103,11 +109,13 @@ def test_explicit_start_ignores_stored_max():
 
 
 def test_explicit_inverted_window_is_noop():
-    # start_date after end_date short-circuits before any fetch.
+    # start_date after end_date short-circuits before any fetch (zero counters), but the
+    # offending window is still echoed back on the summary.
     conn, src = _Conn(), _FakeSource()
-    summary = fill_fx(conn, src, start_date=date(2026, 6, 10), end_date=END)
+    s = fill_fx(conn, src, start_date=date(2026, 6, 10), end_date=END)
     assert src.calls == [] and conn.inserted == []
-    assert summary == FxLoadSummary()
+    assert (s.currencies, s.inserted, s.skipped_existing, s.implausible) == (0, 0, 0, 0)
+    assert s.start_date == date(2026, 6, 10) and s.end_date == END
 
 
 def test_currencies_subset_passes_through_untouched():

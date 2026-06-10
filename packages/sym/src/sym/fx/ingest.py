@@ -38,6 +38,10 @@ class FxLoadSummary:
     skipped_existing: int = 0
     implausible: int = 0
     flagged: list[str] = field(default_factory=list)
+    # The window actually loaded, after tail resolution — so callers can surface the
+    # resolved start in the daily case (where the caller passed start_date=None).
+    start_date: date | None = None
+    end_date: date | None = None
 
 
 def implausible(prev: Decimal | None, new: Decimal, *, band: Decimal = MAX_DAILY_MOVE) -> bool:
@@ -80,7 +84,7 @@ def load_fx(
     """Fetch USD-base rates for ``[start_date, end_date]``, plausibility-filter, immutable-insert."""
     conn.autocommit = True
     ccys = list(currencies) if currencies is not None else _default_currencies(conn)
-    summary = FxLoadSummary()
+    summary = FxLoadSummary(start_date=start_date, end_date=end_date)
     obs = source.fetch(ccys, start_date, end_date)
     by_ccy: dict[str, list[FxObservation]] = {}
     for o in obs:
@@ -124,7 +128,7 @@ def fill_fx(
         last = _max_stored_date(conn, source.SOURCE)
         start_date = (last + timedelta(days=1)) if last is not None else DEFAULT_FX_FLOOR
     if start_date > end_date:
-        return FxLoadSummary()
+        return FxLoadSummary(start_date=start_date, end_date=end_date)
     return load_fx(
         conn, source, start_date=start_date, end_date=end_date,
         currencies=list(currencies) if currencies is not None else None,

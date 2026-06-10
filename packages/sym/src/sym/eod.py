@@ -161,8 +161,9 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             s = fill_fx(conn, FrankfurterSource(), end_date=as_of_date)
             usd = recompute_market_cap_usd(conn) if s.inserted else 0
             return (
-                f"inserted={s.inserted} skipped={s.skipped_existing} "
-                f"implausible={s.implausible} market_cap_usd={usd}"
+                f"[{s.start_date}..{s.end_date}] inserted={s.inserted} "
+                f"skipped={s.skipped_existing} implausible={s.implausible} "
+                f"market_cap_usd={usd}"
             )
         if key == "recompute":
             from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
