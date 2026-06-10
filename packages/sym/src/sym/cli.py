@@ -1030,6 +1030,14 @@ def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
+        if as_of_date != date.today():
+            # A snapshot reference can't honor a point-in-time claim — the audit
+            # row would assert a backdated check over data that is current.
+            print(
+                f"warning: snapshot references return CURRENT membership; the audit "
+                f"row will be stamped {as_of_date.isoformat()} but compares today's data",
+                file=sys.stderr,
+            )
     threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
     if not 0 <= threshold <= 1:
         print(

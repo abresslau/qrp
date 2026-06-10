@@ -13,7 +13,7 @@ slot into ``_RULES`` without touching the membership pipeline.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from datetime import date
 
 import psycopg
@@ -85,16 +85,18 @@ class CriteriaProvider:
         self._rule = rule
         self._n = int(n)
 
-    def members(self, start: date, end: date) -> Iterator[MembershipChange]:
+    def members(self, start: date, end: date) -> list[MembershipChange]:
         # Evaluate the rule as-of the window end and snapshot it as joins. An
         # empty evaluation declares NO snapshot (None, not an empty set) — mass
         # leaves must never be derived from an empty screen result.
+        # EAGER, not a generator: the reset + declaration must happen at CALL
+        # time, or a reader consulting last_snapshot_tokens before consuming
+        # the members would see the previous evaluation's snapshot.
         self.last_snapshot_tokens = None
         figis = _RULES[self._rule](self._conn, end, self._n)
         tokens = [figi_token(figi) for figi in figis]
         self.last_snapshot_tokens = set(tokens) or None
-        for token in tokens:
-            yield MembershipChange(token, JOIN, end, SOURCE, POLL_BOUNDED)
+        return [MembershipChange(token, JOIN, end, SOURCE, POLL_BOUNDED) for token in tokens]
 
 
 register_provider(CRITERIA, CriteriaProvider)

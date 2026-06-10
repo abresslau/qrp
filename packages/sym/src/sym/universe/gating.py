@@ -25,7 +25,14 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from sym.universe.events import append_change
-from sym.universe.registry import CORRECT, POLL_BOUNDED, MembershipChange, UniverseError
+from sym.universe.registry import (
+    CORRECT,
+    JOIN,
+    LEAVE,
+    POLL_BOUNDED,
+    MembershipChange,
+    UniverseError,
+)
 
 # Defaults (tunable). Churn above this fraction of current membership is gated.
 DEFAULT_CHURN_THRESHOLD = 0.10
@@ -37,6 +44,10 @@ REASON_PERSIST = "awaiting_persistence"
 # A change the operator already rejected, re-sighted later (a shifted poll date
 # dodges the quad dedupe key). It re-stages for VISIBILITY but never auto-promotes.
 REASON_REJECTED_RESIGHT = "rejected_resight"
+# How long a rejection keeps re-sightings of its triple operator-only. Without a
+# bound, one rejection would taint the triple FOREVER — a genuine departure of the
+# same security years later could never auto-promote.
+DEFAULT_REJECT_COOLDOWN_DAYS = 30
 
 PENDING = "pending"
 CONFIRMED = "confirmed"
@@ -116,8 +127,11 @@ def stage_changes(
     A SURPRISING run's re-sightings earn nothing: a churn-gated run is a
     suspect parse, so its evidence must not bump persistence or corroboration
     on existing pendings (it must not mint duplicate rows either). A change
-    whose triple matches an operator-REJECTED proposal re-stages with
-    ``reason='rejected_resight'`` — visible in review, never auto-promoted.
+    whose triple matches an operator-REJECTED proposal decided within the last
+    ``DEFAULT_REJECT_COOLDOWN_DAYS`` re-stages with ``reason='rejected_resight'``
+    — visible in review, never auto-promoted — when its quad is new (an exact
+    re-sight of the rejected quad itself is deduped away, which is the
+    rejection standing for that dated event).
     """
     reason = REASON_CHURN if surprising else REASON_PERSIST
     summary = StageSummary(surprising=surprising)
@@ -161,9 +175,10 @@ def stage_changes(
             SELECT 1 FROM membership_proposal
              WHERE universe_id = %s AND raw_identifier = %s
                AND change = %s AND status = 'rejected'
+               AND decided_at > now() - make_interval(days => %s)
              LIMIT 1
             """,
-            (universe_id, ch.raw_identifier, ch.change),
+            (universe_id, ch.raw_identifier, ch.change, DEFAULT_REJECT_COOLDOWN_DAYS),
         ).fetchone()
         row_reason = REASON_REJECTED_RESIGHT if rejected is not None else reason
         inserted = conn.execute(
@@ -363,8 +378,12 @@ def reverse_change(
 
     Refuses (``UniverseError``) when the named change was never recorded: the
     ``correct`` toggle is context-free, so a typo'd reversal would corrupt the
-    projection while reporting success.
+    projection while reporting success. Only ``join``/``leave`` can be reversed
+    — "reversing" a corrective would match the prior ``correct`` event and
+    append a toggle that re-applies the original wrong change.
     """
+    if change not in (JOIN, LEAVE):
+        raise UniverseError(f"can only reverse a join or leave event (got {change!r})")
     recorded = conn.execute(
         """
         SELECT 1 FROM membership_event

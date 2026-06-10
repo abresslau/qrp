@@ -116,13 +116,15 @@ def run_accuracy_check(
     proxy_tolerance: float = 0.0,
     sample: int = 20,
     maintained: set[str] | None = None,
+    comparison_basis: str = "raw",
 ) -> AccuracyResult:
     """Cross-check maintained membership vs an independent ``reference`` set.
 
     Writes a ``universe_accuracy_check`` audit row and returns the result. The
-    detail JSON carries a bounded sample of the missing/extra members. Pass
-    ``maintained`` explicitly for a comparison on something other than the raw
-    projection tokens (the FIGI-level cross-scheme path).
+    detail JSON carries a bounded sample of the missing/extra members plus the
+    ``comparison_basis`` (``raw`` tokens vs resolved ``figi``) so a FIGI-fallback
+    pass is distinguishable in the audit trail. Pass ``maintained`` explicitly
+    for a comparison on something other than the raw projection tokens.
     """
     # Tolerate a caller that already enabled autocommit: toggling it while an
     # implicit transaction is open raises in psycopg, so only set when needed —
@@ -136,6 +138,7 @@ def run_accuracy_check(
     )
     result.reference_source = reference_source
     detail = {
+        "comparison_basis": comparison_basis,
         "missing_sample": sorted(result.missing)[:sample],
         "extra_sample": sorted(result.extra)[:sample],
     }
@@ -279,10 +282,18 @@ def run_configured_accuracy_check(
     maintained set (``isin:`` vs ``ticker:``), both sides are resolved to ``figi:``
     tokens first — a raw cross-scheme comparison diverges toward 1.0 regardless of
     truth.
+
+    Requires an IDLE connection (no open transaction): autocommit is enabled
+    before the first query, and psycopg refuses the toggle mid-transaction.
     """
+    if not 0 <= threshold <= 1:
+        raise UniverseError(
+            f"threshold must be a divergence fraction in [0, 1], got {threshold!r}"
+        )
     # Enable autocommit BEFORE the first SELECT: psycopg refuses to toggle it once
     # an implicit transaction is open, and run_accuracy_check writes the audit row.
-    conn.autocommit = True
+    if not conn.autocommit:
+        conn.autocommit = True
     reference, reference_archetype, is_proxy = fetch_reference_tokens(
         conn, universe_id, as_of_date=as_of_date
     )
@@ -291,11 +302,13 @@ def run_configured_accuracy_check(
     # scheme: different MIC conventions for the same listings (ticker:SAP@XETR vs
     # a cross-listed reference's ticker:SAP@XNYS) would diverge toward 1.0
     # regardless of truth.
+    comparison_basis = "raw"
     if maintained and (
         _schemes(maintained) != _schemes(reference) or not (maintained & reference)
     ):
         maintained = open_member_figis(conn, universe_id)
         reference = _reference_as_figi_tokens(conn, reference)
+        comparison_basis = "figi"
     return run_accuracy_check(
         conn,
         universe_id,
@@ -305,6 +318,7 @@ def run_configured_accuracy_check(
         threshold=threshold,
         proxy_tolerance=DEFAULT_PROXY_TOLERANCE if is_proxy else 0.0,
         maintained=maintained,
+        comparison_basis=comparison_basis,
     )
 
 

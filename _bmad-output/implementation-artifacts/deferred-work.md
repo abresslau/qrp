@@ -123,3 +123,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of 2-10-explicit-range-reload (2026-06-09)
 
 - `reload_start`/`start` is not snapped to a trading session while `end` is (via `latest_session_for`). Benign today — `DELETE … BETWEEN` over non-session days removes nothing, and `expected_trading_days` only counts real sessions — but the asymmetry is a latent inconsistency. Optional: snap `reload_start` to the first session ≥ it [pipeline.py compute_window RELOAD branch].
+
+## Deferred from: code review of U3-5-wire-safety-machinery round 2 (2026-06-10)
+
+- Gated-streak alert: a universe whose monitor is churn-gated every run for weeks reads as ALIVE (liveness counts gated runs — correct) while its membership is silently frozen pending review; the only surface is the review digest's pending pane. A "gated N consecutive runs" alarm in `stale_monitors`/digest is a design follow-up.

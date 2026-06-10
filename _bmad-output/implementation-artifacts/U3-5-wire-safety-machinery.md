@@ -88,6 +88,19 @@ In-review mitigations ALREADY APPLIED (do not redo): monitor idempotency guard (
 
 Dismissed as noise (5): churn division-by-zero (guarded by `max(current_count, 1)`); NULL `composite_figi` (schema NOT NULL); `IndexSourceError` uncaught (it subclasses `UniverseError` — caught); `reference_source` post-hoc assignment (style); help-text constant interpolation (style).
 
+### Review Findings — round 2 (code review 2026-06-10, fix commit 29cde9c — ALL RESOLVED)
+
+- [x] [Review][Patch] Rejected-resight taint was permanent — probe now scoped to rejections decided within `DEFAULT_REJECT_COOLDOWN_DAYS` (30) [gating.py]
+- [x] [Review][Patch] `CriteriaProvider.members` was a generator (reset/declaration ran lazily) — now eager, returns a list; declaration happens at call time [providers/criteria.py]
+- [x] [Review][Patch] `reverse_change` validates change ∈ {join, leave} — "reversing" a corrective would re-apply the original wrong change [gating.py]
+- [x] [Review][Patch] `run_configured_accuracy_check` autocommit guarded (`if not conn.autocommit`) + idle-connection requirement documented [accuracy.py]
+- [x] [Review][Patch] Threshold validated in the library path (`UniverseError` outside [0, 1]), not just the CLI [accuracy.py]
+- [x] [Review][Patch] Audit row records `comparison_basis` (`raw`/`figi`) in the detail JSON [accuracy.py]
+- [x] [Review][Patch] Backdated `--as_of_date` warns on stderr (snapshot references compare today's data regardless) [cli.py]
+- [x] [Review][Patch] Test fakes tightened — probes match raw identifier AND change, mirroring the real SQL predicates [tests/test_universe_monitor_routing.py]
+- [x] [Review][Patch] Docstring scoped (rejected-resight applies to new-quad re-sights within the cooldown); AC2 deviation recorded in Change Log [gating.py, story]
+- [x] [Review][Defer] No alarm for a universe gated every run for weeks (liveness says alive, membership silently frozen pending review) — a gated-streak alert is new feature territory; the review digest's pending pane is the current surface [monitor.py] — deferred, design follow-up
+
 ## Dev Notes
 
 ### The wiring map (current state, post-2026-06-10 review patches)
@@ -202,3 +215,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor per task.
 
 - 2026-06-10: Story implemented end-to-end (Tasks 1-7), suite 451 green, live ibov verification passed. Status → review.
 - 2026-06-10: Code review (3 adversarial layers) — 14 findings resolved (3 decisions all taken as recommended, 11 patches incl. 1 HIGH confirmed+fixed+re-verified live), 5 dismissed. Suite 451 → 461 green, zero new lint. Spec deviation recorded: AC4's independence check tightened from "≠ primary" to "∉ source_pref". Status → done.
+- 2026-06-10: Code review round 2 (on fix commit 29cde9c) — 9 patches applied, 1 deferred (gated-streak alarm → ledger), 10 dismissed. Auditor confirmed all 14 round-1 fixes implemented, no AC/constraint regressions. Suite 461 → 465 green. Additional recorded deviations: AC2 — a gated run whose changes were all previously staged logs `proposed=0` by design (suspect runs grant no credit); rejected-resight applies to new-quad re-sights within a 30-day cooldown (an exact re-sight of the rejected quad is deduped — the rejection stands for that dated event).

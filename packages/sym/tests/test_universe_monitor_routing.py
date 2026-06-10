@@ -38,7 +38,7 @@ class _Conn:
         self._pending = pending_rows or []      # canned promotable proposal rows
         self.proposals: list[tuple] = []        # staged INSERTs (raw, change, reason)
         self.proposal_bumps: list[str] = []     # poll-bounded re-sight UPDATEs (raw)
-        self.rejected: set[str] = set()         # raws with a rejected proposal on file
+        self.rejected: set[tuple] = set()       # (raw, change) with a rejected proposal
         self.events: list[tuple] = []           # membership_event INSERTs (raw, change)
         self.event_exists = True                # answer for reverse's existence guard
         self.rebuilt = 0                        # universe_membership DELETE = rebuild ran
@@ -52,10 +52,13 @@ class _Conn:
         if "INSERT INTO universe_monitor_log" in sql:
             return _Cur(one=(1,))
         if "SELECT 1 FROM membership_proposal" in sql:
+            # mirror the real predicates: raw identifier AND change (not raw alone)
+            raw, change = params[1], params[2]
             if "status = 'rejected'" in sql:
-                return _Cur(one=(1,) if params[1] in self.rejected else None)
+                return _Cur(one=(1,) if (raw, change) in self.rejected else None)
             # pending-existence probe (surprising-run duplicate guard)
-            return _Cur(one=(1,) if any(p[0] == params[1] for p in self.proposals) else None)
+            return _Cur(one=(1,) if any(p[0] == raw and p[1] == change
+                                        for p in self.proposals) else None)
         if "SELECT 1 FROM membership_event" in sql:
             return _Cur(one=(1,) if self.event_exists else None)
         if "UPDATE membership_proposal" in sql and "last_seen_date" in sql:
@@ -214,6 +217,18 @@ def test_confirm_and_reverse_rebuild_projection():
     assert conn2.rebuilt == 1
 
 
+def test_reverse_refuses_to_reverse_a_corrective():
+    # Reversing a 'correct' event would match the prior corrective and append a
+    # toggle that re-applies the original wrong change — only join/leave reverse.
+    import pytest
+
+    from sym.universe.gating import reverse_change
+    from sym.universe.registry import UniverseError
+
+    with pytest.raises(UniverseError, match="join or leave"):
+        reverse_change(_Conn(), "ibov", "ticker:B@BVMF", "correct", D)
+
+
 def test_provider_leave_and_derived_leave_count_once(monkeypatch):
     # FMP-shaped case: a genuine leaver appears in the dated history (EXACT leave)
     # AND is absent from the declared snapshot. One departure must count once —
@@ -259,7 +274,7 @@ def test_rejected_change_resight_is_operator_only():
     from sym.universe.gating import REASON_REJECTED_RESIGHT, is_promotable
 
     conn = _Conn()
-    conn.rejected.add("ticker:X@BVMF")
+    conn.rejected.add(("ticker:X@BVMF", "leave"))
     changes = [MembershipChange("ticker:X@BVMF", LEAVE, D, "b3:IBOV", POLL_BOUNDED)]
     stage_and_promote(conn, "ibov", changes, current_count=100, as_of_date=D)
     assert ("ticker:X@BVMF", "leave", REASON_REJECTED_RESIGHT) in conn.proposals

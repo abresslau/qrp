@@ -152,6 +152,25 @@ def test_criteria_declares_snapshot_tokens():
     assert prov.last_snapshot_tokens == {"figi:BBG000000001", "figi:BBG000000002"}
 
 
+def test_criteria_declares_snapshot_eagerly():
+    # members() used to be a generator: the declaration ran lazily on first
+    # iteration, so a reader consulting last_snapshot_tokens before consuming
+    # saw the PREVIOUS evaluation. Declaration must happen at call time.
+    class _Conn:
+        def execute(self, sql, params=None):
+            class _Cur:
+                def fetchall(self):
+                    return [("BBG000000001",)]
+
+            return _Cur()
+
+    prov = CriteriaProvider(conn=_Conn(), rule="top_n_market_cap", n=1)
+    prov.last_snapshot_tokens = {"figi:STALE"}
+    members = prov.members(D, D)  # NOT consumed yet
+    assert prov.last_snapshot_tokens == {"figi:BBG000000001"}
+    assert [c.raw_identifier for c in members] == ["figi:BBG000000001"]
+
+
 def test_index_provider_propagates_winning_sources_snapshot():
     class _Snap:
         archetype = "fmp"

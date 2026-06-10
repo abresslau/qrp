@@ -212,6 +212,34 @@ def test_cross_scheme_unresolvable_reference_token_stays_divergent(monkeypatch):
     assert result.divergence > 0.0
 
 
+def test_library_threshold_validated(monkeypatch):
+    # The CLI validates too, but a scheduler/notebook calling the library
+    # directly must not silently get a gate that never (or always) alarms.
+    conn = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF"])
+    _patch_source(monkeypatch, ["ticker:A@BVMF"])
+    with pytest.raises(UniverseError, match="threshold"):
+        run_configured_accuracy_check(conn, "ibov", as_of_date=D, threshold=42)
+
+
+def test_audit_row_records_comparison_basis(monkeypatch):
+    # A FIGI-fallback pass must be distinguishable from a raw-token pass in the
+    # persisted audit row.
+    conn = _Conn(
+        config=IBOV_CFG,
+        maintained=["ticker:SAP@XETR"],
+        figis=["BBG000000SAP"],
+        symbology={"SAP": "BBG000000SAP"},
+    )
+    _patch_source(monkeypatch, ["ticker:SAP@XNYS"])
+    run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    assert "figi" in str(conn.checks[0])
+
+    conn2 = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF"])
+    _patch_source(monkeypatch, ["ticker:A@BVMF"])
+    run_configured_accuracy_check(conn2, "ibov", as_of_date=D)
+    assert "raw" in str(conn2.checks[0])
+
+
 def test_same_scheme_zero_overlap_falls_back_to_figis(monkeypatch):
     # Same ticker: scheme but different MIC conventions (XETR vs XNYS for a
     # cross-listed reference) would diverge toward 1.0 on raw tokens — zero
