@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 
 from qrp_api.config import enabled_modules, modules, platform_config, platform_name
+
+# ONE origin list for both the CORS middleware and the actuation guard (Story
+# O.3) — drift between two lists recreates the misconfiguration class the
+# guard exists to close.
+ALLOWED_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+_MUTATING = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 
 class HealthResponse(BaseModel):
@@ -56,10 +64,35 @@ def create_app() -> FastAPI:
     # Dev: the Next.js console proxies /api/* (same-origin); these origins cover direct calls.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        allow_origins=ALLOWED_ORIGINS,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def actuation_origin_guard(request: Request, call_next):
+        """Refuse mutating requests carrying a FOREIGN Origin (Story O.3, D4).
+
+        Browsers attach Origin to every cross-site (and same-site POST)
+        request, so a malicious page driving-by localhost actuation arrives
+        WITH a foreign Origin — refused here before any route logic. Headless
+        clients (curl, schedulers) send no Origin and pass: the guard targets
+        browser-ambient CSRF, not API access. CORS preflights are OPTIONS and
+        therefore untouched. Defense-in-depth alongside CORS: JSON bodies
+        force a preflight today, but that protection is one content-type or
+        config change away from gone — this check is explicit and structural
+        (app-wide, covers every current and future mutating route).
+        """
+        if (
+            request.method in _MUTATING
+            and (origin := request.headers.get("origin")) is not None
+            and origin not in ALLOWED_ORIGINS
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": f"origin {origin!r} may not actuate this API"},
+            )
+        return await call_next(request)
 
     @app.get("/api/health", response_model=HealthResponse)
     def health() -> dict:
