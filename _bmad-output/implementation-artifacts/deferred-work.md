@@ -1,5 +1,23 @@
 
-## Deferred from: code review of sym universe layer, chunk 3 of project-wide review (2026-06-10)
+## Deferred from: code review of sym identity & integrity, chunk 4 of project-wide review (2026-06-10)
+
+Backlogged by decision (D1/D2, accepted recommendations):
+
+- **D1 — review-queue gating story (Story 1.4 AC2, VIOLATED):** the queue is write-only — nothing reads it, every resolution run re-queries OpenFIGI for every seed, and a queued-ambiguous input can be auto-assigned while its review row is open. Wire `plan_resolutions`/callers to exclude open-queue items and surface resolution-as-a-gate. Mitigation applied in-review: `enqueue_review` now REFRESHES the open row's status/candidates/detail so the operator sees the latest evidence.
+- **D2 — symbology SCD transition story:** no writer ever closes a `security_symbology` row (a ticker rename leaves two open ticker rows); the data-conventions SQ→XYZ worked example describes unimplemented behavior; the V3 overlap/closed-without-successor AC was dropped. Mitigation applied in-review: a recycled identifier held by a different FIGI now raises `SymbologyCollisionError` (was a silent skip with no breadcrumb).
+
+Deferred findings:
+
+- V1 stricter coverage-over-membership-window clause (prices dimension is one-bar-ever).
+- V2 unresolved-member "info" tier (no info tier exists in results.py).
+- V6 per-universe readiness threshold (one global default, not CLI-exposed).
+- EODHD second vendor (Story 2.7) — comparator ready, adapter never built; docstring made honest.
+- GICS 4-level codes (labels-only at top-3, per recorded reconciliation).
+- Epic-doc wording reconciliation: V4 off-calendar warn-downgrade and V5 pit-direction are deliberate per story changelogs but epics-validation.md still reads as the original.
+- Calendar narrower-replacement guard: a re-snapshot covering a strictly narrower span can still demote a richer current version (the 20-yr-default fallback route is now closed; caller-window variation remains).
+- Empty-frame vs unknown-symbol distinction in the yfinance adapter (Yahoo returns empty for both).
+- Yahoo symbol normalization asymmetry: OpenFIGI strips HK leading zeros; the Yahoo resolver never re-pads (0700.HK) and applies '.'->'-' to all markets.
+- `universe_member_completeness` historical rows for departed members are now purged at evaluate-time; a retention/audit copy (if wanted) needs a design.
 
 Backlogged by decision (D1-D4, accepted recommendations):
 
