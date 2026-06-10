@@ -1,6 +1,6 @@
 # Story U1.7: Snapshot-pin resolution watermark (ledger D2)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -61,6 +61,18 @@ A pin becomes `(universe_id, as_of_date, log_version, resolved_through)` where `
 - [Source: packages/sym/src/sym/universe/{snapshot,projection,resolution}.py]
 - [Source: packages/sym/migrations/deploy/universe_member_resolution.sql — resolved_at already present]
 
+### Review Findings (code review 2026-06-10, commit 47cd9ea — ALL RESOLVED)
+
+- [x] [Review][Patch] Live exclusion round-trip EXECUTED (ibov, synthetic `ticker:ZZZTEST3@BVMF`): unresolved row written → `capture_pin` → member absent → `_write_resolutions` upgrade (re-stamps `resolved_at`) → watermarked pin STILL excludes it (`reproducible=True`) while the legacy events-only pin INCLUDES it — the D2 bug demonstrated and its fix proven against real Postgres on the same data. Cleanup verified, monitor baseline 0/0 [live verification]
+- [x] [Review][Patch] AC1 fully tested: INSERT clause omits `resolved_at` (default preserved) AND both halves of the upgrade-only WHERE guard asserted [tests]
+- [x] [Review][Patch] `capture_pin()` added — both watermarks from ONE statement (single-snapshot consistency), recommended by the docstrings; tested [snapshot.py]
+- [x] [Review][Patch] Naive `resolved_through` now raises `ValueError` (session-timezone replay hazard); param keyword-only [projection.py, snapshot.py]
+- [x] [Review][Patch] `current_resolution_version`/`capture_pin` raise `UnknownUniverseError` for a nonexistent universe (no silent epoch pins) [snapshot.py]
+- [x] [Review][Patch] Capture-discipline preconditions documented in full on `capture_pin` (transaction-start `now()`, equal-timestamp boundary, clock monotonicity, epoch-pin semantics); `resolved_at` semantics = "last became visible"; future-`unpriced`-writer rule recorded (census: no such writer exists) [snapshot.py, resolution.py]
+- [x] [Review][Patch] Ledger entry: sequence-based resolution watermark as the robust upgrade path [deferred-work.md]
+- [x] [Review][Defer] Sequence-based resolution watermark (schema) — deferred to ledger; the timestamp approach + documented capture discipline is proportionate for a single-operator pipeline
+- Dismissed (3): `resolved_through=None` default "backwards" (legacy compat was an explicit AC; keyword-only applied); substring/private-internal test style (project-wide DB-free convention; the live exclusion round-trip is the behavioral compensator); future-timestamp caller-error guard (tz-naivety is the silent hazard worth guarding; a future timestamp is loud operator error).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -89,3 +101,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code, red-green-refactor.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-4); suite 486 → 491 green; live ibov pin smoke passed. Status → review.
+- 2026-06-10: Code review (3 adversarial layers; Auditor ran the writer census — one writer, no delete path, no `unpriced` writer exists) — 7 patches applied, 1 deferred (sequence watermark → ledger), 3 dismissed. The decisive patch: the exclusion behavior was only substring-tested; the live round-trip now demonstrates both the fix (watermarked pin reproducible across an upgrade) and the original D2 bug (legacy pin leaks the member) on real Postgres. Hardening: `capture_pin` atomic capture, naive-datetime rejection, unknown-universe guard, full capture-discipline docs. Suite 491 → 495 green. Status → done.

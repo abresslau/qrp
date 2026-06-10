@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
+import pytest
+
 from sym.universe.projection import _membership_events
+from sym.universe.registry import UnknownUniverseError
 from sym.universe.resolution import MemberResolution, ResolutionSummary, _write_resolutions
-from sym.universe.snapshot import current_resolution_version, members_pinned
+from sym.universe.snapshot import capture_pin, current_resolution_version, members_pinned
 
 T = datetime(2026, 6, 10, 12, 0, tzinfo=UTC)
 
@@ -85,8 +88,51 @@ def test_members_pinned_forwards_both_watermarks():
     assert "r.resolved_at <= %s" in event_sql and T in params
 
 
+def test_fresh_insert_keeps_default_and_upgrade_guard_intact():
+    # The OTHER half of the invariant: a fresh INSERT must not name resolved_at
+    # (the column default is "first visible"), and the upgrade-only WHERE guard
+    # must survive — a regression re-stamping frozen RESOLVED rows would corrupt
+    # every existing pin while the bump-test alone stayed green.
+    conn = _Conn(one=("ticker:A@XNAS",))
+    _write_resolutions(
+        conn, "u",
+        {"ticker:A@XNAS": MemberResolution("ticker:A@XNAS", "BBG000000001", None, "resolved")},
+        ResolutionSummary(),
+    )
+    sql = conn.calls[0][0]
+    insert_clause = sql.split("DO UPDATE", 1)[0]
+    assert "resolved_at" not in insert_clause
+    assert "universe_member_resolution.resolution_status = %s" in sql
+    assert "EXCLUDED.resolution_status = %s" in sql
+
+
+def test_naive_resolved_through_is_rejected():
+    # A naive datetime against timestamptz is interpreted in the SESSION
+    # timezone — the same stored pin would replay differently across sessions.
+    with pytest.raises(ValueError, match="timezone-aware"):
+        _membership_events(_Conn(rows=[]), "u",
+                           resolved_through=datetime(2026, 6, 10, 12, 0))
+
+
 def test_current_resolution_version_capture():
     conn = _Conn(one=(T,))
     assert current_resolution_version(conn, "u") == T
-    sql, params = conn.calls[0]
-    assert "max(resolved_at)" in sql and params == ("u",)
+    assert any("max(resolved_at)" in sql for sql, _ in conn.calls)
+
+
+def test_capture_pin_is_one_statement():
+    # Two separate capture queries can straddle a concurrent write — both
+    # watermarks must come from a single statement (one snapshot).
+    conn = _Conn(one=(8660, T))
+    assert capture_pin(conn, "ibov") == (8660, T)
+    combined = [sql for sql, _ in conn.calls
+                if "max(event_id)" in sql and "max(resolved_at)" in sql]
+    assert len(combined) == 1
+
+
+def test_capture_for_unknown_universe_raises():
+    conn = _Conn(one=None)
+    with pytest.raises(UnknownUniverseError):
+        capture_pin(conn, "nope")
+    with pytest.raises(UnknownUniverseError):
+        current_resolution_version(conn, "nope")

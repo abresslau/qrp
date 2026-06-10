@@ -202,6 +202,14 @@ def _membership_events(
         sql += " AND e.event_id <= %s"
         params.append(through)
     if resolved_through is not None:
+        if resolved_through.tzinfo is None:
+            # Naive vs timestamptz compares in the SESSION timezone — the same
+            # stored pin would replay differently across sessions. Fatal for a
+            # reproducibility key, so refuse loudly.
+            raise ValueError(
+                "resolved_through must be timezone-aware (a naive datetime would "
+                "make the pin session-timezone-dependent)"
+            )
         sql += " AND r.resolved_at <= %s"
         params.append(resolved_through)
     sql += " ORDER BY e.effective_date, e.event_id"

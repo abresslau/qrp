@@ -289,9 +289,14 @@ def _write_resolutions(
     for raw, mr in resolutions.items():
         # Upgrade-only upsert: a fresh outcome replaces an UNRESOLVED row only when it
         # actually resolved; a frozen RESOLVED row is never touched. The upgrade
-        # re-stamps resolved_at — "when this mapping became visible" — which is what
-        # makes the snapshot-pin resolution watermark sound (U1.7): a pin taken while
-        # the member was unresolved must keep excluding it after the upgrade.
+        # re-stamps resolved_at — the column means "when this mapping LAST became
+        # visible" (insert or upgrade), not "first inserted" — which is what makes
+        # the snapshot-pin resolution watermark sound (U1.7): a pin taken while the
+        # member was unresolved must keep excluding it after the upgrade.
+        # RULE for any future writer (none exists today): a resolved->'unpriced'
+        # status flip MUST NOT re-stamp resolved_at — the figi mapping is unchanged
+        # and a re-stamp would retroactively eject the member from every existing
+        # pin (the inverse of the D2 bug).
         inserted = conn.execute(
             """
             INSERT INTO universe_member_resolution

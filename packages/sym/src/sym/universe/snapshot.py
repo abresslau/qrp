@@ -34,6 +34,17 @@ from sym.universe.projection import (
     project_membership,
 )
 from sym.universe.query import _pit_valid_from, assert_within_pit
+from sym.universe.registry import UnknownUniverseError
+
+
+def _assert_universe_exists(conn: psycopg.Connection, universe_id: str) -> None:
+    row = conn.execute(
+        "SELECT 1 FROM universe WHERE universe_id = %s", (universe_id,)
+    ).fetchone()
+    if row is None:
+        # A typo'd universe would otherwise capture a silent epoch watermark —
+        # a plausible-looking pin for a universe that doesn't exist.
+        raise UnknownUniverseError(f"unknown universe {universe_id!r}")
 
 
 def current_log_version(conn: psycopg.Connection, universe_id: str) -> int:
@@ -48,16 +59,49 @@ def current_log_version(conn: psycopg.Connection, universe_id: str) -> int:
 def current_resolution_version(conn: psycopg.Connection, universe_id: str) -> datetime:
     """The current resolution watermark — ``max(resolved_at)`` (epoch if none).
 
-    Store this alongside :func:`current_log_version` when taking a pin. Take the
-    pin OUTSIDE an in-flight resolution run — a batch committing around the
-    capture moment lands on whichever side its commit falls.
+    Prefer :func:`capture_pin`, which takes BOTH watermarks in one statement.
+    A universe with no resolutions yet captures the epoch — a deliberately
+    reproducible pin that excludes every future resolution (it pins "nothing
+    was resolved"), not an error.
     """
+    _assert_universe_exists(conn, universe_id)
     row = conn.execute(
         "SELECT coalesce(max(resolved_at), 'epoch'::timestamptz) "
         "FROM universe_member_resolution WHERE universe_id = %s",
         (universe_id,),
     ).fetchone()
     return row[0]
+
+
+def capture_pin(conn: psycopg.Connection, universe_id: str) -> tuple[int, datetime]:
+    """Capture ``(log_version, resolved_through)`` for a new pin — atomically.
+
+    A single statement reads both watermarks from ONE snapshot, so a concurrent
+    event append + resolution write can't land between two separate captures and
+    produce an internally inconsistent pin.
+
+    Capture discipline (the watermark's stated preconditions, not enforced
+    guarantees): take the pin OUTSIDE an in-flight resolution run —
+    ``resolved_at`` is stamped with ``now()`` (transaction-START time), so a
+    resolution transaction that began before the capture but commits after it
+    carries a pre-capture stamp and would join a later re-run of the pin. The
+    equal-timestamp boundary (``<=``) likewise includes any row stamped exactly
+    at the watermark, and the scheme assumes a monotonic database clock. For a
+    single-operator pipeline these are operating rules; if pins become
+    load-bearing for backtests, the robust fix is a sequence-based resolution
+    watermark (see the deferred-work ledger).
+    """
+    _assert_universe_exists(conn, universe_id)
+    row = conn.execute(
+        """
+        SELECT (SELECT coalesce(max(event_id), 0)
+                  FROM membership_event WHERE universe_id = %s),
+               (SELECT coalesce(max(resolved_at), 'epoch'::timestamptz)
+                  FROM universe_member_resolution WHERE universe_id = %s)
+        """,
+        (universe_id, universe_id),
+    ).fetchone()
+    return row[0], row[1]
 
 
 def members_from_events(events: Iterable[MembershipEvent], as_of_date: date) -> set[str]:
@@ -80,6 +124,7 @@ def members_pinned(
     universe_id: str,
     as_of_date: date,
     log_version: int,
+    *,
     resolved_through: datetime | None = None,
 ) -> set[str]:
     """Members as-of ``as_of_date`` as the log AND resolutions stood at the pin.

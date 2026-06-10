@@ -135,3 +135,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of U3-7-provenance-aware-correct (2026-06-10)
 
 - Exact-date re-assertion dead-end: after reversing an EXACT-dated event, the change cannot be re-asserted at its true date (the surviving original row blocks the dedupe key); the documented operator path (adjacent date) is a knowing misstatement for exact events. Proper fix = a dedupe-key nonce/sequence column on membership_event (schema change).
+
+## Deferred from: code review of U1-7-resolution-watermark (2026-06-10)
+
+- Sequence-based resolution watermark: the timestamp watermark's races (now() is transaction-START time so an in-flight resolution run committing after capture carries a pre-capture stamp; equal-timestamp boundary at the watermark; DB clock monotonicity) are documented capture-discipline preconditions, not enforced guarantees. If pins become load-bearing for backtests, replace with a monotonic bigint resolution-version column (the event-side event_id pattern) — schema change.
