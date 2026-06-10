@@ -295,7 +295,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/portfolios/{pid}/analytics": {
+    "/api/analytics/portfolios/{pid}": {
         parameters: {
             query?: never;
             header?: never;
@@ -355,6 +355,26 @@ export interface paths {
         };
         /** Get Job */
         get: operations["get_job"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operate/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pipeline History
+         * @description Recent sym pipeline runs (FR-6) with qrp-job correlation via triggered_by.
+         */
+        get: operations["pipeline_history"];
         put?: never;
         post?: never;
         delete?: never;
@@ -960,6 +980,8 @@ export interface components {
             started_at: string | null;
             /** Finished At */
             finished_at: string | null;
+            /** Heartbeat At */
+            heartbeat_at: string | null;
         };
         /** LastRun */
         LastRun: {
@@ -1087,6 +1109,8 @@ export interface components {
             writes: boolean;
             /** Takes Universe */
             takes_universe: boolean;
+            /** Takes Scope */
+            takes_scope: boolean;
             /** Note */
             note: string;
         };
@@ -1346,6 +1370,33 @@ export interface components {
              * @default []
              */
             curve: components["schemas"]["CurvePoint"][];
+        };
+        /** RunHistoryRow */
+        RunHistoryRow: {
+            /** Run Id */
+            run_id: number;
+            /** Mode */
+            mode: string;
+            /** Source */
+            source: string;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Attempted */
+            attempted: number;
+            /** Loaded */
+            loaded: number;
+            /** Skipped */
+            skipped: number;
+            /** Errored */
+            errored: number;
+            /** Rows Written */
+            rows_written: number;
+            /** Status */
+            status: string;
+            /** Triggered By */
+            triggered_by: string | null;
         };
         /** RunRequest */
         RunRequest: {
@@ -2222,6 +2273,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    pipeline_history: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunHistoryRow"][];
                 };
             };
             /** @description Validation Error */

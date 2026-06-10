@@ -92,22 +92,15 @@ class DbAnalyticsGateway:
         Returns (as_of_date of the weights, {date: portfolio_return}, currencies held).
         A date is included only when >= COVERAGE_FLOOR of weight is priced that day.
         """
-        as_of_date = self._conn.execute(
-            "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
-        ).fetchone()[0]
+        # Weights through the OWNING package's seam (Story A.1) — the SQL has one
+        # owner; the weight×return series is still assembled IN-APP (cross-database:
+        # weights here, fact_returns in the sym package), never a cross-DB SQL join.
+        from portfolios.gateway import read_latest_weights
+
+        as_of_date, raw_weights = read_latest_weights(self._conn, pid)
         if as_of_date is None:
             return None, {}, []
-
-        # Weights from the qrp DB; the weight×return series is assembled IN-APP (cross-database:
-        # weights here, fact_returns in the sym package) rather than a cross-DB SQL join.
-        weights = {
-            f: float(w)
-            for f, w in self._conn.execute(
-                "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
-                "WHERE portfolio_id = %s AND as_of_date = %s",
-                (pid, as_of_date),
-            ).fetchall()
-        }
+        weights = {f: float(w) for f, w in raw_weights.items()}
         figis = list(weights)
         total_w = sum(weights.values())
         if not figis or total_w <= 0:

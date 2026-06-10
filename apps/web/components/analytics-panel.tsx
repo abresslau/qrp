@@ -50,7 +50,7 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
   useEffect(() => {
     if (bench == null) return;
     setLoading(true);
-    fetch(`/api/portfolios/${pid}/analytics?benchmark=${bench}&window=${win}`, { cache: "no-store" })
+    fetch(`/api/analytics/portfolios/${pid}?benchmark=${bench}&window=${win}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d: Analytics) => setA(d))
       .catch(() => setA(null))

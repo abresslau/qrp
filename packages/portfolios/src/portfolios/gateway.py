@@ -15,6 +15,28 @@ from datetime import date
 import psycopg
 
 
+def read_latest_weights(conn, portfolio_id: int):
+    """The latest stored weight vector for a portfolio — THE weights read.
+
+    Returns ``(as_of_date | None, {composite_figi: Decimal weight})``. This is
+    the cross-package seam (Story A.1): other modules (analytics) consume
+    weights through THIS function so the `portfolio_weight` SQL has exactly one
+    owner. Decimals as stored — representation is the consumer's choice.
+    """
+    as_of_date = conn.execute(
+        "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s",
+        (portfolio_id,),
+    ).fetchone()[0]
+    if as_of_date is None:
+        return None, {}
+    rows = conn.execute(
+        "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
+        "WHERE portfolio_id = %s AND as_of_date = %s",
+        (portfolio_id, as_of_date),
+    ).fetchall()
+    return as_of_date, {figi: weight for figi, weight in rows}
+
+
 class DbPortfolioGateway:
     def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
         self._conn = conn      # qrp DB — portfolio / portfolio_weight (read + write)

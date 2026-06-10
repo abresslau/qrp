@@ -1,4 +1,4 @@
-"""``/api/portfolios/{pid}/analytics`` + ``/api/analytics/benchmarks`` — risk/return metrics."""
+"""``/api/analytics/*`` — risk/return metrics under the module's OWN prefix (A.1)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from analytics.db import connect
 from analytics.gateway import DbAnalyticsGateway
 
-router = APIRouter(tags=["analytics"])
+router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
@@ -63,12 +63,12 @@ class Analytics(BaseModel):
     warning: str | None
 
 
-@router.get("/api/analytics/benchmarks", response_model=list[Benchmark])
+@router.get("/benchmarks", response_model=list[Benchmark])
 def list_benchmarks(gw: DbAnalyticsGateway = Depends(_gateway)) -> list[dict]:
     return gw.benchmarks()
 
 
-@router.get("/api/portfolios/{pid}/analytics", response_model=Analytics)
+@router.get("/portfolios/{pid}", response_model=Analytics)
 def portfolio_analytics(
     pid: int,
     benchmark: int = Query(..., description="instrument sym_id of the index benchmark"),
