@@ -351,12 +351,16 @@ def run_load(
                 del_start = max(start_date, min(fetched_dates))
                 del_end = min(end_date, max(fetched_dates))
                 with conn.transaction():
-                    _delete_prices_range(conn, figi, del_start, del_end)
+                    # Review flags FIRST: prices_review FK-references prices_raw
+                    # (NO ACTION, checked per statement) — deleting the bars
+                    # before their flags aborts the overwrite whenever a flag
+                    # exists in the window.
                     conn.execute(
                         "DELETE FROM prices_review WHERE composite_figi = %s "
                         "AND session_date BETWEEN %s AND %s",
                         (figi, del_start, del_end),
                     )
+                    _delete_prices_range(conn, figi, del_start, del_end)
                     conn.execute(
                         "DELETE FROM price_gaps WHERE composite_figi = %s "
                         "AND session_date BETWEEN %s AND %s",

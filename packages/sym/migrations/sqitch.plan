@@ -54,3 +54,4 @@ fx_views_precedence [fx_views fx_source_rank] 2026-06-08T12:30:00Z Andre <ab@gla
 pipeline_run_log_triggered_by [pipeline_run_log] 2026-06-10T20:05:00Z Andre <ab@gladstone-management.com> # triggered_by provenance (SYM_TRIGGERED_BY env, e.g. qrp-job:<id>) - Story O.2
 prices_review_per_flag [prices_review_sweep_flag] 2026-06-10T22:00:00Z Andre <ab@gladstone-management.com> # PK -> (figi, session_date, flag_type): audit + ingest flags coexist (Story S.1)
 fx_rate_review [fx_rate] 2026-06-10T22:05:00Z Andre <ab@gladstone-management.com> # Durable FX plausibility rejections + accept-un-wedges-band (Story S.1)
+fx_rate_review_superseded [fx_rate_review] 2026-06-10T23:00:00Z Andre <ab@gladstone-management.com> # 'superseded' resolution: load_fx drains moot rejection rows (S.1 review)

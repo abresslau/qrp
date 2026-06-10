@@ -730,17 +730,21 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 if args.accept is not None or args.reject is not None:
                     review_id = args.accept if args.accept is not None else args.reject
                     try:
-                        outcome = resolve_fx_review(
+                        outcome, rate_inserted = resolve_fx_review(
                             conn, review_id, accept=args.accept is not None
                         )
                     except FxReviewError as exc:
                         print(f"{exc}", file=sys.stderr)
                         return 1
-                    print(
-                        f"fx review {review_id} {outcome}"
-                        + (" — rate inserted into fx_rate; the band un-wedges on the "
-                           "next load" if outcome == "accepted" else " — vendor garbage, closed")
-                    )
+                    if outcome == "accepted" and rate_inserted:
+                        detail = (" — rate inserted into fx_rate; the band un-wedges "
+                                  "on the next load")
+                    elif outcome == "accepted":
+                        detail = (" — a rate for that key was ALREADY stored; nothing "
+                                  "inserted (queue item was moot), row closed")
+                    else:
+                        detail = " — vendor garbage, closed"
+                    print(f"fx review {review_id} {outcome}{detail}")
                     return 0
                 items = list_fx_reviews(conn, include_resolved=args.all)
                 if not items:
@@ -1384,7 +1388,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fx_rev.add_argument("--all", action="store_true", help="Include resolved rows.")
     fx_rev.add_argument("--accept", type=int, metavar="ID",
-                        help="Accept: the move was genuine; insert into fx_rate and close.")
+                        help="Accept: the move was genuine; insert into fx_rate and close. "
+                        "Accept OLDEST-FIRST — the first accepted rate un-wedges the band "
+                        "and the next load supersedes the rest of the queue itself.")
     fx_rev.add_argument("--reject", type=int, metavar="ID",
                         help="Reject as vendor garbage and close.")
     fx_rev.set_defaults(func=_cmd_fx)

@@ -242,6 +242,9 @@ def ingest_result(
     return summary
 
 
+_FLAG_TYPES = frozenset({"price_jump", "price_on_non_trading_day", "sweep_divergence"})
+
+
 def resolve_review(
     conn: psycopg.Connection,
     composite_figi: str,
@@ -258,8 +261,21 @@ def resolve_review(
     """
     if resolution not in ("confirmed", "rejected"):
         raise ValueError(f"resolution must be 'confirmed' or 'rejected', got {resolution!r}")
-    # flag_type=None resolves every flag at the date (the pre-S.1 behavior);
-    # passing it resolves ONE finding — flags now coexist per type.
+    if flag_type is not None and flag_type not in _FLAG_TYPES:
+        raise ValueError(f"unknown flag_type {flag_type!r} (known: {sorted(_FLAG_TYPES)})")
+    if flag_type is None:
+        # Flags coexist per type (S.1): one verdict stamped onto EVERY finding
+        # at the date would be the clobber relocated — refuse ambiguity.
+        open_count = conn.execute(
+            "SELECT count(*) FROM prices_review "
+            "WHERE composite_figi = %s AND session_date = %s AND NOT reviewed",
+            (composite_figi, session_date),
+        ).fetchone()[0]
+        if open_count > 1:
+            raise ValueError(
+                f"{open_count} open flags at {composite_figi}/{session_date} — "
+                "pass flag_type to resolve ONE finding"
+            )
     sql = (
         "UPDATE prices_review "
         "   SET reviewed = TRUE, resolution = %s, reviewed_at = now() "

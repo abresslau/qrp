@@ -48,6 +48,8 @@ class _Conn:
             # (quote, as_of_date, rate, prior, relative, source, reason)
             self.rejections.append(params)
             return _Cur()
+        if "SELECT 1 FROM fx_rate_review" in sql:
+            return _Cur(one=None)               # drain gate: no open rejections
         if "SELECT code FROM currency" in sql:
             return _Cur(rows=[(c,) for c in self._currencies])
         if "SELECT quote_currency, max(as_of_date) FROM fx_rate" in sql:

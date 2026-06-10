@@ -50,6 +50,8 @@ class _FakeConn:
 
     def execute(self, sql, params=()):
         self.calls.append((sql, params))
+        if "count(*)" in sql:
+            return _Cursor((1,))   # one open flag: the ambiguity guard passes
         if sql.upper().lstrip().startswith("UPDATE"):
             return _Cursor(self._update_row)
         # Model INSERT ... RETURNING: a fresh fake DB never conflicts, so every insert lands.
@@ -121,8 +123,10 @@ def test_ingest_clean_data_writes_no_flag():
 
 def test_resolve_review_marks_reviewed():
     conn = _FakeConn()
+    # S.1: the no-flag_type default first counts open flags (ambiguity guard);
+    # the fake's single-row answer means count=1 -> proceed.
     assert resolve_review(conn, "BBG000B9XRY4", D2, resolution="confirmed") is True
-    sql, params = conn.calls[0]
+    sql, params = conn.calls[-1]
     assert "UPDATE PRICES_REVIEW" in sql.upper() and "REVIEWED = TRUE" in sql.upper()
     assert params[0] == "confirmed"
 

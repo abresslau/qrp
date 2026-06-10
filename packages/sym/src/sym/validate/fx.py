@@ -36,6 +36,15 @@ def needed_currencies(conn: psycopg.Connection) -> list[str]:
 def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = None) -> CheckResult:
     """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of_date``."""
     as_of_date = as_of_date or date.today()
+    # Open rejections are counted BEFORE the early returns — the queue must be
+    # visible even when no non-USD currency is priced yet or fx_rate is empty.
+    open_rejections = conn.execute(
+        "SELECT count(*) FROM fx_rate_review WHERE NOT reviewed"
+    ).fetchone()[0]
+    rejection_warnings = (
+        [f"{open_rejections} open FX rejection(s) awaiting stewarding — `sym fx review`"]
+        if open_rejections else []
+    )
     needed = needed_currencies(conn)
     if not needed:
         # Vacuous-pass guard: zero non-USD priced currencies means coverage is
@@ -43,7 +52,8 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
         return CheckResult.from_items(
             "fx_coverage",
             checked=0,
-            warnings=["no priced non-USD securities — FX coverage unverifiable"],
+            warnings=["no priced non-USD securities — FX coverage unverifiable"]
+            + rejection_warnings,
             detail="no non-USD priced-instrument currencies to check",
         )
     fx_count = conn.execute("SELECT count(*) FROM fx_rate").fetchone()[0]
@@ -51,17 +61,10 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
         return CheckResult.from_items(
             "fx_coverage",
             checked=len(needed),
-            warnings=[f"{c}: no FX (table empty)" for c in needed],
+            warnings=[f"{c}: no FX (table empty)" for c in needed] + rejection_warnings,
             detail="fx_rate is empty - run `sym fx load --start_date 1999-01-04`.",
         )
-    warnings: list[str] = []
-    open_rejections = conn.execute(
-        "SELECT count(*) FROM fx_rate_review WHERE NOT reviewed"
-    ).fetchone()[0]
-    if open_rejections:
-        warnings.append(
-            f"{open_rejections} open FX rejection(s) awaiting stewarding — `sym fx review`"
-        )
+    warnings: list[str] = list(rejection_warnings)
     for ccy in needed:
         r = fx_rate(conn, ccy, as_of_date)
         if r.status == "no_data":

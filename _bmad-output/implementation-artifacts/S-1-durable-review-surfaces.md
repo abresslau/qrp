@@ -1,6 +1,6 @@
 # Story S.1: Durable review surfaces — per-flag price reviews + persistent FX rejections (schema batch I)
 
-Status: review
+Status: done
 
 ## Story
 
@@ -57,6 +57,17 @@ Out of scope (stay parked, both conditional): the `membership_event` dedupe nonc
 - [Source: packages/sym/migrations/deploy/prices_review.sql + prices_review_sweep_flag.sql]
 - [Source: packages/sym/src/sym/{ingest/pipeline.py:444, fx/ingest.py:95-128, returns/loader.py:227}]
 
+### Review Findings (code review 2026-06-10, commit c45f33d — ALL RESOLVED)
+
+- [x] [Review][Patch] [HIGH] Accept is honest end-to-end: RETURNING-checked insert → `(resolution, rate_inserted)` tuple; the CLI distinguishes "rate inserted" / "ALREADY stored, nothing inserted, row closed"; row SELECT moved inside the transaction; `non_positive` accepts refused typed. ALL THREE paths verified live (free date landed 5.31; collide left 5.163 untouched with the honest message; non-positive exit 1 then clean reject) [fx/review.py, cli.py]
+- [x] [Review][Patch] [HIGH] The queue drains: `fx_rate_review_superseded` migration widens the resolution CHECK; `load_fx` closes open rejections whose key it successfully inserts (`superseded`, existence-gated per currency so the clean path pays one probe); oldest-first guidance in the CLI help + docstring [fx/ingest.py, migration]
+- [x] [Review][Patch] `resolve_review` refuses ambiguity (>1 open flags, no type) and unknown flag types — the relocated clobber is closed (tested) [ingest/prices.py]
+- [x] [Review][Patch] CONFIRMED + FIXED: the overwrite path deleted `prices_raw` BEFORE the review rows that FK-reference it — any flag in the window aborted the overwrite (pre-existing; per-flag rows widened it). Review rows now delete first [ingest/pipeline.py]
+- [x] [Review][Patch] `fx_coverage` counts open rejections BEFORE the early returns; the warning rides all three paths [validate/fx.py]
+- [x] [Review][Patch] Tests: FK-refusal regression (insert raises → typed error, row NOT closed); honest-accept both outcomes; supersede drain; ambiguity/unknown-type guards; predicates aligned; the no-op DISTINCT grep dropped (SQL keyword stays) — suite 540 → 544 [tests]
+- [x] [Review][Patch] Migrations polished: verify scripts anchored to `conrelid` + the partial unique index checked; the per-flag revert gained a mechanical keep-latest dedupe pre-pass; `relative_move` (RATIO)/`prior_rate`/`resolution` COMMENTs ride the superseded migration — deployed + verified [migrations]
+- Dismissed (4): pre-migration `UndefinedTable` guard on `_record_rejection` (single environment; both changes registered in the sqitch registry); stale-flag-type accumulation tightening the gate (the conservative direction is CORRECT — an outstanding finding needs review; the resolve path exists); the WARN counting all sources/history (single canonical source today; supersede shrinks the queue toward zero); source-text test style in general (the project's DB-free convention — only the incoherent/no-op instances are culled).
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -90,3 +101,4 @@ Claude Opus 4.8 (claude-opus-4-8) via Claude Code.
 ### Change Log
 
 - 2026-06-10: Story implemented (Tasks 1-5); suite 531 → 540 green; lint 18 → 17 (below baseline); live FX round-trip verified incl. the FK-refusal gap found and fixed during the live test itself. Status → review.
+- 2026-06-10: Code review (3 adversarial layers; the Auditor LIVE-PROVED the false-message finding with a cleanly-reverted synthetic write) — 7 patches applied (2 HIGH: honest accept outcomes verified live on all three paths; the superseded drain so peg-break queues empty themselves; plus the pre-existing overwrite-path FK-ordering bug confirmed and fixed), 4 dismissed. Suite 540 → 544 green. Status → done.

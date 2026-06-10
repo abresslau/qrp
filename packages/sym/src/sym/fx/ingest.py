@@ -135,6 +135,13 @@ def load_fx(
         # Seed the day-over-day band from the last rate BEFORE this window (not the global
         # latest) so backfills below stored history compare against the right neighbour.
         prev = _last_rate_before(conn, ccy, source.SOURCE, series[0].as_of_date)
+        # Drain gate (S.1): only probe per-insert when this currency HAS open
+        # rejection rows — the common clean path pays one query per currency.
+        has_open_rejections = conn.execute(
+            "SELECT 1 FROM fx_rate_review WHERE quote_currency = %s AND source = %s "
+            "AND NOT reviewed LIMIT 1",
+            (ccy, source.SOURCE),
+        ).fetchone() is not None
         for o in series:
             if o.rate <= 0:
                 summary.implausible += 1
@@ -153,6 +160,18 @@ def load_fx(
             ).fetchone()
             if row is not None:
                 summary.inserted += 1
+                if has_open_rejections:
+                    # A stored rate makes any queued rejection for this key MOOT
+                    # (the band un-wedged and this observation passed) — close it
+                    # as superseded so a multi-day wedge queue DRAINS itself.
+                    conn.execute(
+                        "UPDATE fx_rate_review "
+                        "   SET reviewed = TRUE, resolution = 'superseded', "
+                        "       reviewed_at = now() "
+                        " WHERE quote_currency = %s AND as_of_date = %s "
+                        "   AND source = %s AND NOT reviewed",
+                        (ccy, o.as_of_date, source.SOURCE),
+                    )
             else:
                 summary.skipped_existing += 1
             prev = o.rate
