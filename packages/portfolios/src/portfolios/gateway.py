@@ -40,6 +40,49 @@ def read_latest_weights(
     return rows[0][0], {figi: weight for _, figi, weight in rows}
 
 
+def read_weight_history(
+    conn: psycopg.Connection, portfolio_id: int
+) -> list[tuple[date, dict[str, Decimal]]]:
+    """The FULL effective-dated weight history, ascending — the time-series seam.
+
+    Returns ``[(as_of_date, {composite_figi: Decimal weight}), …]`` oldest first.
+    Consumers apply a step function: for a date ``d`` the effective vector is the
+    last one with ``as_of_date <= d`` (Story Q5.2/Q4.5 — analytics' effective-dated
+    weighting). Like :func:`read_latest_weights`, the `portfolio_weight` SQL has
+    exactly one owner (Story A.1) and ONE statement returns everything — a
+    concurrent write can't yield a torn vector.
+    """
+    rows = conn.execute(
+        "SELECT as_of_date, composite_figi, weight FROM portfolios.portfolio_weight "
+        "WHERE portfolio_id = %s ORDER BY as_of_date",
+        (portfolio_id,),
+    ).fetchall()
+    history: list[tuple[date, dict[str, Decimal]]] = []
+    for as_of_date, figi, weight in rows:
+        if not history or history[-1][0] != as_of_date:
+            history.append((as_of_date, {}))
+        history[-1][1][figi] = weight
+    return history
+
+
+def read_portfolio_terms(
+    conn: psycopg.Connection, portfolio_id: int
+) -> tuple[Decimal | None, str] | None:
+    """The portfolio's PnL terms ``(notional | None, base_currency)``, or None if absent.
+
+    The notional is the operator-stated reference amount (in base_currency) that
+    expresses cumulative time-weighted return as money — NULL means PnL is served in
+    return space only (FR-15 definition, Story Q5.2).
+    """
+    row = conn.execute(
+        "SELECT notional, base_currency FROM portfolios.portfolio WHERE portfolio_id = %s",
+        (portfolio_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return row[0], row[1]
+
+
 def portfolio_exists(conn: psycopg.Connection, portfolio_id: int) -> bool:
     """Whether the portfolio row exists — lets consumers tell a nonexistent
     portfolio (404) apart from an existing one with no weights yet (empty)."""
@@ -114,14 +157,26 @@ class DbPortfolioGateway:
         ]
 
     # ---- portfolios ----
-    def create(self, name: str, client: str = "", base_currency: str = "USD") -> int:
+    def create(
+        self, name: str, client: str = "", base_currency: str = "USD",
+        notional: float | None = None,
+    ) -> int:
         client_id = self._resolve_client(client)  # FR-13: link to a first-class Client
         row = self._conn.execute(
-            "INSERT INTO portfolios.portfolio (name, client_id, base_currency) VALUES (%s, %s, %s) "
-            "RETURNING portfolio_id",
-            (name, client_id, base_currency),
+            "INSERT INTO portfolios.portfolio (name, client_id, base_currency, notional) "
+            "VALUES (%s, %s, %s, %s) RETURNING portfolio_id",
+            (name, client_id, base_currency, notional),
         ).fetchone()
         return int(row[0])
+
+    def set_notional(self, pid: int, notional: float | None) -> bool:
+        """Set or clear the PnL reference notional. Returns False for an unknown portfolio."""
+        row = self._conn.execute(
+            "UPDATE portfolios.portfolio SET notional = %s WHERE portfolio_id = %s "
+            "RETURNING portfolio_id",
+            (notional, pid),
+        ).fetchone()
+        return row is not None
 
     def list(self) -> list[dict]:
         rows = self._conn.execute(
@@ -150,10 +205,13 @@ class DbPortfolioGateway:
             for pid, name, client, ccy, ca, n, la in rows
         ]
 
-    def get(self, pid: int) -> dict | None:
+    def get(self, pid: int, as_of_date: date | None = None) -> dict | None:
+        """Portfolio detail. ``as_of_date`` picks a stored historical vector (Q4.5);
+        None means the latest. An as_of_date with no stored vector raises ValueError —
+        the caller asked for a vector that does not exist, not an empty portfolio."""
         meta = self._conn.execute(
             "SELECT p.portfolio_id, p.name, coalesce(c.name, '') AS client, p.base_currency, "
-            "p.created_at FROM portfolios.portfolio p "
+            "p.notional, p.created_at FROM portfolios.portfolio p "
             "LEFT JOIN portfolios.client c ON c.client_id = p.client_id "
             "WHERE p.portfolio_id = %s",
             (pid,),
@@ -169,12 +227,17 @@ class DbPortfolioGateway:
             ).fetchall()
         ]
         latest = dates[0] if dates else None
+        shown = latest
+        if as_of_date is not None:
+            if as_of_date.isoformat() not in dates:
+                raise ValueError(f"no weight vector stored for {as_of_date.isoformat()}")
+            shown = as_of_date.isoformat()
         weights: list[dict] = []
-        if latest:
+        if shown:
             wrows = self._conn.execute(
                 "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s ORDER BY weight DESC",
-                (pid, latest),
+                (pid, shown),
             ).fetchall()
             figis = [r[0] for r in wrows]
             tickers, names = self._labels(figis)  # enrich from the sym package, in-app
@@ -187,9 +250,11 @@ class DbPortfolioGateway:
             "name": meta[1],
             "client": meta[2],
             "base_currency": meta[3],
-            "created_at": meta[4].isoformat() if meta[4] else None,
+            "notional": float(meta[4]) if meta[4] is not None else None,
+            "created_at": meta[5].isoformat() if meta[5] else None,
             "as_of_dates": dates,
             "latest_as_of_date": latest,
+            "shown_as_of_date": shown,
             "weights": weights,
         }
 
@@ -212,24 +277,57 @@ class DbPortfolioGateway:
         return row[0] if row else None
 
     def upload_weights(self, pid: int, as_of_date: date, items: list[tuple[str, float]]) -> dict:
-        stored = 0
+        """Store a weight VECTOR for a date — replace semantics.
+
+        Re-uploading a date REPLACES that date's whole vector (transactional
+        delete-then-insert): a corrected upload that drops a name must not leave the
+        stale row merged in — every historical vector now feeds the time-weighted
+        series (Q5.2), so a ghost holding would corrupt returns silently. Identifiers
+        that resolve to nothing are reported, never stored; if NOTHING resolves the
+        existing vector is left untouched (a typo'd upload must not erase real data).
+        """
+        resolved: list[tuple[str, float]] = []
         unresolved: list[str] = []
         for ident, weight in items:
             figi = self._resolve_figi(ident)  # resolved against the sym package
             if not figi:
                 unresolved.append(ident)
                 continue
+            resolved.append((figi, weight))
+        if not resolved:
+            return {"stored": 0, "unresolved": unresolved, "as_of_date": as_of_date.isoformat()}
+        with self._conn.transaction():  # autocommit=True -> this is a real transaction
             self._conn.execute(
-                "INSERT INTO portfolios.portfolio_weight (portfolio_id, as_of_date, composite_figi, weight) "
-                "VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT (portfolio_id, as_of_date, composite_figi) DO UPDATE SET weight = EXCLUDED.weight",
-                (pid, as_of_date, figi, weight),
+                "DELETE FROM portfolios.portfolio_weight "
+                "WHERE portfolio_id = %s AND as_of_date = %s",
+                (pid, as_of_date),
             )
-            stored += 1
-        return {"stored": stored, "unresolved": unresolved, "as_of_date": as_of_date.isoformat()}
+            for figi, weight in resolved:
+                self._conn.execute(
+                    "INSERT INTO portfolios.portfolio_weight "
+                    "(portfolio_id, as_of_date, composite_figi, weight) "
+                    "VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (portfolio_id, as_of_date, composite_figi) "
+                    "DO UPDATE SET weight = EXCLUDED.weight",
+                    (pid, as_of_date, figi, weight),
+                )
+        return {
+            "stored": len(resolved),
+            "unresolved": unresolved,
+            "as_of_date": as_of_date.isoformat(),
+        }
 
-    # ---- returns / PnL engine ----
+    # ---- returns (snapshot attribution view) ----
     def returns(self, pid: int, window_code: str) -> dict:
+        """Current-holdings attribution SNAPSHOT — NOT the time-weighted return.
+
+        Applies the LATEST weight vector to sym's precomputed window returns: "what
+        did the names I hold today do over this window, weighted as I hold them now".
+        Useful for attribution; wrong as portfolio performance the moment weights
+        changed mid-window. The portfolio's true time-weighted Return + PnL over its
+        effective-dated history is analytics' ``returns`` block (Story Q5.2). The
+        ``semantics`` response field states this.
+        """
         as_of_date = self._conn.execute(
             "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
@@ -242,6 +340,7 @@ class DbPortfolioGateway:
             raise ValueError(f"unknown return window {window_code!r}")
         window_id, window = wrow
         empty = {"window": window, "as_of_date": None, "returns_as_of_date": None,
+                 "semantics": "snapshot_attribution",
                  "constituents": [], "n_constituents": 0,
                  "n_with_return": 0, "total_weight": 0.0, "covered_weight": 0.0,
                  "portfolio_return": None, "portfolio_return_normalized": None}
@@ -300,6 +399,7 @@ class DbPortfolioGateway:
             "window": window,
             "as_of_date": as_of_date.isoformat(),
             "returns_as_of_date": ret_date.isoformat() if ret_date is not None else None,
+            "semantics": "snapshot_attribution",
             "n_constituents": len(wrows),
             "n_with_return": n_with_return,
             "total_weight": total_w,

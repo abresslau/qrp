@@ -1,20 +1,27 @@
 """DB gateway for portfolio analytics.
 
 Reads sym **read-only**: the portfolio's constituent daily returns (``fact_returns``
-1D window, price return ``pr``) weighted by the latest stored weights, and a benchmark
-daily series (``fact_index_returns`` 1D ``ret`` for an ``instrument`` of kind 'index').
-Computes Sharpe, annualised return/vol, beta, Jensen's alpha, and benchmark-relative
-metrics (active return, tracking error, information ratio) over the overlapping daily
-series. Risk-free rate = 0. Never writes; never fabricates — coverage gaps are reported.
+1D window, price return ``pr``) weighted by the portfolio's EFFECTIVE-DATED weight
+history (Story Q5.2/Q4.5 — for each trading date the step-function vector, i.e. the
+latest one with ``as_of_date <= date``; dates before the first vector are excluded,
+never back-filled), and a benchmark daily series (``fact_index_returns`` 1D ``ret``
+for an ``instrument`` of kind 'index'). Weights are held constant between rebalance
+dates (weights-first platform: no intra-period drift modelling). Computes Sharpe,
+annualised return/vol, beta, Jensen's alpha, benchmark-relative metrics, skill
+metrics, and the FR-15 ``returns`` block: cumulative time-weighted return over the
+window + PnL (= the portfolio's optional notional × cumulative return; no notional →
+return-space only). Risk-free rate = 0. Never writes; never fabricates — coverage
+gaps are reported.
 """
 
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from datetime import date
 
 import psycopg
-from portfolios.gateway import portfolio_exists, read_latest_weights
+from portfolios.gateway import portfolio_exists, read_portfolio_terms, read_weight_history
 
 # Annualisation: trading days per year (daily return series).
 ANN = 252
@@ -87,23 +94,48 @@ class DbAnalyticsGateway:
         ).fetchall()
         return [{"id": sid, "name": name, "currency": ccy} for sid, name, ccy in rows]
 
-    def _portfolio_daily(self, pid: int) -> tuple[date | None, dict[date, float], list[str]]:
-        """Daily portfolio return series under the latest stored weights.
+    def _portfolio_daily(
+        self, pid: int
+    ) -> tuple[date | None, dict[date, float], dict[date, float], list[str], list[date]]:
+        """Daily portfolio return series under the EFFECTIVE-DATED weight history.
 
-        Returns (as_of_date of the weights, {date: portfolio_return}, currencies held).
-        A date is included only when >= COVERAGE_FLOOR of weight is priced that day.
+        Step-function convention (review-set, no look-ahead): a vector dated ``d`` is
+        in force at the CLOSE of ``d``, so it earns from ``d+1`` — the return FOR a
+        date (close d−1 → close d) belongs to the vector strictly BEFORE it. Dates on
+        or before the first vector are excluded — those returns were earned before the
+        portfolio existed, none are fabricated backwards. Weights are held constant
+        between rebalance dates (weights-first: no intra-period drift modelling). A
+        single-vector portfolio reproduces the previous latest-weights behavior for
+        every date after its vector.
+
+        Returns ``(latest as_of_date, {date: return}, {date: coverage fraction},
+        currencies, dead_vector_dates)``. A date is included only when
+        >= COVERAGE_FLOOR of the then-effective vector's ABSOLUTE weight is priced
+        (signed sums would let an unpriced short book pass the floor);
+        ``dead_vector_dates`` are vectors with non-positive absolute total whose era
+        is unusable — surfaced as a warning, never silently compounded over.
         """
         # Weights through the OWNING package's seam (Story A.1) — the SQL has one
         # owner; the weight×return series is still assembled IN-APP (cross-database:
         # weights here, fact_returns in the sym package), never a cross-DB SQL join.
-        as_of_date, raw_weights = read_latest_weights(self._conn, pid)
-        if as_of_date is None:
-            return None, {}, []
-        weights = {f: float(w) for f, w in raw_weights.items()}
-        figis = list(weights)
-        total_w = sum(weights.values())
-        if not figis or total_w <= 0:
-            return as_of_date, {}, []
+        history = read_weight_history(self._conn, pid)
+        if not history:
+            return None, {}, {}, [], []
+        vectors = [
+            (
+                d,
+                {f: float(w) for f, w in vec.items()},
+                sum(abs(float(w)) for w in vec.values()),
+            )
+            for d, vec in history
+        ]
+        vector_dates = [d for d, _, _ in vectors]
+        latest_as_of = vector_dates[-1]
+        first_as_of = vector_dates[0]
+        dead_vectors = [d for d, _, total_abs in vectors if total_abs <= 0]
+        figis = sorted({f for _, vec, _ in vectors for f in vec})
+        if not figis or len(dead_vectors) == len(vectors):
+            return latest_as_of, {}, {}, [], dead_vectors
 
         currencies = [
             r[0]
@@ -115,24 +147,38 @@ class DbAnalyticsGateway:
 
         rows = self._sym.execute(
             "SELECT as_of_date, composite_figi, pr FROM fact_returns "
-            "WHERE composite_figi = ANY(%s) AND window_id = %s AND pr IS NOT NULL",
-            (figis, _ONE_DAY_WINDOW),
+            "WHERE composite_figi = ANY(%s) AND window_id = %s AND pr IS NOT NULL "
+            "AND as_of_date > %s",
+            (figis, _ONE_DAY_WINDOW, first_as_of),
         ).fetchall()
-        # date -> [Σ weight·pr, Σ weight] over priced constituents
+        # date -> [Σ weight·pr (signed), Σ |weight| priced]; the then-effective vector
+        # index is a pure function of the date, kept in its own (typed) map.
         agg: dict[date, list[float]] = {}
+        idx_by_date: dict[date, int] = {}
         for d, figi, pr in rows:
-            w = weights.get(figi)
+            # latest vector STRICTLY before d (in force at the close of its own date)
+            idx = bisect_left(vector_dates, d) - 1
+            if idx < 0:
+                continue  # on/before the first vector: the portfolio didn't exist yet
+            w = vectors[idx][1].get(figi)
             if w is None:
                 continue
+            idx_by_date[d] = idx
             acc = agg.setdefault(d, [0.0, 0.0])
             acc[0] += w * float(pr)
-            acc[1] += w
+            acc[1] += abs(w)
 
         series: dict[date, float] = {}
-        for d, (port_ret, covered_w) in agg.items():
-            if covered_w / total_w >= COVERAGE_FLOOR:
-                series[d] = port_ret / covered_w  # normalise by covered weight
-        return as_of_date, series, sorted(c for c in currencies if c)
+        coverage: dict[date, float] = {}
+        for d, (port_ret, covered_abs) in agg.items():
+            total_abs = vectors[idx_by_date[d]][2]
+            if total_abs <= 0:
+                continue  # dead vector's era — reported via dead_vectors, never used
+            cov = covered_abs / total_abs
+            if cov >= COVERAGE_FLOOR and covered_abs > 0:
+                series[d] = port_ret / covered_abs  # normalise by covered weight
+                coverage[d] = cov
+        return latest_as_of, series, coverage, sorted(c for c in currencies if c), dead_vectors
 
     def _benchmark_daily(self, benchmark_id: int) -> tuple[dict | None, dict[date, float]]:
         meta = self._sym.execute(
@@ -160,10 +206,21 @@ class DbAnalyticsGateway:
             # Nonexistent portfolio is a 404, not an empty-metrics 200 — an
             # existing portfolio with no weights yet still gets the warning body.
             raise LookupError(f"portfolio {pid} not found")
-        as_of_date, port_series, currencies = self._portfolio_daily(pid)
+        as_of_date, port_series, port_coverage, currencies, dead_vectors = (
+            self._portfolio_daily(pid)
+        )
         bench_meta, bench_series = self._benchmark_daily(benchmark_id)
 
+        warnings: list[str] = []
+        if dead_vectors:
+            warnings.append(
+                "weight vector(s) with non-positive total weight — their era is excluded: "
+                + ", ".join(d.isoformat() for d in dead_vectors)
+            )
+
         result: dict = {
+            # the NEWEST stored vector's date (the series itself blends the full
+            # effective-dated history) — see the response model comment
             "as_of_date": as_of_date.isoformat() if as_of_date else None,
             "window": (window or "ALL").upper(),
             "benchmark": bench_meta,
@@ -171,17 +228,57 @@ class DbAnalyticsGateway:
             "n_days": 0,
             "start_date": None,
             "end_date": None,
+            "returns": None,
             "metrics": None,
-            "warning": None,
+            "warning": "; ".join(warnings) if warnings else None,
         }
         if as_of_date is None:
             result["warning"] = "no weights stored for this portfolio"
             return result
         if bench_meta is None:
-            result["warning"] = "unknown benchmark"
+            warnings.append("unknown benchmark")
+            result["warning"] = "; ".join(warnings)
             return result
 
-        # Overlapping trading dates, oldest first.
+        # FR-15 returns block (Story Q5.2, AC3 amended by review): the cumulative
+        # time-weighted return compounds the portfolio's OWN window-filtered series —
+        # benchmark-INDEPENDENT, because an absolute return/PnL figure must not change
+        # with the benchmark picker (intersection days dropped would compound as 0%).
+        # The relative metrics below keep the portfolio∩benchmark intersection.
+        # pnl = notional × cumulative return when the operator stated a notional, else
+        # return-space only — never a fabricated amount. Served even below the 20-obs
+        # statistics floor (a cumulative return doesn't need 20 obs for meaning).
+        port_dates = sorted(port_series)
+        if port_dates:
+            start = _window_start(window, port_dates[-1])
+            if start is not None:
+                port_dates = [d for d in port_dates if d >= start]
+        if port_dates:
+            terms = read_portfolio_terms(self._conn, pid)
+            notional, base_ccy = terms if terms else (None, None)
+            growth = 1.0
+            below_full = 0
+            min_cov = 1.0
+            for d in port_dates:
+                growth *= 1.0 + port_series[d]
+                cov = port_coverage.get(d, 1.0)
+                min_cov = min(min_cov, cov)
+                if cov < 0.9999:
+                    below_full += 1
+            cumulative = growth - 1.0
+            result["returns"] = {
+                "cumulative_return": cumulative,
+                "n_days": len(port_dates),
+                # honesty: days below full coverage are renormalised (unpriced weight
+                # implicitly earns the covered-average return) and compound into PnL
+                "days_below_full_coverage": below_full,
+                "min_coverage": min_cov,
+                "notional": float(notional) if notional is not None else None,
+                "base_currency": base_ccy,
+                "pnl": float(notional) * cumulative if notional is not None else None,
+            }
+
+        # Overlapping trading dates, oldest first — the relative-metrics series.
         common = sorted(set(port_series) & set(bench_series))
         if common:
             start = _window_start(window, common[-1])
@@ -190,10 +287,11 @@ class DbAnalyticsGateway:
 
         if len(common) < 20:
             result["n_days"] = len(common)
-            result["warning"] = (
+            warnings.append(
                 f"only {len(common)} overlapping daily observations "
                 "(need >= 20 for stable statistics)"
             )
+            result["warning"] = "; ".join(warnings)
             if common:
                 result["start_date"] = common[0].isoformat()
                 result["end_date"] = common[-1].isoformat()
@@ -246,9 +344,10 @@ class DbAnalyticsGateway:
         }
         # Honest FX caveat: constituent returns are local-currency price returns.
         if bench_meta["currency"] and any(c != bench_meta["currency"] for c in currencies):
-            result["warning"] = (
+            warnings.append(
                 f"portfolio holds {', '.join(currencies)} names but the benchmark is in "
                 f"{bench_meta['currency']}; local-currency price returns are compared directly "
                 "(unhedged FX not adjusted)."
             )
+        result["warning"] = "; ".join(warnings) if warnings else None
         return result

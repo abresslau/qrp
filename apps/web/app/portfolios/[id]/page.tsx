@@ -29,11 +29,18 @@ export default function PortfolioDetail() {
   const [csv, setCsv] = useState("");
   const [msg, setMsg] = useState("");
 
-  const loadPortfolio = useCallback(() => {
-    fetch(`/api/portfolios/${id}`, { cache: "no-store" })
-      .then((r) => r.json())
+  const loadPortfolio = useCallback((asOfDate?: string) => {
+    const qs = asOfDate ? `?as_of_date=${asOfDate}` : "";
+    fetch(`/api/portfolios/${id}${qs}`, { cache: "no-store" })
+      .then((r) => {
+        if (!r.ok) throw new Error(`portfolio ${r.status}`);
+        return r.json();
+      })
       .then((d: Portfolio) => setP(d))
-      .catch(() => setP(null));
+      .catch(() => {
+        // a failed as-of pick keeps the current view; only the initial load may blank
+        if (!asOfDate) setP(null);
+      });
   }, [id]);
 
   useEffect(() => {
@@ -74,7 +81,8 @@ export default function PortfolioDetail() {
     }).then((r) => r.json());
     setMsg(`Stored ${res.stored}${res.unresolved?.length ? ` · unresolved: ${res.unresolved.join(", ")}` : ""}`);
     setCsv("");
-    loadPortfolio();
+    // keep the operator's picked as-of in view; an upload to that very date refreshes it
+    loadPortfolio(p?.shown_as_of_date ?? undefined);
   }
 
   if (!p) {
@@ -94,15 +102,66 @@ export default function PortfolioDetail() {
           <h1 className="text-2xl font-semibold tracking-tight text-fg">{p.name}</h1>
           <p className="mt-1 text-sm text-muted">
             {p.client ? `${p.client} · ` : ""}{p.base_currency} · {p.weights.length} holdings
-            {p.latest_as_of_date ? ` · as of ${p.latest_as_of_date}` : ""}
+            {p.shown_as_of_date ? ` · as of ${p.shown_as_of_date}` : ""}
+            {p.shown_as_of_date && p.shown_as_of_date !== p.latest_as_of_date
+              ? ` (historical — latest is ${p.latest_as_of_date})`
+              : ""}
           </p>
         </div>
       </div>
 
-      {/* Return / PnL */}
+      {/* Holdings (the Q4.5 as-of picker: any stored historical vector) */}
+      {p.as_of_dates.length > 0 && (
+        <>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
+              Holdings{p.shown_as_of_date ? ` · ${p.shown_as_of_date}` : ""}
+            </h2>
+            {p.as_of_dates.length > 1 && (
+              <select
+                value={p.shown_as_of_date ?? ""}
+                onChange={(e) => loadPortfolio(e.target.value)}
+                className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+              >
+                {p.as_of_dates.map((d) => (
+                  <option key={d} value={d}>
+                    as of {d}{d === p.latest_as_of_date ? " (latest)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div className="mt-3 overflow-hidden rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-surface text-left text-muted">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Ticker</th>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-4 py-2 text-right font-medium">Weight</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {p.weights.map((w) => (
+                  <tr key={w.figi} className="hover:bg-fg/5">
+                    <td className="px-4 py-2 font-medium text-fg">{w.ticker}</td>
+                    <td className="px-4 py-2 text-muted">{w.name ?? "—"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-fg">
+                      {(w.weight * 100).toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {/* Snapshot attribution (current holdings × window returns — not TWR) */}
       <div className="mt-6 rounded-xl border border-border bg-surface p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs uppercase tracking-wide text-muted">Portfolio return (weighted)</div>
+          <div className="text-xs uppercase tracking-wide text-muted">
+            Current-holdings snapshot return (attribution)
+          </div>
           <select
             value={win}
             onChange={(e) => setWin(e.target.value)}
@@ -118,7 +177,8 @@ export default function PortfolioDetail() {
         </div>
         {ret && (
           <div className="mt-1 text-xs text-muted">
-            {ret.window} · weights as of {ret.as_of_date ?? "—"} · coverage{" "}
+            {ret.window} · latest weights ({ret.as_of_date ?? "—"}) × window returns — attribution
+            view; time-weighted Return &amp; PnL are in the analytics panel below · coverage{" "}
             {(ret.covered_weight * 100).toFixed(0)}% of weight ({ret.n_with_return}/{ret.n_constituents}{" "}
             with returns)
             {ret.covered_weight > 0 && ret.covered_weight < 0.999

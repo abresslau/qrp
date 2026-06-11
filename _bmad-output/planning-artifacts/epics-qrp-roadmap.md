@@ -108,11 +108,12 @@ UI.)**
 **AC:** list portfolios with weight counts + latest as-of; detail view shows the latest weight
 vector with ticker/name enriched **in-app** from the sym package (AR-R2). **(FR-13 view half.)**
 
-### Story Q4.5 — Weight history over time (multi-date)  `[PARTIAL]`
+### Story Q4.5 — Weight history over time (multi-date)  `[BUILT 2026-06-11]`
 As the Operator, I want a portfolio's full effective-dated weight history, not just the latest.
-**AC:** upload + view multiple `as_of_date` vectors per portfolio; the detail view can pick an
-as-of; analytics uses the appropriate vector per date. **(FR-14 "time series" — storage supports
-it; UI/exposure to be completed.)**
+**AC (met):** multi-date upload already worked; detail view (API `?as_of_date=` + console picker)
+serves any stored vector (`shown_as_of_date`; 422 for a date with no vector); analytics applies
+the THEN-effective vector per date (step function over `read_weight_history` — the new
+portfolios seam). Verified live on the 12-vector backtest portfolio. **(FR-14 complete.)**
 
 ---
 
@@ -127,10 +128,15 @@ are NOT built; PnL is return-based only (weights-first has no notional).
 `portfolios` DB and returns from the sym package, assembled in Python (AR-R2); dates below a 99%
 coverage floor dropped (no fabricated returns). **(FR-15 basis.)**
 
-### Story Q5.2 — Return & PnL across Return Windows  `[PARTIAL]`
-**AC:** time-weighted Return per sym Return Window (built via `portfolios.returns`); **PnL**:
-either define it as cumulative return (weights-first) **or** add an optional notional to express
-absolute PnL — decide + document. **(FR-15.)**
+### Story Q5.2 — Return & PnL across Return Windows  `[BUILT 2026-06-11]`
+**AC (met, decision recorded):** time-weighted Return = compounded effective-dated daily series
+per analytics window (the `returns` block: cumulative TWR + n_days); **PnL defined as cumulative
+TWR**, expressed in money via an OPTIONAL `portfolio.notional` (base_currency; migration
+`portfolio_notional`; create + PATCH) — `pnl = notional × cumulative_return`, null without a
+notional, never fabricated. `portfolios.returns` kept as an honestly-labelled current-holdings
+attribution snapshot (`semantics` field). Cross-check: analytics' TWR on the backtest-saved
+portfolio reproduces the engine's result (+41.8%/Sharpe 2.04 vs +44.7%/2.18, monthly-snapshot
+gap). **(FR-15 complete.)**
 
 ### Story Q5.3 — Risk metrics vs benchmark (Sharpe / alpha / beta / IR / TE)  `[BUILT]`
 **AC:** annualised return/vol, Sharpe, beta, Jensen alpha, correlation, active return, tracking
@@ -181,8 +187,9 @@ as a `portfolios` Portfolio (persisted via the portfolios package's own writer �
 respected; sym package reused for figi resolution); `analytics` then measures it vs a benchmark.
 Console: a "Save as portfolio" checkbox + link. Verified: mom_12_1/sp500 → portfolio #3 (12
 rebalances) → analytics computes. **First research-loop link closed (backtest→portfolios→analytics).**
-**Refinement:** analytics uses the latest weight vector held constant; time-varying-weight
-analytics is Q4.5. **(FR-18 "consumable by analytics".)**
+**Refinement (RETIRED 2026-06-11):** ~~analytics uses the latest weight vector held constant~~ —
+Q4.5/Q5.2 landed effective-dated weighting; analytics now applies the vector in force on each
+date. **(FR-18 "consumable by analytics".)**
 
 ---
 
@@ -322,8 +329,8 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 
 ## FR Coverage Map
 - FR-13 → Q4.3 **(Client entity `[BUILT]` — model + API + UI)** + Q4.1/Q4.4 (portfolio CRUD `[BUILT]`) ✅ complete
-- FR-14 → Q4.1, Q4.2 `[BUILT]`, Q4.5 `[PARTIAL]` (multi-date history)
-- FR-15 → Q5.1 `[BUILT]`, Q5.2 `[PARTIAL]` (PnL definition)
+- FR-14 → Q4.1, Q4.2 `[BUILT]`, Q4.5 `[BUILT 2026-06-11]` (multi-date history + as-of picker) ✅ complete
+- FR-15 → Q5.1 `[BUILT]`, Q5.2 `[BUILT 2026-06-11]` (TWR + PnL = cumulative TWR × optional notional) ✅ complete
 - FR-16 → Q5.3 `[BUILT]` (Sharpe/alpha/beta/TE/IR) + **Q5.4 `[BUILT]`** (hit/batting/slugging) ✅ complete
 - FR-17 → Q5.5 `[BUILT]`
 - FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.3/Q6.4 `[NEW]` (defined strategy, analytics loop)
@@ -335,8 +342,9 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 ## Build status summary (2026-06-08)
 All seven roadmap modules are **built + live** (spikes), each in its own database post-migration.
 The outstanding work, by value:
-- **v2 completion:** ✅ FR-16 skill metrics (Q5.4) and ✅ FR-13 Client entity (Q4.3, model+API+UI)
-  both complete. Remaining v2 polish: FR-15 PnL definition (Q5.2) + multi-date weight history (Q4.5).
+- **v2 completion: ✅ DONE (2026-06-11).** FR-16 skill metrics (Q5.4), FR-13 Client entity (Q4.3),
+  and the final polish pair — FR-15 TWR/PnL (Q5.2) + multi-date weight history (Q4.5) — all
+  complete. FR-13…FR-17 are fully built: v2 ("run clients' portfolios") is closed.
 - **The research loop — ⏸️ PARKED (operator decision 2026-06-08):** Q6.4 (backtest→portfolios→
   analytics) is done, but the remaining links — **Q9.2/Q9.4** (signals from macro/altdata; signals→
   optimiser/backtest) and **Q7.3/Q7.4** (optimiser constraints+signal inputs; optimiser→portfolio) —

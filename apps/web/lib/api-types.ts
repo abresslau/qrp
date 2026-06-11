@@ -241,7 +241,8 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /** Patch Portfolio */
+        patch: operations["patch_portfolio"];
         trace?: never;
     };
     "/api/portfolios/{pid}/weights": {
@@ -735,6 +736,7 @@ export interface components {
             start_date: string | null;
             /** End Date */
             end_date: string | null;
+            returns: components["schemas"]["Returns"] | null;
             metrics: components["schemas"]["Metrics"] | null;
             /** Warning */
             warning: string | null;
@@ -831,6 +833,8 @@ export interface components {
              * @default USD
              */
             base_currency: string;
+            /** Notional */
+            notional?: number | null;
         };
         /** CreatedClient */
         CreatedClient: {
@@ -1250,6 +1254,15 @@ export interface components {
             /** Weight */
             weight: number;
         };
+        /**
+         * PatchPortfolio
+         * @description Settable portfolio terms — merge-patch semantics: an OMITTED field is left
+         *     unchanged; explicit ``notional: null`` clears it (return-space PnL).
+         */
+        PatchPortfolio: {
+            /** Notional */
+            notional?: number | null;
+        };
         /** PlatformResponse */
         PlatformResponse: {
             /** Name */
@@ -1271,12 +1284,16 @@ export interface components {
             client: string;
             /** Base Currency */
             base_currency: string;
+            /** Notional */
+            notional: number | null;
             /** Created At */
             created_at: string | null;
             /** As Of Dates */
             as_of_dates: string[];
             /** Latest As Of Date */
             latest_as_of_date: string | null;
+            /** Shown As Of Date */
+            shown_as_of_date: string | null;
             /** Weights */
             weights: components["schemas"]["Weight"][];
         };
@@ -1288,6 +1305,11 @@ export interface components {
             as_of_date: string | null;
             /** Returns As Of Date */
             returns_as_of_date?: string | null;
+            /**
+             * Semantics
+             * @default snapshot_attribution
+             */
+            semantics: string;
             /** N Constituents */
             n_constituents: number;
             /** N With Return */
@@ -1364,6 +1386,30 @@ export interface components {
             code: string;
             /** Label */
             label: string;
+        };
+        /**
+         * Returns
+         * @description FR-15: cumulative time-weighted return compounded over the PORTFOLIO's own
+         *     window-filtered effective-dated series (benchmark-INDEPENDENT, unlike the relative
+         *     metrics); pnl = notional × cumulative_return when the portfolio states a notional
+         *     (base_currency), else null. Coverage honesty: days below full coverage were
+         *     renormalised (unpriced weight implicitly earns the covered-average return).
+         */
+        Returns: {
+            /** Cumulative Return */
+            cumulative_return: number;
+            /** N Days */
+            n_days: number;
+            /** Days Below Full Coverage */
+            days_below_full_coverage: number;
+            /** Min Coverage */
+            min_coverage: number;
+            /** Notional */
+            notional: number | null;
+            /** Base Currency */
+            base_currency: string | null;
+            /** Pnl */
+            pnl: number | null;
         };
         /** ReviewItem */
         ReviewItem: {
@@ -2091,7 +2137,10 @@ export interface operations {
     };
     get_portfolio: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description historical vector to show */
+                as_of_date?: string | null;
+            };
             header?: never;
             path: {
                 pid: number;
@@ -2099,6 +2148,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_portfolio: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PatchPortfolio"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

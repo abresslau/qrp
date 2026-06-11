@@ -51,7 +51,25 @@ class Metrics(BaseModel):
     slugging_ratio: float | None
 
 
+class Returns(BaseModel):
+    """FR-15: cumulative time-weighted return compounded over the PORTFOLIO's own
+    window-filtered effective-dated series (benchmark-INDEPENDENT, unlike the relative
+    metrics); pnl = notional × cumulative_return when the portfolio states a notional
+    (base_currency), else null. Coverage honesty: days below full coverage were
+    renormalised (unpriced weight implicitly earns the covered-average return)."""
+
+    cumulative_return: float
+    n_days: int
+    days_below_full_coverage: int
+    min_coverage: float
+    notional: float | None
+    base_currency: str | None
+    pnl: float | None
+
+
 class Analytics(BaseModel):
+    # the NEWEST stored weight vector's date — the series blends the full
+    # effective-dated history (Q4.5), not just this vector
     as_of_date: str | None
     window: str
     benchmark: Benchmark | None
@@ -59,6 +77,7 @@ class Analytics(BaseModel):
     n_days: int
     start_date: str | None
     end_date: str | None
+    returns: Returns | None
     metrics: Metrics | None
     warning: str | None
 

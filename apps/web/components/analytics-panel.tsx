@@ -65,6 +65,7 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
   }, [pid, bench, win]);
 
   const m = a?.metrics;
+  const r = a?.returns;
 
   return (
     <div className="mt-8">
@@ -98,6 +99,25 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
         </div>
       </div>
 
+      {r && (
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          <Metric
+            label={`Return (${a?.window ?? ""}, TWR)`}
+            value={pct(r.cumulative_return)}
+            cls={tone(r.cumulative_return)}
+          />
+          <Metric
+            label={`PnL${r.base_currency ? ` (${r.base_currency})` : ""}`}
+            value={
+              r.pnl == null
+                ? "no notional set"
+                : `${r.pnl >= 0 ? "+" : ""}${r.pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+            }
+            cls={r.pnl == null ? "text-muted text-sm" : tone(r.pnl)}
+          />
+        </div>
+      )}
+
       {m ? (
         <>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
@@ -123,8 +143,9 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
           </div>
           <p className="mt-2 text-xs text-muted">
             {a?.n_days} daily obs · {a?.start_date} → {a?.end_date} · benchmark {a?.benchmark?.name}
-            {a?.benchmark?.currency ? ` (${a.benchmark.currency})` : ""} · rf = 0 · latest weights
-            held constant over the window.
+            {a?.benchmark?.currency ? ` (${a.benchmark.currency})` : ""} · rf = 0 ·
+            effective-dated weights (the vector in force on each date), held constant between
+            rebalances.
           </p>
         </>
       ) : (

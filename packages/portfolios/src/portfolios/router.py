@@ -33,6 +33,15 @@ class CreatePortfolio(BaseModel):
     name: str
     client: str = ""
     base_currency: str = "USD"
+    # FR-15 PnL terms: optional reference notional in base_currency
+    notional: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class PatchPortfolio(BaseModel):
+    """Settable portfolio terms — merge-patch semantics: an OMITTED field is left
+    unchanged; explicit ``notional: null`` clears it (return-space PnL)."""
+
+    notional: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 class WeightItem(BaseModel):
@@ -87,9 +96,11 @@ class PortfolioDetail(BaseModel):
     name: str
     client: str
     base_currency: str
+    notional: float | None  # FR-15 PnL reference amount (base_currency); null = unset
     created_at: str | None
     as_of_dates: list[str]
     latest_as_of_date: str | None
+    shown_as_of_date: str | None  # the vector this response carries (Q4.5 as-of picker)
     weights: list[Weight]
 
 
@@ -110,6 +121,9 @@ class PortfolioReturns(BaseModel):
     window: str
     as_of_date: str | None
     returns_as_of_date: str | None = None  # the single fact_returns date all constituents use
+    # Current-holdings attribution snapshot, NOT time-weighted performance — the
+    # portfolio's TWR + PnL over its effective-dated history is analytics' `returns`.
+    semantics: str = "snapshot_attribution"
     n_constituents: int
     n_with_return: int
     total_weight: float
@@ -128,7 +142,7 @@ def list_portfolios(gw: DbPortfolioGateway = Depends(_gateway)) -> list[dict]:
 def create_portfolio(
     body: CreatePortfolio = Body(...), gw: DbPortfolioGateway = Depends(_gateway)
 ) -> dict:
-    pid = gw.create(body.name, body.client, body.base_currency)
+    pid = gw.create(body.name, body.client, body.base_currency, body.notional)
     return {"portfolio_id": pid}
 
 
@@ -149,7 +163,34 @@ def create_client(
 
 
 @router.get("/{pid}", response_model=PortfolioDetail)
-def get_portfolio(pid: int, gw: DbPortfolioGateway = Depends(_gateway)) -> dict:
+def get_portfolio(
+    pid: int,
+    as_of_date: date | None = Query(default=None, description="historical vector to show"),
+    gw: DbPortfolioGateway = Depends(_gateway),
+) -> dict:
+    if as_of_date is None:
+        d = gw.get(pid)
+    else:
+        # the 422 mapping is scoped to the one ValueError this path can raise —
+        # a date with no stored vector
+        try:
+            d = gw.get(pid, as_of_date)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if d is None:
+        raise HTTPException(status_code=404, detail="portfolio not found")
+    return d
+
+
+@router.patch("/{pid}", response_model=PortfolioDetail)
+def patch_portfolio(
+    pid: int, body: PatchPortfolio = Body(...), gw: DbPortfolioGateway = Depends(_gateway)
+) -> dict:
+    # merge-patch: only fields the client actually SENT are applied — `{}` is a
+    # no-op, not a notional wipe (explicit `notional: null` still clears).
+    if "notional" in body.model_fields_set:
+        if not gw.set_notional(pid, body.notional):
+            raise HTTPException(status_code=404, detail="portfolio not found")
     d = gw.get(pid)
     if d is None:
         raise HTTPException(status_code=404, detail="portfolio not found")
