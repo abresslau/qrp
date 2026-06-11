@@ -1,20 +1,22 @@
-"""Altdata ingest: Wikimedia daily pageviews as a per-company attention proxy.
+"""Altdata ingest: multi-source alt-data series keyed to sym securities.
 
-Maps a curated set of large caps to en.wikipedia articles, resolves each to a sym
-composite_figi (read-only) by current ticker, and upserts daily pageviews into the
-QRP-managed `altdata` schema. Idempotent. Never fabricates — unresolved tickers are
-skipped and reported; a name with no pageviews simply has no rows.
+Sources (v1): Wikimedia daily pageviews (per-company attention proxy) and SEC EDGAR
+filing activity (daily Form 4 / 8-K counts — insider-transaction and corporate-event
+intensity). Each curated ticker resolves to a sym composite_figi over a read-only sym
+connection (AR-R2); series + observations land in the altdata-owned generic tables
+(``altdata.series`` / ``altdata.observation``), provenance in ``series.detail`` (wiki
+article title / zero-padded CIK). Idempotent. Never fabricates — unresolved tickers or
+CIKs are skipped and reported; per-series failures are attributed in the summary.
 """
 
 from __future__ import annotations
 
-import json
-import urllib.request
 from datetime import date
 
 import psycopg
 
 from altdata.db import connect
+from altdata.sources import fetch_company_ciks, fetch_pageviews, fetch_sec_filing_counts
 
 # Curated ticker -> (en.wikipedia article, display name). Wikipedia article titles are
 # stable; the attention signal is the daily pageview count.
@@ -31,70 +33,153 @@ _MAP = {
     "DIS": ("The_Walt_Disney_Company", "Walt Disney"),
 }
 
-_PV_URL = (
-    "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/"
-    "en.wikipedia/all-access/all-agents/{article}/daily/{start}/{end}"
-)
-_UA = {"User-Agent": "qrp-altdata/1.0 (personal research)"}
+# SEC EDGAR metrics: metric name -> exact form types counted (amendments excluded by
+# design — see fetch_sec_filing_counts).
+_SEC_METRICS: dict[str, frozenset[str]] = {
+    "filings_form4": frozenset({"4"}),
+    "filings_8k": frozenset({"8-K"}),
+}
 
 
-def _resolve_figi(conn, ticker: str) -> str | None:
+def _resolve_figi(conn: psycopg.Connection, ticker: str) -> str | None:
     r = conn.execute(
         "SELECT composite_figi FROM security_symbology WHERE symbol_type='ticker' "
-        "AND upper(symbol_value)=upper(%s) ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
+        "AND upper(symbol_value)=upper(%s) "
+        "ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
         (ticker,),
     ).fetchone()
     return r[0] if r else None
 
 
-def _fetch_pageviews(article: str, start: date, end: date) -> list[tuple[date, int]]:
-    url = _PV_URL.format(article=article, start=start.strftime("%Y%m%d00"),
-                         end=end.strftime("%Y%m%d00"))
-    req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310
-        payload = json.loads(r.read().decode("utf-8", "replace"))
-    out: list[tuple[date, int]] = []
-    for item in payload.get("items", []):
-        ts = item.get("timestamp")  # 'YYYYMMDD00'
-        views = item.get("views")
-        if ts and views is not None:
-            out.append((date(int(ts[0:4]), int(ts[4:6]), int(ts[6:8])), int(views)))
-    return out
+def _upsert_series(
+    conn: psycopg.Connection,
+    figi: str,
+    source: str,
+    metric: str,
+    ticker: str,
+    name: str,
+    detail: str,
+    unit: str,
+) -> None:
+    conn.execute(
+        "INSERT INTO altdata.series (composite_figi, source, metric, ticker, name, detail, unit) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (composite_figi, source, metric) DO UPDATE SET "
+        "ticker=EXCLUDED.ticker, name=EXCLUDED.name, detail=EXCLUDED.detail, unit=EXCLUDED.unit",
+        (figi, source, metric, ticker, name, detail, unit),
+    )
 
 
-def run_ingest(sym_conn: psycopg.Connection, ad_conn: psycopg.Connection,
-               start_date: date | None = None, end_date: date | None = None) -> dict:
-    # sym_conn resolves figis from the sym package (security_symbology); ad_conn writes altdata
-    # (DB-per-package; cross-DB read via psycopg).
+def _upsert_observations(
+    conn: psycopg.Connection,
+    figi: str,
+    source: str,
+    metric: str,
+    obs: list[tuple[date, float]],
+) -> int:
+    n = 0
+    for d, v in obs:
+        conn.execute(
+            "INSERT INTO altdata.observation (composite_figi, source, metric, obs_date, value) "
+            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (composite_figi, source, metric, obs_date) "
+            "DO UPDATE SET value=EXCLUDED.value",
+            (figi, source, metric, d, v),
+        )
+        n += 1
+    return n
+
+
+def run_ingest(
+    sym_conn: psycopg.Connection,
+    ad_conn: psycopg.Connection,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    """Ingest all curated series. One summary row per (ticker, source, metric) attempt.
+
+    ``obs`` counts rows upserted for that series in this run (window-bound, not lifetime).
+    """
     ad_conn.autocommit = True
     end_date = end_date or date.today()
     start_date = start_date or date.fromordinal(end_date.toordinal() - 120)  # default ~120 days
-    summary = []
+    summary: list[dict] = []
+
+    figis = {t: _resolve_figi(sym_conn, t) for t in _MAP}
+
+    # --- wikipedia: daily pageviews -----------------------------------------------------
     for ticker, (article, name) in _MAP.items():
-        figi = _resolve_figi(sym_conn, ticker)
+        figi = figis[ticker]
         if not figi:
-            summary.append({"ticker": ticker, "ok": False, "reason": "unresolved ticker"})
-            continue
-        ad_conn.execute(
-            "INSERT INTO altdata.wiki_map (composite_figi, ticker, name, article) "
-            "VALUES (%s,%s,%s,%s) ON CONFLICT (composite_figi) DO UPDATE SET "
-            "ticker=EXCLUDED.ticker, name=EXCLUDED.name, article=EXCLUDED.article",
-            (figi, ticker, name, article),
-        )
-        try:
-            pvs = _fetch_pageviews(article, start_date, end_date)
-        except Exception as exc:  # noqa: BLE001
-            summary.append({"ticker": ticker, "ok": False, "reason": str(exc)[:120]})
-            continue
-        n = 0
-        for d, v in pvs:
-            ad_conn.execute(
-                "INSERT INTO altdata.pageview (composite_figi, obs_date, views) VALUES (%s,%s,%s) "
-                "ON CONFLICT (composite_figi, obs_date) DO UPDATE SET views=EXCLUDED.views",
-                (figi, d, v),
+            summary.append(
+                {"ticker": ticker, "source": "wikipedia", "metric": "pageviews",
+                 "ok": False, "reason": "unresolved ticker"}
             )
-            n += 1
-        summary.append({"ticker": ticker, "ok": True, "obs": n})
+            continue
+        try:
+            pvs = fetch_pageviews(article, start_date, end_date)
+        except Exception as exc:  # noqa: BLE001 — per-series attribution
+            summary.append(
+                {"ticker": ticker, "source": "wikipedia", "metric": "pageviews",
+                 "ok": False, "reason": str(exc)[:120]}
+            )
+            continue
+        _upsert_series(ad_conn, figi, "wikipedia", "pageviews", ticker, name, article, "views")
+        n = _upsert_observations(ad_conn, figi, "wikipedia", "pageviews", pvs)
+        summary.append(
+            {"ticker": ticker, "source": "wikipedia", "metric": "pageviews", "ok": True, "obs": n}
+        )
+
+    # --- sec_edgar: filing-activity counts ----------------------------------------------
+    try:
+        ciks = fetch_company_ciks(set(_MAP))
+    except Exception as exc:  # noqa: BLE001 — the map failing fails all EDGAR series, attributed
+        ciks = None
+        map_reason = f"company_tickers.json: {str(exc)[:100]}"
+        for ticker in _MAP:
+            # a sym-unresolved ticker keeps its own reason — the map failure is unrelated
+            reason = "unresolved ticker" if not figis[ticker] else map_reason
+            for metric in _SEC_METRICS:
+                summary.append(
+                    {"ticker": ticker, "source": "sec_edgar", "metric": metric,
+                     "ok": False, "reason": reason}
+                )
+    if ciks is not None:
+        for ticker, (_article, name) in _MAP.items():
+            figi = figis[ticker]
+            cik = ciks.get(ticker)
+            if not figi or not cik:
+                reason = "unresolved ticker" if not figi else "no CIK in company_tickers.json"
+                for metric in _SEC_METRICS:
+                    summary.append(
+                        {"ticker": ticker, "source": "sec_edgar", "metric": metric,
+                         "ok": False, "reason": reason}
+                    )
+                continue
+            try:
+                counts = fetch_sec_filing_counts(cik, _SEC_METRICS, start_date, end_date)
+            except Exception as exc:  # noqa: BLE001 — one fetch serves both metrics
+                for metric in _SEC_METRICS:
+                    summary.append(
+                        {"ticker": ticker, "source": "sec_edgar", "metric": metric,
+                         "ok": False, "reason": str(exc)[:120]}
+                    )
+                continue
+            for metric in _SEC_METRICS:
+                _upsert_series(ad_conn, figi, "sec_edgar", metric, ticker, name, cik, "filings")
+                n = _upsert_observations(ad_conn, figi, "sec_edgar", metric, counts[metric])
+                summary.append(
+                    {"ticker": ticker, "source": "sec_edgar", "metric": metric,
+                     "ok": True, "obs": n}
+                )
+
+    # End-of-run sweep (macro's rule): a series row with no observations at all is not
+    # data and is never served — e.g. an EDGAR metric with zero matching filings in the
+    # window and no prior history.
+    ad_conn.execute(
+        "DELETE FROM altdata.series s WHERE NOT EXISTS ("
+        "SELECT 1 FROM altdata.observation o WHERE o.composite_figi=s.composite_figi "
+        "AND o.source=s.source AND o.metric=s.metric)"
+    )
+
     return {"series": summary, "total_obs": sum(s.get("obs", 0) for s in summary)}
 
 

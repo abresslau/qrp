@@ -232,11 +232,16 @@ source attribution + as-of dating; empty series dropped (never faked); read API 
 from the sym package over a 2nd connection (AR-R2); read API + sparkline + 7d/30d attention spike.
 **(FR-19.)**
 
-### Story Q8.3 — Broaden alt-data sources  `[NEW]`
+### Story Q8.3 — Broaden alt-data sources  `[BUILT 2026-06-11]`
 As the Operator, I want more than one alt-data source (the PRD lists card transactions,
 satellite, web-scraping, geolocation, social sentiment, shipping, job postings).
-**AC:** the altdata schema/ingest generalises to ≥1 additional source archetype keyed by sym_id;
-source provenance recorded; probe-before-build per the env-source rule. **(FR-19 breadth.)**
+**AC (met):** wiki-shaped tables replaced by a generic entity-keyed `altdata.series`/`observation`
+model (PK `(composite_figi, source, metric)`; Wikimedia data migrated in losslessly); second
+archetype = **SEC EDGAR regulatory-filing activity** (daily Form 4 + 8-K counts per company,
+ticker→CIK→figi, probe-verified contracts); provenance per series (`detail` = article/CIK);
+honest sparse-series window rates (sum/days, per-series anchor); 10 wiki + 20 EDGAR series live;
+first altdata test suite (20 tests). Probed-and-blocked: GDELT/IMF/FRED; job-board/GitHub probes
+denied by env policy — re-probe when a third archetype is wanted. **(FR-19 breadth.)**
 
 ### Story Q8.4 — Broaden macro coverage  `[BUILT 2026-06-11]`
 **AC (met):** three sources added beyond World Bank + ECB — **US Treasury FiscalData** (daily
@@ -317,7 +322,7 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 - FR-16 → Q5.3 `[BUILT]` (Sharpe/alpha/beta/TE/IR) + **Q5.4 `[BUILT]`** (hit/batting/slugging) ✅ complete
 - FR-17 → Q5.5 `[BUILT]`
 - FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.3/Q6.4 `[NEW]` (defined strategy, analytics loop)
-- FR-19 → Q8.2 `[BUILT]` + Q8.3 `[NEW]` (breadth)
+- FR-19 → Q8.2 `[BUILT]` + Q8.3 `[BUILT 2026-06-11]` (breadth: generic series model + SEC EDGAR)
 - FR-20 → Q8.1 `[BUILT]` + Q8.4 `[BUILT 2026-06-11]` (breadth: +FiscalData/OECD/Eurostat)
 - FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[NEW]`** (macro/altdata inputs) + Q9.3 `[PARTIAL]` + Q9.4 `[NEW]`
 - FR-22 → Q7.1/Q7.2 `[BUILT]` + Q7.3/Q7.4 `[NEW]` (constraints, signal inputs, portfolio output)
@@ -333,10 +338,11 @@ The outstanding work, by value:
   are **parked**. Rationale: wiring signal→optimiser→backtest on top of spike-grade data is premature;
   **develop the databases first** (see next bullet). Resume the loop once the data layer is deeper.
 - **➡️ NEXT FOCUS — develop the databases (operator priority):** deepen the per-package data stores
-  before building research on them: **Q8.3** (broaden altdata beyond Wikimedia), **Q8.4** (broaden
-  macro beyond WB/ECB), real ingestion/coverage, and **QH.1** (Brazil GICS gap). The signal module's
-  FR-21 inputs (macro/altdata) only become worthwhile once those sources are real.
-- **Breadth + hardening (medium):** more alt-data/macro sources (Q8.3/Q8.4), GICS gap (QH.1), migration finish-off (QH.5).
+  before building research on them: ✅ **Q8.3** (altdata: generic series model + SEC EDGAR, 2026-06-11),
+  ✅ **Q8.4** (macro: +FiscalData/OECD/Eurostat, 2026-06-11), remaining: real ingestion/coverage
+  depth and **QH.1** (Brazil GICS gap). The signal module's FR-21 inputs (macro/altdata) only
+  become worthwhile once those sources are real — both raw modules now carry multi-source data.
+- **Breadth + hardening (medium):** ✅ Q8.3/Q8.4 done (multi-source altdata + macro, 2026-06-11); remaining: GICS gap (QH.1), migration finish-off (QH.5).
 - **Deferred-by-design:** live quotes (QH.2), SSE (QH.4), generic framework/palette (QH.6).
 - **Console (ad-hoc, 2026-06-11):** Story C.1 — sidebar submenus (chevron expand/collapse
   decoupled from navigation + open-down animation, per operator change request); sym static

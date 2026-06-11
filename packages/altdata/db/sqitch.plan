@@ -3,3 +3,4 @@
 %uri=https://github.com/abresslau/qrp-altdata
 
 altdata 2026-06-08T16:00:00Z Andre <ab@gladstone-management.com> # altdata schema: wiki article map + daily pageviews, own database
+generic_series [altdata] 2026-06-11T12:00:00Z Andre <ab@gladstone-management.com> # generic entity-keyed series/observation model; wiki data migrated in; wiki tables retired

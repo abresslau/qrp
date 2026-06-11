@@ -669,8 +669,8 @@ export interface components {
         AltObservation: {
             /** Obs Date */
             obs_date: string;
-            /** Views */
-            views: number;
+            /** Value */
+            value: number;
         };
         /** AltSeries */
         AltSeries: {
@@ -680,14 +680,20 @@ export interface components {
             ticker: string | null;
             /** Name */
             name: string | null;
-            /** Article */
-            article: string;
+            /** Source */
+            source: string;
+            /** Metric */
+            metric: string;
+            /** Detail */
+            detail: string | null;
+            /** Unit */
+            unit: string | null;
             /** N Obs */
             n_obs: number;
             /** As Of Date */
             as_of_date: string | null;
-            /** Latest Views */
-            latest_views: number | null;
+            /** Latest Value */
+            latest_value: number | null;
             /** Avg7 */
             avg7: number | null;
             /** Avg30 */
@@ -703,8 +709,14 @@ export interface components {
             ticker: string | null;
             /** Name */
             name: string | null;
-            /** Article */
-            article: string;
+            /** Source */
+            source: string;
+            /** Metric */
+            metric: string;
+            /** Detail */
+            detail: string | null;
+            /** Unit */
+            unit: string | null;
             /** Observations */
             observations: components["schemas"]["AltObservation"][];
         };
@@ -2696,7 +2708,10 @@ export interface operations {
     };
     get_altdata_series: {
         parameters: {
-            query?: never;
+            query: {
+                source: string;
+                metric: string;
+            };
             header?: never;
             path: {
                 figi: string;

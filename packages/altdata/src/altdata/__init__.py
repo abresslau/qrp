@@ -1,1 +1,1 @@
-"""Altdata module — alternative-data signals (Wikimedia pageviews attention). QRP-managed."""
+"""Altdata module — alt-data series (Wikimedia pageviews, SEC filing activity). QRP-managed."""

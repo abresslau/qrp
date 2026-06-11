@@ -1,4 +1,20 @@
 
+## Deferred from: code review of Q8-3-broaden-altdata-sources (2026-06-11)
+
+- **Lineage catalog still models the dropped `wiki_map`/`pageview`** (assets.py, generate.py recipe outputs, derived_lineage.py, field-flow.md) and not `altdata.series`/`observation` — needs its own remap pass. The QL-3 bare-name keyspace collision is now REAL: `altdata.series`/`observation` collide with `macro.series`/`observation` under the name-keyed lineage index — fix = key by (db, table) FIRST, then remap altdata's assets.
+- **Console fetches don't check `r.ok`** (pre-existing A.1-found pattern, all pages) — Q8.3 adds live triggers on /altdata: a 404 if the sweep deletes a series between list-load and click, a 422 if params are dropped; the error envelope then crashes the detail render. A console-wide fetch-wrapper pass is the fix, not a per-page patch.
+- **Concurrent altdata ingest runs can race the end-of-run sweep:** with autocommit, run A's `DELETE … NOT EXISTS(observation)` can remove run B's just-committed series row before B's first observation lands → FK violation aborts B mid-run. No concurrent runner exists today (manual CLI only); same pattern exists in macro. Revisit when any scheduler touches these ingests.
+- **Sparkline is index-spaced** — for sparse filing series the chart implies continuity through unstored true-zero gaps (two filings months apart look adjacent); needs a time-scaled x-axis for the count archetype.
+- **Window-anchor source list is SQL-literal:** the true-zero vs lag-shaped anchor split keys on `source = 'sec_edgar'` in the gateway SQL; a third source must extend the CASE (or promote the missing-day semantics to a `series` column — the cleaner fix when it happens).
+
+## Deferred from: Story Q8.3 broaden alt-data sources (2026-06-11)
+
+- **SIC codes ride along free in SEC submissions:** every submissions JSON carries `sic`/`sicDescription` — a candidate classification source for US-listed ADRs of Brazilian names (QH.1's IBOV GICS gap; PBR/VALE/etc. have ADR CIKs). Probe-verified contract in the Q8.3 story file.
+- **EDGAR archive files for depth:** `filings.files[]` serves pre-`recent` history (AAPL: 1994→2015, verified 200) as flat dicts of the same parallel arrays (no `filings.recent` wrapper). A backfill story can extend filing-count depth without schema change.
+- **Third source archetype unprobed:** job-board (Greenhouse/Lever), GitHub-activity and social endpoints were NOT reachability-probed (env policy denied the probe this session); GDELT/IMF/FRED remain blocked per Q8.4 probes. Re-probe before scoping any third archetype.
+- **Revert drops non-wikipedia data by design:** `generic_series`'s revert script restores the wiki-shaped tables and discards EDGAR (and any future-source) series — stated in the script; re-deploy + re-ingest recovers them from source.
+- **Amendments excluded from filing counts:** `4/A` / `8-K/A` are deliberately not counted (exact form match). If amendment-intensity ever matters it's a new metric (e.g. `filings_form4a`), not a change to the existing ones.
+
 ## Deferred from: code review of orchestration + lineage, chunk 5 of project-wide review (2026-06-10)
 
 - Backup verification + rotation: no `pg_restore --list` sanity, no dump-size floor, no retention policy. (Partial-dump cleanup, numeric pg_dump version sort, and PGPASSWORD-via-env were fixed in-review.)
