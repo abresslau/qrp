@@ -285,10 +285,15 @@ fabricated; surfaced in the UI. **(FR-21 traceability.)**
 The caveats that separate the spikes from production, plus migration follow-ups. Not new
 capability — quality/operability.
 
-### Story QH.1 — Close the Brazil GICS gap  `[NEW]`
-**AC:** the 43/78 IBOV (and other) names left `Unclassified` get GICS sectors from a source
-beyond the financedatabase free tier; the heatmap "unclassified" group shrinks; the
-`universe_member_completeness` validate FAIL clears. (Data gap, surfaced honestly today.)
+### Story QH.1 — Close the Brazil GICS gap  `[BUILT 2026-06-11]`
+**AC (met):** `B3GicsSource` classifies from B3's own published sector taxonomy
+(`GetPortfolioDay` segment=2, IBOV+IBXX) via an explicit normalised B3→GICS sector mapping
+(`source='b3'`, sector level only — depth honesty; "Explor Imóveis"→Real Estate exception;
+unmapped segments reported, never guessed); fill-only pass in `sym classify` (financedatabase
+always wins). Live: all 49 unclassified BVMF names classified, 0 unmapped; ibov/ibx
+`missing gics` FAILs 43+49 → **0**; the ibov heatmap's Unclassified group is GONE (72/72
+sectored). Remaining gics FAILs are non-Brazil (ftse100 69, US 34, others) — ledgered with
+the SEC SIC fallback lead.
 
 ### Story QH.2 — Live quote source (live-PnL)  `[NEW, deferred]`
 **AC:** a real-time quote source (none in-env) feeds a `GET /api/sym/quotes`; live-PnL reuses the
@@ -339,10 +344,11 @@ The outstanding work, by value:
   **develop the databases first** (see next bullet). Resume the loop once the data layer is deeper.
 - **➡️ NEXT FOCUS — develop the databases (operator priority):** deepen the per-package data stores
   before building research on them: ✅ **Q8.3** (altdata: generic series model + SEC EDGAR, 2026-06-11),
-  ✅ **Q8.4** (macro: +FiscalData/OECD/Eurostat, 2026-06-11), remaining: real ingestion/coverage
-  depth and **QH.1** (Brazil GICS gap). The signal module's FR-21 inputs (macro/altdata) only
-  become worthwhile once those sources are real — both raw modules now carry multi-source data.
-- **Breadth + hardening (medium):** ✅ Q8.3/Q8.4 done (multi-source altdata + macro, 2026-06-11); remaining: GICS gap (QH.1), migration finish-off (QH.5).
+  ✅ **Q8.4** (macro: +FiscalData/OECD/Eurostat, 2026-06-11), ✅ **QH.1** (Brazil GICS via B3,
+  2026-06-11), remaining: real ingestion/coverage depth. The signal module's FR-21 inputs
+  (macro/altdata) only become worthwhile once those sources are real — both raw modules now
+  carry multi-source data.
+- **Breadth + hardening (medium):** ✅ Q8.3/Q8.4 done (multi-source altdata + macro, 2026-06-11); ✅ QH.1 done (Brazil GICS via B3, 2026-06-11 — non-Brazil gaps ledgered); remaining: migration finish-off (QH.5).
 - **Deferred-by-design:** live quotes (QH.2), SSE (QH.4), generic framework/palette (QH.6).
 - **Console (ad-hoc, 2026-06-11):** Story C.1 — sidebar submenus (chevron expand/collapse
   decoupled from navigation + open-down animation, per operator change request); sym static

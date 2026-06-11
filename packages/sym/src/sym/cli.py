@@ -203,10 +203,14 @@ def _cmd_delist(args: argparse.Namespace) -> int:
 def _cmd_classify(_args: argparse.Namespace) -> int:
     import psycopg
 
+    from sym.classification.b3 import B3GicsSource
     from sym.classification.gics import (
         DEFAULT_COVERAGE_THRESHOLD,
         FinanceDatabaseGicsSource,
+        apply_classifications,
         classify_universe,
+        plan_classifications,
+        read_unclassified_identities,
     )
     from sym.config import load_dotenv
     from sym.db import connect
@@ -217,6 +221,24 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
     try:
         with connect() as conn:
             summary = classify_universe(conn, source)
+            # B3 fill pass (Story QH.1): sector-only classifications for actives the
+            # primary source left unclassified. Fill-only by construction — it sees
+            # only unclassified identities, so it can never overwrite financedatabase.
+            b3_error: str | None = None
+            b3_summary = None
+            unclassified: list = []
+            b3 = B3GicsSource()
+            try:
+                # EVERYTHING fill-pass lives inside this catch: the connection is
+                # non-autocommit, so an exception escaping to the `with connect()`
+                # boundary would roll back the ENTIRE primary pass (its per-figi
+                # transactions are savepoints of the one outer transaction).
+                unclassified = read_unclassified_identities(conn)
+                if unclassified:
+                    b3_plans = plan_classifications(unclassified, b3)
+                    b3_summary = apply_classifications(conn, b3_plans)
+            except Exception as exc:  # noqa: BLE001 — any fill failure must not mask/destroy the primary pass
+                b3_error = f"{type(exc).__name__}: {exc}"
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -228,6 +250,27 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
         f"{summary.rows_closed} closed, {summary.unchanged} unchanged, "
         f"{summary.failed} failed"
     )
+    if b3_error is not None:
+        print(f"b3 fill pass FAILED (primary pass unaffected): {b3_error}", file=sys.stderr)
+    elif b3_summary is None:
+        print("b3 fill pass: nothing to fill (no unclassified actives) — B3 not queried")
+    else:
+        print(
+            f"b3 fill pass: {len(unclassified)} unclassified active; "
+            f"{b3_summary.rows_inserted} inserted, {b3_summary.unchanged} unchanged, "
+            f"{b3_summary.rows_closed} closed, {b3_summary.failed} failed; "
+            f"{len(set(b3.last_unmapped.values()))} unmapped segments "
+            f"({len(b3.last_unmapped)} tickers), {len(b3.last_conflicts)} view conflicts, "
+            f"{len(b3.last_unmatched)} in-scope unfilled"
+        )
+        for ticker, segment in sorted(b3.last_unmapped.items()):
+            print(f"  unmapped B3 segment: {ticker}: {segment!r}")
+        for ticker, (seg_a, seg_b) in sorted(b3.last_conflicts.items()):
+            print(f"  B3 view conflict (skipped): {ticker}: {seg_a!r} vs {seg_b!r}")
+        if b3.last_unmatched:
+            print(f"  no B3 classification for: {', '.join(b3.last_unmatched)}")
+        for failure in b3_summary.failures:
+            print(f"  b3 write failed: {failure}")
     if not summary.meets_threshold():
         print(
             f"coverage {summary.coverage:.1%} is below the "

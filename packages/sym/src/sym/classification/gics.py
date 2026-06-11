@@ -93,12 +93,16 @@ class SecurityIdentity:
     """The identifiers a GICS source may match a security on.
 
     ``composite_figi`` is our key (and what the result is attributed to);
-    ``isin`` is the fallback when the source lacks the CompositeFIGI.
+    ``isin`` is the fallback when the source lacks the CompositeFIGI. ``mic`` is the
+    listing exchange — exchange-scoped sources (B3, Story QH.1) need it because their
+    tickers are exchange-local strings: matching a foreign security by bare ticker
+    would attribute another exchange's classification to it.
     """
 
     composite_figi: str
     isin: str | None = None
     ticker: str | None = None
+    mic: str | None = None
 
 
 class GicsSource(Protocol):
@@ -218,6 +222,33 @@ def read_active_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
         """
     ).fetchall()
     return [SecurityIdentity(figi, isin, ticker) for figi, isin, ticker in rows]
+
+
+def read_unclassified_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
+    """Active securities with NO currently-effective GICS row (the fill-source scope).
+
+    Feeding a secondary source (e.g. B3, Story QH.1) only these identities is what
+    makes it fill-only: it can never close or overwrite an existing classification,
+    so the primary financedatabase source always wins where both could classify.
+    """
+    rows = conn.execute(
+        """
+        SELECT s.composite_figi, s.mic,
+               max(y.symbol_value) FILTER (WHERE y.symbol_type = 'isin')   AS isin,
+               max(y.symbol_value) FILTER (WHERE y.symbol_type = 'ticker') AS ticker
+          FROM securities s
+          LEFT JOIN security_symbology y
+                 ON y.composite_figi = s.composite_figi
+                AND y.valid_to IS NULL
+         WHERE s.status = 'active'
+           AND NOT EXISTS (SELECT 1 FROM gics_scd g
+                            WHERE g.composite_figi = s.composite_figi
+                              AND g.valid_to IS NULL)
+         GROUP BY s.composite_figi, s.mic
+         ORDER BY s.composite_figi
+        """
+    ).fetchall()
+    return [SecurityIdentity(figi, isin, ticker, mic) for figi, mic, isin, ticker in rows]
 
 
 def _current_row(

@@ -1,4 +1,12 @@
 
+## Deferred from: Story QH.1 Brazil GICS gap (2026-06-11)
+
+- **Non-Brazil GICS gaps remain (134 FAIL rows):** ftse100 69, sp600 18, ftsemib 11, sp500 9, sp400 7, ibex35/estoxx50/smi 4 each, aex 3, dax/seed 2, cac40 1. Candidate sources: SEC submissions `sic`/`sicDescription` for US + ADR names (contract verified in Q8.3 — needs a SIC→GICS mapping, much bigger than B3's 11 sectors); LSE/exchange taxonomies for ftse100. Each needs its own probe + mapping story.
+- **B3 mapping is index-portfolio-scoped:** the source classifies only current IBOV/IBXX constituents — a BVMF name that leaves both indexes but stays active keeps its (stale-but-SCD-dated) classification; a newly-added constituent gets classified on the next `sym classify`. The B3 `CompanyCall` per-company endpoints would decouple classification from index membership if that ever matters.
+- **B3 segment strings are abbreviated and could drift:** an unmapped new abbreviation surfaces loudly in the `sym classify` output (`unmapped B3 segment: ...`) — post-review this fires for EVERY constituent, classified or not — and the name stays unclassified until the mapping table gains the entry. The mapping needs an occasional glance after B3 rebalances (Jan/May/Sep).
+- **`max(symbol_value)` ticker pick is alphabetically arbitrary** when a security carries multiple currently-effective ticker rows (multi-listing) — pre-existing Story-1.8 pattern in `read_active_identities`, shared by `read_unclassified_identities`; needs a listing-preference design if multi-listed names ever appear (pairs with the dual-listing representation item from 1.10's review).
+- **Fill-pass failure never moves `sym classify`'s exit code** (fd-gate-only is deliberate — Constraint 3); automation that needs to distinguish a B3 outage from a clean fill needs a deliberate exit-code design (e.g. a distinct code for fill-pass failure).
+
 ## Deferred from: code review of Q8-3-broaden-altdata-sources (2026-06-11)
 
 - **Lineage catalog still models the dropped `wiki_map`/`pageview`** (assets.py, generate.py recipe outputs, derived_lineage.py, field-flow.md) and not `altdata.series`/`observation` — needs its own remap pass. The QL-3 bare-name keyspace collision is now REAL: `altdata.series`/`observation` collide with `macro.series`/`observation` under the name-keyed lineage index — fix = key by (db, table) FIRST, then remap altdata's assets.
