@@ -26,6 +26,12 @@ members = [
     "packages/lineage",
 ]
 
+[dependency-groups]
+dev = [
+    "duckdb>=1.5",   # tools/duckdb_spike.py — the federation live-attach proof (QH.5)
+    "psycopg[binary]>=3.2",  # tools/deploy_all.py
+]
+
 [tool.ruff]
 line-length = 100
 

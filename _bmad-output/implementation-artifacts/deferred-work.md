@@ -1,4 +1,11 @@
 
+## Deferred from: Story QH.5 migration finish-off (2026-06-11)
+
+- **DuckDB serving-path adoption** is its own future story: the live-attach spike PASSED in-env (extension installs; native cross-DB joins correct; writes physically refused — `tools/duckdb_spike.py`, re-runnable), so the federation option is proven real; app-side psycopg assembly remains the implementation until a surface actually needs cross-DB SQL.
+- **The root `db/` legacy project** (pre-split `qrp` monolith, project name `qrp`): DEPLOYED history in the sym database's sqitch registry, net-nil schema effect (create→relocate→drop). Deliberately unregistered in `tools/deploy_all.py`. Decision pending: delete the directory (losing the ability to re-verify that historical deploy) or keep as archaeology — either is fine; pick when it next annoys.
+- **Verify scripts assert END-state shapes** (the Q8.3/Q5.2/QH.5 convention — QH.5's deploy-all first run caught 12 rotten ones): per-change verification (`sqitch deploy --verify`, `rebase`, `checkout`) on a fresh DB would fail mid-plan where later renames apply. `deploy_all.py`'s deploy-then-verify is end-state-consistent. A per-change-correct rebuild of every verify is unjustified until someone needs mid-plan verification.
+- **Topology-gate honest limits** (stated in its docstring): regex not SQL-parser (dynamic composition evades — none exists); lowercase UNKNOWN-relation reads evade the vocabulary guard (known names are caught case-insensitively); file-scoped CTE exclusion; a consumer's own table named like a sym-internal relation would false-positive (no instance exists).
+
 ## Deferred from: Story Q7.3+Q7.4+Q9.4(optimiser) loop close (2026-06-11)
 
 - **Sector caps + turnover constraints** (the FR-22 examples beyond the max-position archetype): sector needs a GICS-joined projection; turnover needs a prior-solution reference. The capped-simplex machinery is the extension point.

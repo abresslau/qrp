@@ -1,3 +1,8 @@
 -- Verify sym:index_levels on pg
+-- (Reworked by QH.5's deploy-all run: later changes renamed columns this change
+-- created; what survives is asserted at its CURRENT name.)
 
-SELECT sym_id, session_date, variant, level, source, created_at FROM index_levels WHERE FALSE;
+-- The amended B3 accepted variant-free storage; the variant column never shipped.
+SELECT sym_id, session_date, level, source, created_at
+  FROM index_levels
+ WHERE FALSE;

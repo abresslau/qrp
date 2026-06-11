@@ -1,10 +1,9 @@
 -- Verify qrp_core:qrp_core on pg
+-- (Reworked by QH.5's deploy-all run: later changes renamed columns this change
+-- created; what survives is asserted at its CURRENT name.)
 
-BEGIN;
-
-SELECT portfolio_id, client, name, base_currency, created_at FROM qrp.portfolio WHERE FALSE;
-SELECT portfolio_id, as_of_date, composite_figi, weight FROM qrp.portfolio_weight WHERE FALSE;
-SELECT job_id, op, args, status, exit_code, output, error, created_at, started_at, finished_at
+-- The portfolio tables this change created were moved to the `portfolios` database by
+-- `split_portfolios`; what survives here is the Operate job ledger.
+SELECT job_id, op, args, status, exit_code, output, error, created_at, started_at,
+       finished_at, heartbeat_at
   FROM qrp.job WHERE FALSE;
-
-ROLLBACK;

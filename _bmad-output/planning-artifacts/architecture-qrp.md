@@ -70,6 +70,16 @@ shared Postgres").**
   independence.
 - **First implementation step (lowest-risk):** a DuckDB federation spike — `ATTACH READ_ONLY` two
   of today's schemas-as-DBs and run the real heat-map cross-DB join, measuring live-attach perf.
+- **✅ Spike RUN (2026-06-11, Story QH.5 — the env blocker is gone):** the postgres extension
+  installs in-env; `ATTACH … (TYPE postgres, READ_ONLY)` over three live package DBs ran a native
+  cross-DATABASE join (signals.score × sym.security_symbology) correctly; a write through the
+  attachment is PHYSICALLY refused by the engine. Re-runnable: `tools/duckdb_spike.py`. The
+  meta-orchestration half also landed: `tools/deploy_all.py` (the DSN registry + one-command
+  deploy/verify of all 8 Sqitch projects) and the suite-enforced topology-discipline gate
+  (`services/api/tests/test_topology_discipline.py` — cross-schema DDL, the AR-R3 sym
+  read-surface allowlist, no-sym-imports). **Adopting DuckDB in serving paths (the
+  live-vs-materialised contract per surface) remains its own future story** — app-side psycopg
+  assembly stays the implementation; the spike proves the option is real, not hypothetical.
 
 ## Project Context Analysis
 

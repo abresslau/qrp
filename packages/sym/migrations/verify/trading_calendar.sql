@@ -1,9 +1,11 @@
 -- Verify sym:trading_calendar on pg
+-- (Reworked by QH.5's deploy-all run: later changes renamed columns this change
+-- created; what survives is asserted at its CURRENT name.)
 
 BEGIN;
 
 SELECT calendar_version, mic, library, library_version, content_hash,
-       session_count, first_session, last_session, is_current, created_at, updated_at
+       session_count, first_session_date, last_session_date, is_current, created_at, updated_at
   FROM trading_calendar_version
  WHERE FALSE;
 

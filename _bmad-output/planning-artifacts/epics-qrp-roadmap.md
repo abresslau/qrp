@@ -332,11 +332,17 @@ hardening; architecture-qrp dual-credential follow-up.)**
 **AC:** the Operate job panel streams via SSE instead of 2s polling; status still derived from
 `pipeline_run_log` + heartbeat. **(FR-8 nice-to-have, deferred in v1.)**
 
-### Story QH.5 — Migration finish-off: meta-orchestration + invariant guard  `[NEW]`
-**AC:** one command deploys all per-package Sqitch projects + brings up all DBs (a DSN registry);
-a CI check forbids cross-DB FKs and asserts consumers read only sym's stable views (AR-R3). The
-DuckDB live-attach spike is re-run in a network-enabled env to finalise live-vs-materialised per
-surface. **(DB-per-package migration follow-ups.)**
+### Story QH.5 — Migration finish-off: meta-orchestration + invariant guard  `[BUILT 2026-06-11]`
+**AC (met):** `tools/deploy_all.py` — the DSN registry (8 projects incl. the sym/operate
+irregulars) + one-command create-missing-DBs/deploy/verify (`--status`/`--only` modes; proven
+8/8 live AND from-nothing on a scratch DB); its first full run caught + fixed 12 ROTTEN verify
+scripts (sym 11, operate 1 — stale `asof`/`first_session`/`variant`/dropped-table references
+invisible since the renames). The "CI check" is a SUITE gate (`test_topology_discipline.py`,
+4 tests: cross-schema DDL ban, the AR-R3 sym read-surface allowlist, a vocabulary guard that
+makes silent contract growth impossible, no-sym-imports). DuckDB live-attach spike RUN (the
+env blocker is gone): extension installs, cross-DB join correct, writes physically refused —
+finding recorded in architecture-qrp.md; serving-path adoption stays its own story.
+**(DB-per-package migration follow-ups closed.)**
 
 ### Story QH.6 — Generic module framework + command palette (FR-2)  `[NEW]`
 **AC:** now that 8 modules exist (the "build module #2 first" trigger is long past), extract the
@@ -374,7 +380,7 @@ The outstanding work, by value:
   2026-06-11), remaining: real ingestion/coverage depth. The signal module's FR-21 inputs
   (macro/altdata) only become worthwhile once those sources are real — both raw modules now
   carry multi-source data.
-- **Breadth + hardening (medium):** ✅ Q8.3/Q8.4 done (multi-source altdata + macro, 2026-06-11); ✅ QH.1 done (Brazil GICS via B3, 2026-06-11 — non-Brazil gaps ledgered); remaining: migration finish-off (QH.5).
+- **Breadth + hardening (medium):** ✅ Q8.3/Q8.4 done (multi-source altdata + macro, 2026-06-11); ✅ QH.1 done (Brazil GICS via B3 — non-Brazil gaps ledgered); ✅ QH.5 done (deploy-all + topology gate + DuckDB spike, 2026-06-11). Remaining hardening: non-Brazil GICS, QH.3 read-only role, QH.6 framework trigger.
 - **Deferred-by-design:** live quotes (QH.2), SSE (QH.4), generic framework/palette (QH.6).
 - **Console (ad-hoc, 2026-06-11):** Story C.1 — sidebar submenus (chevron expand/collapse
   decoupled from navigation + open-down animation, per operator change request); sym static
