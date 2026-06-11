@@ -417,6 +417,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/macro/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Macro Categories */
+        get: operations["list_macro_categories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/macro/series/{series_id}": {
         parameters: {
             query?: never;
@@ -764,6 +781,13 @@ export interface components {
             name: string;
             /** Currency */
             currency: string | null;
+        };
+        /** CategorySummary */
+        CategorySummary: {
+            /** Category */
+            category: string;
+            /** N Series */
+            n_series: number;
         };
         /** Client */
         Client: {
@@ -1515,6 +1539,8 @@ export interface components {
             unit: string | null;
             /** Frequency */
             frequency: string | null;
+            /** Category */
+            category: string | null;
             /** Observations */
             observations: components["schemas"]["Observation"][];
         };
@@ -1532,6 +1558,8 @@ export interface components {
             unit: string | null;
             /** Frequency */
             frequency: string | null;
+            /** Category */
+            category: string | null;
             /** N Obs */
             n_obs: number;
             /** Start Date */
@@ -2366,6 +2394,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SeriesSummary"][];
+                };
+            };
+        };
+    };
+    list_macro_categories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategorySummary"][];
                 };
             };
         };

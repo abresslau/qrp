@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 import macro.ingest as ingest
 from macro.ingest import _upsert, run_ingest
 
@@ -38,7 +40,7 @@ class FakeConn:
 
 _META = {
     "series_id": "T:1", "source": "test", "name": "t", "geo": "g",
-    "unit": "u", "frequency": "monthly",
+    "unit": "u", "frequency": "monthly", "category": "rates",
 }
 
 
@@ -72,6 +74,69 @@ def test_upsert_empty_series_writes_nothing():
     conn = FakeConn()
     assert _upsert(conn, _META, []) == (0, 0)
     assert conn.calls == []
+
+
+def test_upsert_refuses_non_canonical_category():
+    # category slugs appear in console URLs — anything outside the canonical set is a
+    # loud config error attributed per-series, never written to the catalog
+    conn = FakeConn()
+    no_category = {k: v for k, v in _META.items() if k != "category"}
+    bads = [no_category, dict(_META, category=None), dict(_META, category="Inflation"),
+            dict(_META, category="weather")]
+    for meta in bads:
+        with pytest.raises(ValueError, match="category"):
+            _upsert(conn, meta, [(date(2025, 1, 1), 1.0)])
+    assert conn.calls == []
+
+
+def test_upsert_series_sql_carries_category():
+    conn = FakeConn(obs_results=[(False,)])
+    _upsert(conn, _META, [(date(2025, 1, 1), 1.0)])
+    series_sql = conn.calls[0][0]
+    assert "category" in series_sql
+    assert "category = EXCLUDED.category" in series_sql  # recategorisation propagates
+
+
+def test_run_ingest_attaches_declared_categories(monkeypatch):
+    # every series upsert must carry a canonical category — the strongest drift guard:
+    # run the FULL dispatch with fakes and inspect what reached the SQL
+    monkeypatch.setattr(ingest, "_ECB", [])
+    monkeypatch.setattr(ingest, "_EUROSTAT", [])
+    monkeypatch.setattr(ingest, "_OECD_CPI_GEOS", ["USA"])
+    monkeypatch.setattr(
+        ingest, "_WB",
+        [("SP.POP.TOTL", "Population", "millions", "population", 1e-6, ["US"])],
+    )
+
+    def fake_wb(indicator, name, unit, geos, scale=1.0):
+        meta = {"series_id": f"WB:{indicator}:{geos[0]}", "source": "worldbank", "name": name,
+                "geo": geos[0], "unit": unit, "frequency": "annual"}
+        return [(meta, [(date(2024, 12, 31), 341.0)])]
+
+    monkeypatch.setattr(ingest, "fetch_worldbank", fake_wb)
+    monkeypatch.setattr(ingest, "fetch_oecd_cpi", lambda geo: (
+        {"series_id": f"OECD:CPI:{geo}", "source": "oecd", "name": "CPI", "geo": geo,
+         "unit": "%", "frequency": "monthly"}, [(date(2025, 1, 1), 2.5)]))
+    monkeypatch.setattr(ingest, "fetch_fiscaldata_debt", lambda: (
+        {"series_id": "UST:DEBT", "source": "fiscaldata", "name": "d", "geo": "US",
+         "unit": "USD trillions", "frequency": "daily"}, [(date(2025, 1, 2), 39.2)]))
+    # one avg-rate series so the call site's "rates" literal is inspected at the SQL
+    # boundary too (review finding: stubbing this to [] left the literal untested)
+    monkeypatch.setattr(ingest, "fetch_fiscaldata_avg_rates", lambda: [(
+        {"series_id": "UST:AVG_RATE:BILLS", "source": "fiscaldata", "name": "r",
+         "geo": "US", "unit": "%", "frequency": "monthly"}, [(date(2025, 1, 31), 3.7)])])
+
+    conn = FakeConn(obs_results=[(False,)] * 4)
+    result = run_ingest(conn)
+    assert all(s["ok"] for s in result["series"])
+    series_categories = {p["series_id"]: p["category"] for sql, p in conn.calls
+                         if "INSERT INTO macro.series" in sql}
+    assert series_categories == {
+        "WB:SP.POP.TOTL:US": "population",
+        "OECD:CPI:USA": "inflation",
+        "UST:DEBT": "debt",
+        "UST:AVG_RATE:BILLS": "rates",
+    }
 
 
 def test_upsert_collapses_same_date_duplicates_last_wins():

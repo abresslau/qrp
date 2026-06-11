@@ -338,3 +338,10 @@ The outstanding work, by value:
   FR-21 inputs (macro/altdata) only become worthwhile once those sources are real.
 - **Breadth + hardening (medium):** more alt-data/macro sources (Q8.3/Q8.4), GICS gap (QH.1), migration finish-off (QH.5).
 - **Deferred-by-design:** live quotes (QH.2), SSE (QH.4), generic framework/palette (QH.6).
+- **Console (ad-hoc, 2026-06-11):** Story C.1 — sidebar submenus (chevron expand/collapse
+  decoupled from navigation + open-down animation, per operator change request); sym static
+  sub-items + macro data-driven categories (`macro.series.category`, `/api/macro/categories`,
+  `/macro/<category>` routes; +10 WB population series). Story C.2 — category comparison view
+  (same-indicator/same-unit series overlaid, toggleable countries), gated to `population` per
+  operator instruction; rollout = extend `COMPARISON_CATEGORIES`. QH.6's generic module
+  framework deliberately NOT built (bespoke providers; extract at module #3).

@@ -4,3 +4,4 @@
 
 macro 2026-06-08T14:00:00Z Andre <ab@gladstone-management.com> # macro schema: series catalog + observations (World Bank / ECB), own database
 obs_restatement [macro] 2026-06-11T12:00:00Z Andre <ab@gladstone-management.com> # restatement visibility: observation.last_changed_at, bumped only on value change
+series_category [macro] 2026-06-11T16:00:00Z Andre <ab@gladstone-management.com> # console submenus (C.1): declared topic category on the series catalog

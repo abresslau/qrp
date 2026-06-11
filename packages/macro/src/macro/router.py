@@ -29,6 +29,7 @@ class SeriesSummary(BaseModel):
     geo: str | None
     unit: str | None
     frequency: str | None
+    category: str | None  # declared topic (console sub-navigation); NULL until categorised
     n_obs: int
     start_date: str | None  # observed coverage range (canonical date-naming convention)
     end_date: str | None
@@ -47,12 +48,23 @@ class SeriesDetail(BaseModel):
     geo: str | None
     unit: str | None
     frequency: str | None
+    category: str | None
     observations: list[Observation]
+
+
+class CategorySummary(BaseModel):
+    category: str
+    n_series: int
 
 
 @router.get("/series", response_model=list[SeriesSummary])
 def list_macro_series(gw: DbMacroGateway = Depends(_gateway)) -> list[dict]:
     return gw.series()
+
+
+@router.get("/categories", response_model=list[CategorySummary])
+def list_macro_categories(gw: DbMacroGateway = Depends(_gateway)) -> list[dict]:
+    return gw.categories()
 
 
 @router.get("/series/{series_id:path}", response_model=SeriesDetail)

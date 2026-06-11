@@ -68,9 +68,13 @@ WB_BASE = (
 
 
 def fetch_worldbank(
-    indicator: str, name: str, unit: str, geos: list[str]
+    indicator: str, name: str, unit: str, geos: list[str], scale: float = 1.0
 ) -> list[tuple[dict, list]]:
-    """One series per country. WB JSON = [meta, [obs...]]; obs.date is a year string."""
+    """One series per country. WB JSON = [meta, [obs...]]; obs.date is a year string.
+
+    ``scale`` is a labelled unit conversion (e.g. 1e-6 with unit "millions" for population
+    head-counts — the UST:DEBT trillions precedent), not a transformation of the data.
+    """
     out: list[tuple[dict, list]] = []
     for geo in geos:
         url = WB_BASE.format(geo=geo, ind=indicator, end_year=date.today().year)
@@ -85,7 +89,7 @@ def fetch_worldbank(
             geo_label = (row.get("country") or {}).get("value") or geo_label
             if val is None or not yr:
                 continue
-            obs.append((date(int(yr), 12, 31), float(val)))
+            obs.append((date(int(yr), 12, 31), float(val) * scale))
         obs.sort()
         meta = {
             "series_id": f"WB:{indicator}:{geo}",

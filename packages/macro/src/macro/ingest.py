@@ -19,15 +19,27 @@ from macro.sources import (
     fetch_worldbank,
 )
 
-# World Bank annual indicators × countries (US, Brazil, Euro area, UK, Japan).
+# Canonical category slugs (lower-case, URL-safe — they appear in console paths).
+# Every catalog entry below declares one; the series upsert refuses anything else.
+CATEGORIES = ("inflation", "rates", "gdp", "employment", "debt", "population")
+
+# World Bank annual indicators × countries (US, Brazil, Euro area, UK, Japan):
+# (indicator, name, unit, category, scale, geos). Population head-counts are stored in
+# millions (labelled scale, the UST:DEBT trillions precedent).
 _WB = [
-    ("FP.CPI.TOTL.ZG", "CPI inflation (YoY)", "% per year", ["US", "BRA", "EMU", "GBR", "JPN"]),
-    ("NY.GDP.MKTP.KD.ZG", "Real GDP growth", "% per year", ["US", "BRA", "EMU"]),
-    ("FR.INR.RINR", "Real interest rate", "%", ["US", "BRA"]),
-    ("SL.UEM.TOTL.ZS", "Unemployment rate", "% of labour force", ["US", "BRA", "EMU"]),
+    ("FP.CPI.TOTL.ZG", "CPI inflation (YoY)", "% per year", "inflation", 1.0,
+     ["US", "BRA", "EMU", "GBR", "JPN"]),
+    ("NY.GDP.MKTP.KD.ZG", "Real GDP growth", "% per year", "gdp", 1.0, ["US", "BRA", "EMU"]),
+    ("FR.INR.RINR", "Real interest rate", "%", "rates", 1.0, ["US", "BRA"]),
+    ("SL.UEM.TOTL.ZS", "Unemployment rate", "% of labour force", "employment", 1.0,
+     ["US", "BRA", "EMU"]),
+    ("SP.POP.TOTL", "Population", "millions", "population", 1e-6,
+     ["US", "BRA", "EMU", "GBR", "JPN"]),
+    ("SP.POP.GROW", "Population growth", "% per year", "population", 1.0,
+     ["US", "BRA", "EMU", "GBR", "JPN"]),
 ]
 
-# ECB Data Portal series (monthly to keep observations lean).
+# ECB Data Portal series: (key, series_id, name, unit, frequency, category).
 _ECB = [
     (
         "FM/D.U2.EUR.4F.KR.MRR_FR.LEV",  # daily feed; fetcher compresses to change-points
@@ -35,14 +47,16 @@ _ECB = [
         "ECB main refinancing rate",
         "%",
         "daily",
+        "rates",
     ),
 ]
 
-# OECD CPI YoY (monthly) per REF_AREA. An area the flow doesn't serve yields an empty
-# series and is omitted by the no-data rule.
+# OECD CPI YoY (monthly) per REF_AREA — all category `inflation`. An area the flow
+# doesn't serve 404s and is mapped to an empty series (omitted by the no-data rule).
 _OECD_CPI_GEOS = ["USA", "GBR", "JPN", "BRA"]
 
-# Eurostat datasets, every non-time dimension pinned (the fetcher asserts the shape).
+# Eurostat datasets, every non-time dimension pinned (the fetcher asserts the shape):
+# (code, filters, series_id, name, unit, category).
 # une_rt_m serves no euro-area aggregate (EA/EA19/EA20 all empty, probed 2026-06-11) —
 # EU27_2020 is the configured aggregate instead.
 _EUROSTAT = [
@@ -52,6 +66,7 @@ _EUROSTAT = [
         "EU:HICP:EA",
         "HICP inflation (YoY, monthly)",
         "% per year",
+        "inflation",
     ),
     (
         "une_rt_m",
@@ -59,6 +74,7 @@ _EUROSTAT = [
         "EU:UNEMP:EU27",
         "Unemployment rate (monthly)",
         "% of labour force",
+        "employment",
     ),
 ]
 
@@ -74,16 +90,21 @@ def _upsert(conn: psycopg.Connection, meta: dict, obs: list) -> tuple[int, int]:
     otherwise the second row would hit ON CONFLICT against its own sibling and count as
     a vendor restatement that never happened.
     """
+    if meta.get("category") not in CATEGORIES:  # loud config error, attributed per-series
+        raise ValueError(f"{meta.get('series_id')}: category {meta.get('category')!r} "
+                         f"not in canonical set {CATEGORIES}")
     if not obs:
         return 0, 0  # never store an empty series (honest: a no-data series is omitted, not faked)
     obs = list(dict(obs).items())  # collapse same-date duplicates (dict keyed by date)
     conn.execute(
         """
-        INSERT INTO macro.series (series_id, source, name, geo, unit, frequency, updated_at)
-        VALUES (%(series_id)s, %(source)s, %(name)s, %(geo)s, %(unit)s, %(frequency)s, now())
+        INSERT INTO macro.series (series_id, source, name, geo, unit, frequency, category,
+                                  updated_at)
+        VALUES (%(series_id)s, %(source)s, %(name)s, %(geo)s, %(unit)s, %(frequency)s,
+                %(category)s, now())
         ON CONFLICT (series_id) DO UPDATE SET
             name = EXCLUDED.name, geo = EXCLUDED.geo, unit = EXCLUDED.unit,
-            frequency = EXCLUDED.frequency, updated_at = now()
+            frequency = EXCLUDED.frequency, category = EXCLUDED.category, updated_at = now()
         """,
         meta,
     )
@@ -114,9 +135,9 @@ def run_ingest(conn: psycopg.Connection) -> dict:
     conn.autocommit = True
     summary: list[dict] = []
 
-    def _record(series_id: str, fetched: tuple[dict, list]) -> None:
+    def _record(series_id: str, fetched: tuple[dict, list], category: str) -> None:
         meta, obs = fetched
-        n, restated = _upsert(conn, meta, obs)
+        n, restated = _upsert(conn, dict(meta, category=category), obs)
         summary.append({"series_id": series_id, "obs": n, "restated": restated, "ok": True})
 
     def _failed(series_id: str, exc: Exception) -> None:
@@ -125,22 +146,22 @@ def run_ingest(conn: psycopg.Connection) -> dict:
              "error": str(exc)[:160]}
         )
 
-    for indicator, name, unit, geos in _WB:
+    for indicator, name, unit, category, scale, geos in _WB:
         # One fetch per geo so a single failing country doesn't skip the indicator's
         # remaining geos (and the failure is attributed to the right series).
         for geo in geos:
             try:
-                for meta, obs in fetch_worldbank(indicator, name, unit, [geo]):
-                    _record(meta["series_id"], (meta, obs))
+                for meta, obs in fetch_worldbank(indicator, name, unit, [geo], scale=scale):
+                    _record(meta["series_id"], (meta, obs), category)
             except Exception as exc:  # noqa: BLE001
                 _failed(f"WB:{indicator}:{geo}", exc)
-    for key, sid, name, unit, freq in _ECB:
+    for key, sid, name, unit, freq, category in _ECB:
         try:
-            _record(sid, fetch_ecb(key, sid, name, unit, freq))
+            _record(sid, fetch_ecb(key, sid, name, unit, freq), category)
         except Exception as exc:  # noqa: BLE001
             _failed(sid, exc)
     try:
-        _record("UST:DEBT", fetch_fiscaldata_debt())
+        _record("UST:DEBT", fetch_fiscaldata_debt(), "debt")
     except Exception as exc:  # noqa: BLE001
         _failed("UST:DEBT", exc)
     try:
@@ -152,17 +173,17 @@ def run_ingest(conn: psycopg.Connection) -> dict:
     else:
         for meta, obs in rate_series:
             try:
-                _record(meta["series_id"], (meta, obs))
+                _record(meta["series_id"], (meta, obs), "rates")
             except Exception as exc:  # noqa: BLE001
                 _failed(meta["series_id"], exc)
     for geo in _OECD_CPI_GEOS:
         try:
-            _record(f"OECD:CPI:{geo}", fetch_oecd_cpi(geo))
+            _record(f"OECD:CPI:{geo}", fetch_oecd_cpi(geo), "inflation")
         except Exception as exc:  # noqa: BLE001
             _failed(f"OECD:CPI:{geo}", exc)
-    for code, filters, sid, name, unit in _EUROSTAT:
+    for code, filters, sid, name, unit, category in _EUROSTAT:
         try:
-            _record(sid, fetch_eurostat(code, filters, sid, name, unit))
+            _record(sid, fetch_eurostat(code, filters, sid, name, unit), category)
         except Exception as exc:  # noqa: BLE001
             _failed(sid, exc)
 

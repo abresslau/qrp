@@ -3,22 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const tabs = [
-  { href: "/sym", label: "Overview" },
-  { href: "/sym/explorer", label: "Explorer" },
-  { href: "/sym/universes", label: "Universes" },
-  { href: "/sym/heatmap", label: "Heat map" },
-  { href: "/sym/attention", label: "Attention" },
-  { href: "/sym/validation", label: "Validation" },
-  { href: "/sym/operate", label: "Operate" },
-];
+import { SYM_SUBNAV } from "@/lib/nav";
 
 export default function SymLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   return (
     <div className="mx-auto max-w-6xl">
       <div className="mb-6 flex gap-1 border-b border-border">
-        {tabs.map((t) => {
+        {SYM_SUBNAV.map((t) => {
           const active = pathname === t.href;
           return (
             <Link
