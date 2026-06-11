@@ -3,3 +3,4 @@
 %uri=https://github.com/abresslau/qrp-optimiser
 
 optimiser 2026-06-08T17:00:00Z Andre <ab@gladstone-management.com> # optimiser schema: mean-variance solution + long-only weights, own database
+solution_spec [optimiser] 2026-06-11T22:00:00Z Andre <ab@gladstone-management.com> # FR-22: full solve spec JSONB on solution (reproducibility)

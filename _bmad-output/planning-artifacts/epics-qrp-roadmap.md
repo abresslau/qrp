@@ -213,17 +213,23 @@ sym daily returns; in-sample optimism stated in the UI. **(FR-22 basis.)**
 **AC:** `optimiser.solution` (config + expected stats) + `optimiser.weight` (long-only
 allocation); own database; IDENTITY sequence sound post-migration. **(FR-22.)**
 
-### Story Q7.3 — General objective + constraints (+ optional signal inputs)  `[PARKED — data-layer first]`
+### Story Q7.3 — General objective + constraints (+ optional signal inputs)  `[BUILT 2026-06-11]`
 As the Operator, I want to express an objective and constraints (sector caps, max position,
 turnover, optional `signal` tilts), not just unconstrained long-only MV.
-**AC:** constraints applied + respected; optional `signal` factor inputs (Q9) bias the objective;
-reproducible from objective+constraints+universe+inputs. **(FR-22 "objective + constraints",
-"optional signal inputs".)**
+**AC (met):** **max-position cap** shipped as the constraint archetype (exact capped-simplex
+projection inside the PGD solver; infeasible cap → named error; cap respected exactly — live
+5% cap → max weight 5.0000%); **signal tilts** = any signals factor biases the objective
+(−strength·wᵀz, favourable-oriented cross-sectional z via the `raw_factor` seam at the
+covariance end date; unscored names neutral); full spec persisted (`solution.spec` JSONB,
+migration `solution_spec`). Sector caps + turnover ledgered as follow-ons. **(FR-22.)**
 
-### Story Q7.4 — Optimiser output as a Portfolio; scored via backtest  `[PARKED — data-layer first]`
-**AC:** the solution's weights persist as a `portfolios` Portfolio; the optimiser can score
-candidates via `backtest` (Q6) — the optimiser-uses-backtests loop the PRD describes. **(FR-22 +
-PRD §4.9 "uses backtests to score candidates".)**
+### Story Q7.4 — Optimiser output as a Portfolio; scored via backtest  `[BUILT 2026-06-11]`
+**AC (met):** `save_portfolio` persists the allocation via the portfolios package's writer
+(live: solution #7 → portfolio #4); **candidate scoring via backtest** = train/holdout split —
+the covariance window excludes the trailing holdout, and the solution + EW baseline are scored
+OUT-OF-SAMPLE there through the new public `backtest.engine.score_weights` seam. Cross-check:
+analytics independently measured portfolio #4 at +16.2185% over the holdout — matching the
+backtest scorer to 13 decimal places. **(FR-22 + PRD §4.9.)**
 
 ---
 
@@ -289,14 +295,12 @@ and **`fiscal_sens`** (1Y OLS beta of sym daily returns to macro UST:DEBT daily 
 five factors (definition choices and vintage caveats stated in the method text); served on both
 API models; console shows per-module input chips + the method line. **(FR-21 traceability.)**
 
-### Story Q9.4 — Signals consumable by optimiser / backtest  `[PARTIAL — backtest half BUILT 2026-06-11]`
-**AC:** a signal's scores are selectable as inputs to `optimiser` (Q7.3 tilts) and `backtest`
-(Q6.3 selection rule). **(FR-21 "consumable by backtest/optimiser".)**
-**Backtest half met:** any signals factor drives backtest selection via the public
-`raw_factor` seam (recomputed per rebalance — no look-ahead, no stored-score reads); the
-router opens altdata/macro connections only when `required_modules(factor)` demands (AR-R2);
-verified live with a `fiscal_sens` cap-weighted quarterly run. The coverage gate keeps sparse
-factors honest (`wiki_attention` on sp500 refuses loudly). **Optimiser half → Q7.3/Q7.4.**
+### Story Q9.4 — Signals consumable by optimiser / backtest  `[BUILT 2026-06-11]`
+**AC (met):** a signal's scores drive BOTH consumers through the one public `raw_factor` seam
+(recomputed at-date — no look-ahead, no stored-score reads; module connections opened only
+when `required_modules(factor)` demands, AR-R2): backtest selection rules (Q6.3 spec; live
+`fiscal_sens` cap-weighted quarterly run) and optimiser objective tilts (Q7.3; live
+`fiscal_sens` tilt in the loop-closing solve). **(FR-21 complete.)**
 
 ---
 
@@ -348,8 +352,8 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 - FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.4 `[BUILT]` + Q6.3 `[BUILT 2026-06-11]` (strategy spec) ✅ complete
 - FR-19 → Q8.2 `[BUILT]` + Q8.3 `[BUILT 2026-06-11]` (breadth: generic series model + SEC EDGAR)
 - FR-20 → Q8.1 `[BUILT]` + Q8.4 `[BUILT 2026-06-11]` (breadth: +FiscalData/OECD/Eurostat)
-- FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[BUILT 2026-06-11]`** (macro/altdata inputs) + Q9.3 `[BUILT 2026-06-11]` (traceability) + Q9.4 `[PARTIAL — backtest half 2026-06-11; optimiser half with Q7.3/Q7.4]`
-- FR-22 → Q7.1/Q7.2 `[BUILT]` + Q7.3/Q7.4 `[NEW]` (constraints, signal inputs, portfolio output)
+- FR-21 → Q9.1 `[BUILT]` + Q9.2/Q9.3/Q9.4 `[BUILT 2026-06-11]` ✅ complete
+- FR-22 → Q7.1/Q7.2 `[BUILT]` + Q7.3/Q7.4 `[BUILT 2026-06-11]` ✅ complete
 
 ## Build status summary (2026-06-08)
 All seven roadmap modules are **built + live** (spikes), each in its own database post-migration.
@@ -357,12 +361,13 @@ The outstanding work, by value:
 - **v2 completion: ✅ DONE (2026-06-11).** FR-16 skill metrics (Q5.4), FR-13 Client entity (Q4.3),
   and the final polish pair — FR-15 TWR/PnL (Q5.2) + multi-date weight history (Q4.5) — all
   complete. FR-13…FR-17 are fully built: v2 ("run clients' portfolios") is closed.
-- **The research loop — ▶️ UN-PARKED (operator decision 2026-06-11):** the 2026-06-08 park
-  rationale ("develop the databases first") is met — macro is 5-source/23-series, altdata is
-  2-source/generic-model, Brazil GICS closed, v2 closed. Q6.4 (backtest→portfolios→analytics)
-  was already done. Build order: **Q9.2** (signals from macro/altdata — the FR-21 core) →
-  **Q9.4** (signals consumable by backtest/optimiser, with Q6.3's strategy spec as the backtest
-  vehicle) → **Q7.3/Q7.4** (optimiser constraints + signal tilts; optimiser→portfolio→scored).
+- **The research loop — ✅ CLOSED (2026-06-11, same day it was un-parked):** every link live
+  and cross-verified — signals (cross-module factors, Q9.2) → backtest (strategy specs over
+  the `raw_factor` seam, Q6.3+Q9.4) → optimiser (constraints + signal tilts, Q7.3; holdout
+  scoring via `backtest.engine.score_weights`, Q7.4) → portfolios (saved allocations) →
+  analytics (effective-dated TWR). The closing cross-check: analytics measured the optimiser's
+  saved portfolio at +16.2185% over its holdout — matching the backtest scorer to 13 decimal
+  places (two independent computations of the same series). FR-13…FR-22: **all complete.**
 - **➡️ NEXT FOCUS — develop the databases (operator priority):** deepen the per-package data stores
   before building research on them: ✅ **Q8.3** (altdata: generic series model + SEC EDGAR, 2026-06-11),
   ✅ **Q8.4** (macro: +FiscalData/OECD/Eurostat, 2026-06-11), ✅ **QH.1** (Brazil GICS via B3,

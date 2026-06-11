@@ -1197,6 +1197,7 @@ export interface components {
             summary: {
                 [key: string]: unknown;
             } | null;
+            spec?: components["schemas"]["SolveSpec"] | null;
             /**
              * Weights
              * @default []
@@ -1229,6 +1230,7 @@ export interface components {
             summary: {
                 [key: string]: unknown;
             } | null;
+            spec?: components["schemas"]["SolveSpec"] | null;
         };
         /** OptSolveRequest */
         OptSolveRequest: {
@@ -1252,6 +1254,19 @@ export interface components {
              * @default 252
              */
             lookback: number;
+            /** Max Weight */
+            max_weight?: number | null;
+            signal_tilt?: components["schemas"]["SignalTilt"] | null;
+            /**
+             * Holdout Days
+             * @default 0
+             */
+            holdout_days: number;
+            /**
+             * Save Portfolio
+             * @default false
+             */
+            save_portfolio: boolean;
         };
         /** OptSolveResult */
         OptSolveResult: {
@@ -1259,6 +1274,10 @@ export interface components {
             ok: boolean;
             /** Solution Id */
             solution_id?: number | null;
+            /** Portfolio Id */
+            portfolio_id?: number | null;
+            /** Portfolio Error */
+            portfolio_error?: string | null;
             /** Error */
             error?: string | null;
         };
@@ -1452,7 +1471,7 @@ export interface components {
             /** Universe Id */
             universe_id: string;
             /** Top Pct */
-            top_pct: number;
+            top_pct: number | null;
             /** Rebalance */
             rebalance: string;
             /** Start Date */
@@ -1535,7 +1554,7 @@ export interface components {
             /** Universe Id */
             universe_id: string;
             /** Top Pct */
-            top_pct: number;
+            top_pct: number | null;
             /** Rebalance */
             rebalance: string;
             /** Start Date */
@@ -1645,6 +1664,47 @@ export interface components {
             end_date: string | null;
             /** Latest */
             latest: number | null;
+        };
+        /**
+         * SignalTilt
+         * @description Q9.4: a signals factor biases the objective (−strength·wᵀz).
+         */
+        SignalTilt: {
+            /** Factor */
+            factor: string;
+            /** Strength */
+            strength: number;
+        };
+        /**
+         * SolveSpec
+         * @description The reproducible solve definition persisted on the solution (FR-22, Q7.3).
+         */
+        SolveSpec: {
+            /** Universe */
+            universe: string;
+            /** Method */
+            method: string;
+            /** N */
+            n: number;
+            /** Lookback */
+            lookback: number;
+            /** Max Weight */
+            max_weight?: number | null;
+            signal_tilt?: components["schemas"]["SignalTilt"] | null;
+            /**
+             * Holdout Days
+             * @default 0
+             */
+            holdout_days: number;
+            /**
+             * Save Portfolio
+             * @default false
+             */
+            save_portfolio: boolean;
+            /** Train Start */
+            train_start?: string | null;
+            /** Train End */
+            train_end?: string | null;
         };
         /** Stats */
         Stats: {

@@ -134,6 +134,29 @@ def _daily_weighted(conn, weights: dict[str, float], lo: date, hi: date) -> dict
     return {d: s / cw for d, (s, cw) in agg.items() if cw > 0}
 
 
+def score_weights(
+    sym_conn: psycopg.Connection, weights: dict[str, float], start: date, end: date
+) -> dict:
+    """Score a FIXED weight vector over (start, end] — THE candidate-scoring seam (Q7.4).
+
+    The optimiser calls this to score solved allocations out-of-sample (PRD §4.9 "uses
+    backtests to score candidates"): the same daily-rebalanced-to-target weighting and
+    stats machinery as a full run, with no persistence. Returns the `_stats` dict plus
+    ``n_days``; all-None stats when no holding day priced in the window.
+    """
+    daily_map = _daily_weighted(sym_conn, weights, start, end)
+    days = sorted(daily_map)
+    daily = [daily_map[d] for d in days]
+    curve: list[float] = []
+    cum = 1.0
+    for r in daily:
+        cum *= 1 + r
+        curve.append(cum)
+    out = _stats(daily, curve)
+    out["n_days"] = len(daily)
+    return out
+
+
 def _stats(daily: list[float], curve: list[float]) -> dict:
     if not daily:
         return {"total_return": None, "ann_return": None, "ann_vol": None, "sharpe": None,

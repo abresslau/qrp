@@ -8,20 +8,27 @@ from optimiser.engine import solve as _solve
 
 
 class DbOptimiserGateway:
-    def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
+    def __init__(
+        self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None
+    ) -> None:
         self._conn = conn          # optimiser DB — solutions/weights (read + write)
         self._sym = sym_conn       # sym package — the engine's read-only source (solve only)
         self._conn.autocommit = True
 
-    def solve(self, universe_id: str, method: str, n: int, lookback: int) -> dict:
+    def solve(self, universe_id: str, method: str, n: int, lookback: int,
+              max_weight: float | None = None, signal_tilt: dict | None = None,
+              holdout_days: int = 0, portfolios_gw=None,
+              alt_conn=None, macro_conn=None) -> dict:
         return _solve(self._sym, self._conn, universe_id=universe_id, method=method, n=n,
-                      lookback=lookback)
+                      lookback=lookback, max_weight=max_weight, signal_tilt=signal_tilt,
+                      holdout_days=holdout_days, portfolios_gw=portfolios_gw,
+                      alt_conn=alt_conn, macro_conn=macro_conn)
 
     def solutions(self, limit: int = 25) -> list[dict]:
         rows = self._conn.execute(
             """
             SELECT solution_id, created_at, universe_id, method, n_assets, lookback_days,
-                   exp_return, exp_vol, sharpe, ew_vol, summary
+                   exp_return, exp_vol, sharpe, ew_vol, summary, spec
               FROM optimiser.solution ORDER BY created_at DESC LIMIT %s
             """,
             (limit,),
@@ -32,7 +39,7 @@ class DbOptimiserGateway:
         r = self._conn.execute(
             """
             SELECT solution_id, created_at, universe_id, method, n_assets, lookback_days,
-                   exp_return, exp_vol, sharpe, ew_vol, summary
+                   exp_return, exp_vol, sharpe, ew_vol, summary, spec
               FROM optimiser.solution WHERE solution_id = %s
             """,
             (solution_id,),
@@ -51,7 +58,7 @@ class DbOptimiserGateway:
         return out
 
     def _row(self, r: tuple) -> dict:
-        (sid, created, uni, method, n, lb, er, ev, sh, ew, summary) = r
+        (sid, created, uni, method, n, lb, er, ev, sh, ew, summary, spec) = r
         return {
             "solution_id": sid,
             "created_at": created.isoformat() if created else None,
@@ -64,4 +71,5 @@ class DbOptimiserGateway:
             "sharpe": float(sh) if sh is not None else None,
             "ew_vol": float(ew) if ew is not None else None,
             "summary": summary,
+            "spec": spec,
         }

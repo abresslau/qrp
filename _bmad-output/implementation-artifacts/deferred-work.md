@@ -1,4 +1,11 @@
 
+## Deferred from: Story Q7.3+Q7.4+Q9.4(optimiser) loop close (2026-06-11)
+
+- **Sector caps + turnover constraints** (the FR-22 examples beyond the max-position archetype): sector needs a GICS-joined projection; turnover needs a prior-solution reference. The capped-simplex machinery is the extension point.
+- **PIT universe selection for holdout solves:** `_select_names` uses current membership + latest mcap — a selection look-ahead into the holdout (stated as a served `selection_caveat` on every holdout block). The fix = `_select_names(as_of=train_end)` + a PIT mcap query.
+- **max_sharpe λ-path winner is picked by realised Sharpe only** (tilt shapes each candidate but not the pick — documented in the engine docstring); a tilt-aware selection criterion is a design choice.
+- **Saved-portfolio `base_currency` hardcoded USD** — the optimiser writer now shares the Q6.4/Q6.3 pattern; one fix covers all three call sites (derive from the universe's quote currency).
+
 ## Deferred from: Story Q6.3+Q9.4(backtest) strategy spec (2026-06-11)
 
 - **Buy-and-hold drift variant:** the engine models holdings as DAILY-REBALANCED to target weights between rebalances (the original EW engine's semantics, now stated honestly in the docstring); a drifting buy-and-hold variant is a design option if turnover realism ever matters.

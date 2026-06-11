@@ -257,3 +257,26 @@ def test_engine_signals_factor_without_module_conn_is_an_attributed_error():
     out = run_backtest(sym, bt, factor="fiscal_sens")
     assert "requires module connection" in out["error"]
     assert "macro" in out["error"]
+
+
+def test_score_weights_math_and_exclusive_start():
+    # AC: the scorer's window is (start, end] — the start day itself (the last TRAINING
+    # day in the optimiser's split) must be EXCLUDED from the score
+    from backtest.engine import score_weights
+
+    conn = _RoutedConn([
+        ("fact_returns", _Cur(rows=[
+            (date(2026, 6, 2), "FIGI_A0000000", 0.01),
+            (date(2026, 6, 3), "FIGI_A0000000", 0.02),
+        ])),
+    ])
+    out = score_weights(conn, {"FIGI_A0000000": 1.0}, date(2026, 6, 1), date(2026, 6, 3))
+    assert out["n_days"] == 2
+    assert out["total_return"] == pytest.approx(1.01 * 1.02 - 1)
+    # the SQL bounds are exclusive-start / inclusive-end
+    sql, params = conn.calls[0]
+    assert "as_of_date > %s" in sql and "as_of_date <= %s" in sql
+    assert params[-2:] == (date(2026, 6, 1), date(2026, 6, 3))
+    # empty holding: all-None stats, never a fabricated zero
+    empty = score_weights(_RoutedConn(), {}, date(2026, 6, 1), date(2026, 6, 3))
+    assert empty["total_return"] is None and empty["n_days"] == 0
