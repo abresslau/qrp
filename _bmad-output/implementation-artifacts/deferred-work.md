@@ -1,4 +1,12 @@
 
+## Deferred from: Story Q6.3+Q9.4(backtest) strategy spec (2026-06-11)
+
+- **Buy-and-hold drift variant:** the engine models holdings as DAILY-REBALANCED to target weights between rebalances (the original EW engine's semantics, now stated honestly in the docstring); a drifting buy-and-hold variant is a design option if turnover realism ever matters.
+- **Saved paper portfolios hardcode `base_currency="USD"`** (pre-existing Q6.4 behavior) — wrong label for BRL-universe runs; harmless while notional stays unset.
+- **Size-definition drift recorded:** signals' `_raw_size` filters `market_cap_usd > 0`, the deleted engine SQL didn't — 0 of 713,592 live rows affected; signals' definition kept (the better one).
+- **Engine validation vocabulary split:** the run endpoint 422s on caller-shape errors (XOR, unknown factor, unsupported module) but returns 200 `ok:false` for engine refusals (coverage gate, unknown weighting) — the established envelope; revisit only if automation needs a single contract.
+- **Q9.4 optimiser half** — signals as optimiser tilts → Q7.3/Q7.4 (next loop link).
+
 ## Deferred from: Story Q9.2 cross-module signals (2026-06-11)
 
 - **B3-universe scoring is date-starved:** ibov/ibx membership is build-forward from 2026-06-08 but `fact_returns` max is 2026-06-05, so the PIT roster at the global default as-of is honestly EMPTY (all factors, pre-existing — the `_members` comment says so). A per-universe as-of (max member-return date ≥ the universe's first valid_from) in the `__main__` runner would let B3 universes score as soon as BVMF prices catch up; needs the next EOD run to matter.

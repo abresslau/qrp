@@ -7,13 +7,11 @@ import type { Schemas } from "@/lib/api";
 type RunSummary = Schemas["RunSummary"];
 type RunDetail = Schemas["RunDetail"];
 type Stats = Schemas["Stats"];
+type FactorSummary = Schemas["FactorSummary"];
 
-const FACTORS = [
-  { key: "mom_12_1", label: "12-1 Momentum" },
-  { key: "vol_1y", label: "Low Volatility" },
-  { key: "size", label: "Size (small)" },
-];
 const UNIVERSES = ["sp500", "ibov", "ibx"];
+const WEIGHTINGS = ["equal", "cap"] as const;
+const REBALANCES = ["monthly", "quarterly"] as const;
 
 function pct(v: number | null | undefined): string {
   return v == null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
@@ -92,11 +90,24 @@ export default function BacktestPage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [factors, setFactors] = useState<FactorSummary[]>([]);
   const [factor, setFactor] = useState("mom_12_1");
   const [universe, setUniverse] = useState("sp500");
+  const [weighting, setWeighting] = useState<string>("equal");
+  const [rebalance, setRebalance] = useState<string>("monthly");
+  const [topN, setTopN] = useState<string>("");  // empty = top quintile (top_pct 0.2)
   const [busy, setBusy] = useState(false);
+  const [runError, setRunError] = useState<string | null>(null);
   const [savePortfolio, setSavePortfolio] = useState(false);
   const [savedPid, setSavedPid] = useState<number | null>(null);
+
+  useEffect(() => {
+    // the strategy's factor menu IS the signals catalog (Q9.4) — incl. cross-module factors
+    fetch("/api/signals/factors", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: FactorSummary[]) => setFactors(d))
+      .catch(() => setFactors([]));
+  }, []);
 
   const loadRuns = useCallback(() => {
     fetch("/api/backtest/runs", { cache: "no-store" })
@@ -121,18 +132,43 @@ export default function BacktestPage() {
   }, [sel]);
 
   async function run() {
-    setBusy(true);
     setSavedPid(null);
-    const res = await fetch("/api/backtest/run", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ factor, universe, top_pct: 0.2, save_portfolio: savePortfolio }),
-    }).then((r) => r.json());
-    setBusy(false);
-    if (res.ok) {
-      setSel(res.run_id);
-      setSavedPid(res.portfolio_id ?? null);
-      loadRuns();
+    setRunError(null);
+    let selection: { top_n: number } | { top_pct: number };
+    if (topN.trim() === "") {
+      selection = { top_pct: 0.2 };
+    } else {
+      const n = Number(topN);
+      if (!Number.isInteger(n) || n <= 0) {
+        // never silently run a different strategy than the operator typed
+        setRunError(`"${topN}" is not a valid top N — leave blank for the top quintile`);
+        return;
+      }
+      selection = { top_n: n };
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/backtest/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          factor, universe, weighting, rebalance, ...selection,
+          save_portfolio: savePortfolio,
+        }),
+      }).then((r) => r.json());
+      if (res.ok) {
+        setSel(res.run_id);
+        setSavedPid(res.portfolio_id ?? null);
+        loadRuns();
+      } else {
+        // engine refusals carry `error`; router 422s carry `detail` / an error envelope
+        const msg = res.error ?? res.detail ?? res;
+        setRunError(typeof msg === "string" ? msg : JSON.stringify(msg));
+      }
+    } catch {
+      setRunError("run request failed (network or server error)");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -140,9 +176,11 @@ export default function BacktestPage() {
     <div className="mx-auto max-w-5xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">backtest</h1>
       <p className="mt-1 text-sm text-muted">
-        Walk-forward factor strategy: equal-weight the top quintile by a signal factor, rebalanced
-        monthly, vs an equal-weight-universe baseline. The factor is recomputed from sym at each
-        rebalance date (no look-ahead); returns tie to fact_returns.
+        Walk-forward strategy from a reproducible spec: any signals factor (including
+        cross-module ones), top-quintile or top-N selection, equal- or cap-weighted, rebalanced
+        monthly or quarterly, vs an equal-weight-of-roster baseline. The factor is recomputed
+        through the signals package at each rebalance date (no look-ahead); returns tie to
+        fact_returns. Sparse factors that can&apos;t cover a universe fail honestly.
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -151,12 +189,43 @@ export default function BacktestPage() {
           onChange={(e) => setFactor(e.target.value)}
           className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
         >
-          {FACTORS.map((f) => (
+          {(factors.length
+            ? factors.map((f) => ({ key: f.factor_key, label: f.name }))
+            : [{ key: "mom_12_1", label: "12-1 Momentum" }]
+          ).map((f) => (
             <option key={f.key} value={f.key}>
               {f.label}
             </option>
           ))}
         </select>
+        <select
+          value={weighting}
+          onChange={(e) => setWeighting(e.target.value)}
+          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+        >
+          {WEIGHTINGS.map((w) => (
+            <option key={w} value={w}>
+              {w === "equal" ? "equal-weight" : "cap-weight"}
+            </option>
+          ))}
+        </select>
+        <select
+          value={rebalance}
+          onChange={(e) => setRebalance(e.target.value)}
+          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+        >
+          {REBALANCES.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <input
+          value={topN}
+          onChange={(e) => setTopN(e.target.value)}
+          placeholder="top N (blank = quintile)"
+          className="w-40 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+        />
         <select
           value={universe}
           onChange={(e) => setUniverse(e.target.value)}
@@ -189,6 +258,11 @@ export default function BacktestPage() {
           </a>
         )}
       </div>
+      {runError && (
+        <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          ⚠ {runError}
+        </p>
+      )}
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[16rem_1fr]">
         <div className="overflow-hidden rounded-xl border border-border">
@@ -205,6 +279,9 @@ export default function BacktestPage() {
                       {r.factor} · {r.universe_id}
                     </div>
                     <div className="text-xs text-muted">
+                      {r.spec
+                        ? `${r.spec.top_n != null ? `top ${r.spec.top_n}` : `top ${((r.spec.top_pct ?? 0) * 100).toFixed(0)}%`} · ${r.spec.weighting} · ${r.spec.rebalance} · `
+                        : ""}
                       {r.n_rebalances} rebals · {r.n_days}d ·{" "}
                       {pct(r.summary?.strategy?.ann_return)} ann
                     </div>

@@ -175,11 +175,15 @@ backtest DB. **(FR-18 basis.)**
 `backtest.point` (equity curves, sampled ≤400 pts); idempotent per run; IDENTITY sequences sound
 after the DB-per-package move. **(FR-18.)**
 
-### Story Q6.3 — Parameterised strategy definition  `[NEW]`
+### Story Q6.3 — Parameterised strategy definition  `[BUILT 2026-06-11]`
 As the Operator, I want to define a strategy (selection rule, weighting, rebalance cadence,
 universe, window) — not just the hard-coded factor-quintile.
-**AC:** a strategy spec drives the engine (factor or signal input, top-N/quintile, EW/cap-weight,
-rebalance freq); reproducible from the spec. **(FR-18 "defined strategy".)**
+**AC (met):** a strategy spec (factor = ANY signals-package factor incl. cross-module ·
+top_pct XOR top_n · equal/cap weighting · monthly/quarterly rebalance · date range) drives
+the engine and persists whole on `backtest.run.spec` (reproducible); the engine's bespoke
+factor SQL is GONE — it delegates to `signals.compute.raw_factor` (single definition source;
+the drifted un-annualised vol reconciled). Cap-weighting drops (and counts) capless names,
+never zero-weights. **(FR-18 "defined strategy".)**
 
 ### Story Q6.4 — Backtest output as a paper Portfolio (analytics-consumable)  `[BUILT 2026-06-08]`
 **AC (met):** a backtest with `save_portfolio=true` materialises its equal-weight holdings-over-time
@@ -285,9 +289,14 @@ and **`fiscal_sens`** (1Y OLS beta of sym daily returns to macro UST:DEBT daily 
 five factors (definition choices and vintage caveats stated in the method text); served on both
 API models; console shows per-module input chips + the method line. **(FR-21 traceability.)**
 
-### Story Q9.4 — Signals consumable by optimiser / backtest  `[PARKED — data-layer first]`
+### Story Q9.4 — Signals consumable by optimiser / backtest  `[PARTIAL — backtest half BUILT 2026-06-11]`
 **AC:** a signal's scores are selectable as inputs to `optimiser` (Q7.3 tilts) and `backtest`
 (Q6.3 selection rule). **(FR-21 "consumable by backtest/optimiser".)**
+**Backtest half met:** any signals factor drives backtest selection via the public
+`raw_factor` seam (recomputed per rebalance — no look-ahead, no stored-score reads); the
+router opens altdata/macro connections only when `required_modules(factor)` demands (AR-R2);
+verified live with a `fiscal_sens` cap-weighted quarterly run. The coverage gate keeps sparse
+factors honest (`wiki_attention` on sp500 refuses loudly). **Optimiser half → Q7.3/Q7.4.**
 
 ---
 
@@ -336,10 +345,10 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 - FR-15 → Q5.1 `[BUILT]`, Q5.2 `[BUILT 2026-06-11]` (TWR + PnL = cumulative TWR × optional notional) ✅ complete
 - FR-16 → Q5.3 `[BUILT]` (Sharpe/alpha/beta/TE/IR) + **Q5.4 `[BUILT]`** (hit/batting/slugging) ✅ complete
 - FR-17 → Q5.5 `[BUILT]`
-- FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.3/Q6.4 `[NEW]` (defined strategy, analytics loop)
+- FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.4 `[BUILT]` + Q6.3 `[BUILT 2026-06-11]` (strategy spec) ✅ complete
 - FR-19 → Q8.2 `[BUILT]` + Q8.3 `[BUILT 2026-06-11]` (breadth: generic series model + SEC EDGAR)
 - FR-20 → Q8.1 `[BUILT]` + Q8.4 `[BUILT 2026-06-11]` (breadth: +FiscalData/OECD/Eurostat)
-- FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[BUILT 2026-06-11]`** (macro/altdata inputs) + Q9.3 `[BUILT 2026-06-11]` (traceability) + Q9.4 `[NEW — next in the un-parked loop]`
+- FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[BUILT 2026-06-11]`** (macro/altdata inputs) + Q9.3 `[BUILT 2026-06-11]` (traceability) + Q9.4 `[PARTIAL — backtest half 2026-06-11; optimiser half with Q7.3/Q7.4]`
 - FR-22 → Q7.1/Q7.2 `[BUILT]` + Q7.3/Q7.4 `[NEW]` (constraints, signal inputs, portfolio output)
 
 ## Build status summary (2026-06-08)

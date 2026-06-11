@@ -188,6 +188,38 @@ def test_fiscal_sens_empty_macro_series_yields_no_scores():
     assert not sym.calls  # without the macro series there is nothing to regress against
 
 
+# ---- the public factor seam (Q9.4) -------------------------------------------------------
+
+
+def test_required_modules_parsed_from_declared_inputs():
+    from signals.compute import required_modules
+
+    assert required_modules("mom_12_1") == frozenset()
+    assert required_modules("wiki_attention") == frozenset({"altdata"})
+    assert required_modules("fiscal_sens") == frozenset({"macro"})
+    with pytest.raises(ValueError, match="unknown factor"):
+        required_modules("nope")
+
+
+def test_raw_factor_names_the_missing_module():
+    from signals.compute import raw_factor
+
+    with pytest.raises(ValueError, match="macro"):
+        raw_factor("fiscal_sens", ["FIGI_A0000000"], date(2026, 6, 5),
+                   sym_conn=_RoutedConn())
+    with pytest.raises(ValueError, match="altdata"):
+        raw_factor("wiki_attention", ["FIGI_A0000000"], date(2026, 6, 5),
+                   sym_conn=_RoutedConn())
+
+
+def test_raw_factor_dispatches_to_the_single_definition():
+    from signals.compute import raw_factor
+
+    sym = _RoutedConn([("fundamentals", _Cur(rows=[("FIGI_A0000000", 5e9)]))])
+    out = raw_factor("size", ["FIGI_A0000000"], date(2026, 6, 5), sym_conn=sym)
+    assert out == {"FIGI_A0000000": 5e9}
+
+
 # ---- skip attribution --------------------------------------------------------------------
 
 

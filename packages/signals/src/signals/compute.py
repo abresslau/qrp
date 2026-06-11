@@ -81,6 +81,66 @@ FACTORS = {
 }
 
 
+def required_modules(factor_key: str) -> frozenset[str]:
+    """The non-sym input modules a factor needs (parsed from its declared inputs).
+
+    The traceability metadata (Q9.3) is load-bearing here: consumers (e.g. the
+    backtest engine, Q9.4) use it to know which module connections a factor requires
+    before calling :func:`raw_factor`.
+    """
+    if factor_key not in FACTORS:
+        raise ValueError(f"unknown factor {factor_key!r} (one of {sorted(FACTORS)})")
+    modules = {ref.split(":", 1)[0] for ref in FACTORS[factor_key]["inputs"]}
+    return frozenset(modules - {"sym"})
+
+
+def factor_direction(factor_key: str) -> str:
+    """'high' or 'low' — which end of the raw value is favourable."""
+    if factor_key not in FACTORS:
+        raise ValueError(f"unknown factor {factor_key!r} (one of {sorted(FACTORS)})")
+    return FACTORS[factor_key]["direction"]
+
+
+def raw_factor(
+    factor_key: str,
+    members: list[str],
+    as_of_date: date,
+    *,
+    sym_conn: psycopg.Connection,
+    alt_conn: psycopg.Connection | None = None,
+    macro_conn: psycopg.Connection | None = None,
+) -> dict[str, float]:
+    """Raw factor values per member as-of a date — THE public factor seam (Q9.4).
+
+    The single definition source: consumers (backtest's per-rebalance recompute, the
+    scoring run here) call this instead of re-implementing factor SQL. Recomputes from
+    the source modules at ``as_of_date`` (no look-ahead, no stored-score reads). A
+    factor whose required module connection is missing raises a ValueError NAMING the
+    module — never a silent sym-only result.
+    """
+    needed = required_modules(factor_key)  # also validates the key
+    have = {m for m, c in (("altdata", alt_conn), ("macro", macro_conn)) if c is not None}
+    missing = needed - have
+    if missing:
+        raise ValueError(
+            f"factor {factor_key!r} requires module connection(s): {', '.join(sorted(missing))}"
+        )
+    if factor_key == "mom_12_1":
+        return _raw_momentum(sym_conn, members, as_of_date)
+    if factor_key == "vol_1y":
+        return _raw_vol(sym_conn, members, as_of_date)
+    if factor_key == "size":
+        return _raw_size(sym_conn, members, as_of_date)
+    if factor_key == "wiki_attention":
+        return _raw_wiki_attention(alt_conn, members, as_of_date)
+    if factor_key == "fiscal_sens":
+        return _raw_fiscal_sens(sym_conn, macro_conn, members, as_of_date)
+    # unreachable while every FACTORS key has a branch above — a factor added to the
+    # catalog without a dispatch branch must FAIL here, not silently compute the
+    # wrong definition (the single-definition-source guarantee)
+    raise ValueError(f"factor {factor_key!r} has no raw-computation dispatch")
+
+
 def _ensure_catalog(conn: psycopg.Connection) -> None:
     for key, f in FACTORS.items():
         conn.execute(

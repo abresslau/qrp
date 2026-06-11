@@ -10,15 +10,21 @@ from backtest.engine import run_backtest
 
 
 class DbBacktestGateway:
-    def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
+    def __init__(
+        self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None
+    ) -> None:
         self._conn = conn          # backtest DB — runs/points (read + write)
         self._sym = sym_conn       # sym package — the engine's read-only source (run only)
         self._conn.autocommit = True
 
-    def run(self, factor: str, universe_id: str, top_pct: float, portfolios_gw=None,
-            start_date: date | None = None, end_date: date | None = None) -> dict:
+    def run(self, factor: str, universe_id: str, top_pct: float | None, portfolios_gw=None,
+            start_date: date | None = None, end_date: date | None = None,
+            top_n: int | None = None, weighting: str = "equal", rebalance: str = "monthly",
+            alt_conn=None, macro_conn=None) -> dict:
         res = run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
-                           top_pct=top_pct, start_date=start_date, end_date=end_date)
+                           top_pct=top_pct, top_n=top_n, weighting=weighting,
+                           rebalance=rebalance, start_date=start_date, end_date=end_date,
+                           alt_conn=alt_conn, macro_conn=macro_conn)
         # Q6.4: optionally materialise the run as a paper Portfolio (persisted via the
         # portfolios package's own writer — module ownership respected, no cross-DB write here).
         if portfolios_gw is not None and res.get("run_id") and res.get("weight_vectors"):
@@ -34,7 +40,7 @@ class DbBacktestGateway:
         rows = self._conn.execute(
             """
             SELECT run_id, created_at, factor, universe_id, top_pct, rebalance,
-                   start_date, end_date, n_days, n_rebalances, summary
+                   start_date, end_date, n_days, n_rebalances, summary, spec
               FROM backtest.run ORDER BY created_at DESC LIMIT %s
             """,
             (limit,),
@@ -45,7 +51,7 @@ class DbBacktestGateway:
         r = self._conn.execute(
             """
             SELECT run_id, created_at, factor, universe_id, top_pct, rebalance,
-                   start_date, end_date, n_days, n_rebalances, summary
+                   start_date, end_date, n_days, n_rebalances, summary, spec
               FROM backtest.run WHERE run_id = %s
             """,
             (run_id,),
@@ -64,17 +70,19 @@ class DbBacktestGateway:
         return out
 
     def _run_row(self, r: tuple) -> dict:
-        (rid, created, factor, uni, top, rebal, sd, ed, nd, nr, summary) = r
+        (rid, created, factor, uni, top, rebal, sd, ed, nd, nr, summary, spec) = r
         return {
             "run_id": rid,
             "created_at": created.isoformat() if created else None,
             "factor": factor,
             "universe_id": uni,
-            "top_pct": float(top),
+            # 0.0 is the legacy NOT-NULL sentinel for top_n runs — never serve it as data
+            "top_pct": float(top) if top else None,
             "rebalance": rebal,
             "start_date": sd.isoformat() if sd else None,
             "end_date": ed.isoformat() if ed else None,
             "n_days": nd,
             "n_rebalances": nr,
             "summary": summary,
+            "spec": spec,
         }

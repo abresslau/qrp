@@ -42,6 +42,21 @@ class Summary(BaseModel):
     excess_total: float | None = None
     first_rebalance: str | None = None
     first_holding_n: int | None = None
+    # cap-weighting honesty: names dropped for missing market cap (never zero-weighted)
+    dropped_no_mcap: int | None = None
+
+
+class StrategySpec(BaseModel):
+    """The reproducible strategy definition a run was produced from (FR-18, Q6.3)."""
+
+    factor: str
+    universe: str
+    top_pct: float | None = None
+    top_n: int | None = None
+    weighting: str = "equal"
+    rebalance: str = "monthly"
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class RunSummary(BaseModel):
@@ -49,13 +64,14 @@ class RunSummary(BaseModel):
     created_at: str | None
     factor: str
     universe_id: str
-    top_pct: float
+    top_pct: float | None  # None on top_n runs (the legacy column's 0.0 sentinel is not data)
     rebalance: str
     start_date: str | None
     end_date: str | None
     n_days: int | None
     n_rebalances: int | None
     summary: Summary | None
+    spec: StrategySpec | None = None  # NULL on pre-Q6.3 runs
 
 
 class CurvePoint(BaseModel):
@@ -69,9 +85,13 @@ class RunDetail(RunSummary):
 
 
 class BacktestRunRequest(BaseModel):
-    factor: str = "mom_12_1"
+    factor: str = "mom_12_1"  # any signals-package factor key (incl. cross-module)
     universe: str = "sp500"
-    top_pct: float = Field(default=0.2, gt=0, le=1, allow_inf_nan=False)
+    # selection: exactly one of top_pct / top_n (422 if both given)
+    top_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    top_n: int | None = Field(default=None, gt=0)
+    weighting: str = "equal"  # equal | cap
+    rebalance: str = "monthly"  # monthly | quarterly
     start_date: date | None = None  # FR-18: optional explicit range (default: ~5y of data)
     end_date: date | None = None
     save_portfolio: bool = False  # Q6.4: also materialise the run as a paper Portfolio
@@ -88,18 +108,57 @@ class BacktestRunResult(BaseModel):
 def run_backtest_ep(
     body: BacktestRunRequest = Body(...), gw: DbBacktestGateway = Depends(_gateway)
 ) -> dict:
+    from signals.compute import required_modules
+
+    if body.top_pct is not None and body.top_n is not None:
+        raise HTTPException(status_code=422, detail="give top_pct OR top_n, not both")
+    top_pct = body.top_pct if (body.top_pct is not None or body.top_n is not None) else 0.2
+    try:
+        needed = required_modules(body.factor)
+    except ValueError as exc:  # unknown factor
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # Explicit module -> engine-kwarg map: a factor declaring a module the engine has
+    # no parameter for must be a clear 422, not a TypeError-500 after connecting.
+    module_kwarg = {"altdata": "alt_conn", "macro": "macro_conn"}
+    unsupported = needed - set(module_kwarg)
+    if unsupported:
+        raise HTTPException(
+            status_code=422,
+            detail=f"factor {body.factor!r} requires unsupported module(s): "
+                   f"{', '.join(sorted(unsupported))}",
+        )
+
     pconn = pgw = None
+    extra_conns: list = []
+    module_conns: dict = {}
     if body.save_portfolio:
         from portfolios.gateway import DbPortfolioGateway
 
         pconn = connect("portfolios")   # write the paper portfolio to its own DB
         pgw = DbPortfolioGateway(pconn, gw._sym)      # reuse the sym package for figi resolution
     try:
-        res = gw.run(body.factor, body.universe, body.top_pct, portfolios_gw=pgw,
-                     start_date=body.start_date, end_date=body.end_date)
+        # AR-R2: a cross-module factor's input modules are read over their OWN
+        # connections, opened only when the factor's declared inputs demand them.
+        for module in sorted(needed):
+            try:
+                c = connect(module)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"input module {module!r} unavailable: {type(exc).__name__}",
+                ) from exc
+            extra_conns.append(c)
+            module_conns[module_kwarg[module]] = c
+        res = gw.run(body.factor, body.universe, top_pct, portfolios_gw=pgw,
+                     start_date=body.start_date, end_date=body.end_date,
+                     top_n=body.top_n, weighting=body.weighting, rebalance=body.rebalance,
+                     **module_conns)
     finally:
         if pconn is not None:
             pconn.close()
+        for c in extra_conns:
+            c.close()
     if "error" in res:
         return {"ok": False, "run_id": None, "portfolio_id": None, "error": res["error"]}
     return {"ok": True, "run_id": res["run_id"], "portfolio_id": res.get("portfolio_id"),

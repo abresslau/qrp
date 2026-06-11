@@ -761,11 +761,20 @@ export interface components {
              * @default sp500
              */
             universe: string;
+            /** Top Pct */
+            top_pct?: number | null;
+            /** Top N */
+            top_n?: number | null;
             /**
-             * Top Pct
-             * @default 0.2
+             * Weighting
+             * @default equal
              */
-            top_pct: number;
+            weighting: string;
+            /**
+             * Rebalance
+             * @default monthly
+             */
+            rebalance: string;
             /** Start Date */
             start_date?: string | null;
             /** End Date */
@@ -1455,6 +1464,7 @@ export interface components {
             /** N Rebalances */
             n_rebalances: number | null;
             summary: components["schemas"]["Summary"] | null;
+            spec?: components["schemas"]["StrategySpec"] | null;
             /**
              * Curve
              * @default []
@@ -1537,6 +1547,7 @@ export interface components {
             /** N Rebalances */
             n_rebalances: number | null;
             summary: components["schemas"]["Summary"] | null;
+            spec?: components["schemas"]["StrategySpec"] | null;
         };
         /** SecuritiesPage */
         SecuritiesPage: {
@@ -1648,6 +1659,34 @@ export interface components {
             /** Max Drawdown */
             max_drawdown?: number | null;
         };
+        /**
+         * StrategySpec
+         * @description The reproducible strategy definition a run was produced from (FR-18, Q6.3).
+         */
+        StrategySpec: {
+            /** Factor */
+            factor: string;
+            /** Universe */
+            universe: string;
+            /** Top Pct */
+            top_pct?: number | null;
+            /** Top N */
+            top_n?: number | null;
+            /**
+             * Weighting
+             * @default equal
+             */
+            weighting: string;
+            /**
+             * Rebalance
+             * @default monthly
+             */
+            rebalance: string;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+        };
         /** Summary */
         Summary: {
             strategy: components["schemas"]["Stats"];
@@ -1658,6 +1697,8 @@ export interface components {
             first_rebalance?: string | null;
             /** First Holding N */
             first_holding_n?: number | null;
+            /** Dropped No Mcap */
+            dropped_no_mcap?: number | null;
         };
         /** SymHealth */
         SymHealth: {
