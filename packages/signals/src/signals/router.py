@@ -1,4 +1,5 @@
-"""``/api/signals`` — derived cross-sectional factors (momentum, low-vol, size) over universes."""
+"""``/api/signals`` — derived cross-sectional factors over universes (sym + macro + altdata
+inputs, FR-21): momentum, low-vol, size, Wikipedia attention, fiscal-flow sensitivity."""
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/api/signals", tags=["signals"])
 def _gateway() -> Iterator[DbSignalGateway]:
     conn = connect()  # signal owns its own database (DB-per-package topology)
     try:
-        sym = connect("sym")               # sym package — security labels, enriched in-app by the gateway
+        sym = connect("sym")  # sym package — security labels, enriched in-app by the gateway
     except Exception:
         conn.close()  # don't leak the first connection when the second connect fails
         raise
@@ -32,6 +33,8 @@ class FactorSummary(BaseModel):
     name: str
     description: str | None
     direction: str
+    inputs: list[str]  # module-qualified input refs (FR-21 provenance, Q9.3)
+    method: str | None
     universes: int
     scores: int
     as_of_date: str | None
@@ -51,6 +54,8 @@ class FactorRanking(BaseModel):
     name: str
     description: str | None
     direction: str
+    inputs: list[str]
+    method: str | None
     universe_id: str
     as_of_date: str | None
     bottom: bool

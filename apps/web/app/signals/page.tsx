@@ -14,7 +14,25 @@ function fmtRaw(key: string, v: number): string {
     const b = v / 1e9;
     return b >= 1000 ? `$${(b / 1000).toFixed(2)}T` : `$${b.toFixed(1)}B`;
   }
+  if (key === "wiki_attention") return `${v.toFixed(2)}×`; // 7d/30d attention ratio
+  if (key === "fiscal_sens") return v.toFixed(2); // a beta, not a fraction
   return `${(v * 100).toFixed(1)}%`; // momentum, vol are fractions
+}
+
+const INPUT_TONE: Record<string, string> = {
+  sym: "border-sky-500/40 text-sky-700 dark:text-sky-300",
+  macro: "border-amber-500/40 text-amber-700 dark:text-amber-300",
+  altdata: "border-emerald-500/40 text-emerald-700 dark:text-emerald-300",
+};
+
+function InputChip({ refStr }: { refStr: string }) {
+  const moduleKey = refStr.split(":")[0];
+  const tone = INPUT_TONE[moduleKey] ?? "border-border text-muted";
+  return (
+    <span className={`rounded-full border px-2 py-0.5 font-mono text-[11px] ${tone}`}>
+      {refStr}
+    </span>
+  );
 }
 
 export default function SignalPage() {
@@ -36,8 +54,10 @@ export default function SignalPage() {
       `/api/signals/factors/${factor}?universe=${universe}&limit=25&bottom=${bottom}`,
       { cache: "no-store" },
     )
-      .then((r) => r.json())
-      .then((d: FactorRanking) => setData(d))
+      // a 404 (no scores for this factor/universe — routine for sparse factors) must
+      // render the empty state, never store the error envelope as a ranking
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: FactorRanking | null) => setData(d))
       .catch(() => setData(null));
   }, [factor, universe, bottom]);
 
@@ -47,9 +67,11 @@ export default function SignalPage() {
     <div className="mx-auto max-w-5xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">signal</h1>
       <p className="mt-1 text-sm text-muted">
-        Derived cross-sectional factors computed from sym (read-only) and stored in QRP&apos;s own
-        schema. Ranked within a universe as-of the latest returns date. Numbers tie to the
-        warehouse; coverage gaps are simply absent (never fabricated).
+        Derived cross-sectional factors with inputs across modules — sym returns, macro series,
+        altdata attention — each read from its own database (read-only) and stored in QRP&apos;s
+        own schema. Every factor names its inputs and method (FR-21 traceability). Ranked within
+        a universe as-of the latest returns date; coverage gaps are simply absent (never
+        fabricated).
       </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -84,11 +106,25 @@ export default function SignalPage() {
       </div>
 
       {meta && (
-        <p className="mt-2 text-xs text-muted">
-          {meta.description} · favourable end:{" "}
-          <span className="font-medium">{meta.direction === "high" ? "higher" : "lower"}</span> raw
-          {data?.as_of_date ? ` · as of ${data.as_of_date}` : ""}
-        </p>
+        <div className="mt-2">
+          <p className="text-xs text-muted">
+            {meta.description} · favourable end:{" "}
+            <span className="font-medium">{meta.direction === "high" ? "higher" : "lower"}</span>{" "}
+            raw
+            {data?.as_of_date ? ` · as of ${data.as_of_date}` : ""}
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] uppercase tracking-wide text-muted">inputs</span>
+            {meta.inputs.map((ref) => (
+              <InputChip key={ref} refStr={ref} />
+            ))}
+          </div>
+          {meta.method && (
+            <p className="mt-1.5 text-xs text-muted">
+              <span className="uppercase tracking-wide">method</span> · {meta.method}
+            </p>
+          )}
+        </div>
       )}
 
       <div className="mt-3 overflow-hidden rounded-xl border border-border">
@@ -120,7 +156,7 @@ export default function SignalPage() {
                 </td>
               </tr>
             ))}
-            {data && data.constituents.length === 0 && (
+            {(!data || data.constituents.length === 0) && (
               <tr>
                 <td colSpan={6} className="px-3 py-6 text-center text-muted">
                   No scores for this factor / universe.

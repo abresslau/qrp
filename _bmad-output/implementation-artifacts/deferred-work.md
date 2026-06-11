@@ -1,4 +1,14 @@
 
+## Deferred from: Story Q9.2 cross-module signals (2026-06-11)
+
+- **B3-universe scoring is date-starved:** ibov/ibx membership is build-forward from 2026-06-08 but `fact_returns` max is 2026-06-05, so the PIT roster at the global default as-of is honestly EMPTY (all factors, pre-existing — the `_members` comment says so). A per-universe as-of (max member-return date ≥ the universe's first valid_from) in the `__main__` runner would let B3 universes score as soon as BVMF prices catch up; needs the next EOD run to matter.
+- **`fiscal_sens` winsorisation ties at the caps:** the p1/p99 clip puts the extreme tail on a shared value (rank 1-3 all −3.54 live) — correct per the documented winsorisation, but rank within the tied cap group is arbitrary. A tie-aware rank (dense/average) is a design choice if tail ordering ever matters.
+- **`signals.factors()` count fix rode along:** `count(*)` → `count(s.factor_key)` (a scoreless catalog row was counting 1 via the LEFT JOIN) — necessary for the new factors which exist before their first scores.
+- **(review) Lineage `signals.score` deps are sym-only** — no altdata/macro edges despite the cross-module factors; extends the Q8.3 lineage-remap item (altdata's lineage assets are stale wholesale): one remap pass covers both.
+- **(review) `fiscal_sens` estimation-noise choices:** per-name betas over different matched windows (only ≥60 days enforced — no common-date intersection) and multi-day debt deltas at calendar gaps matched to 1-day returns; tighten if the factor's precision ever matters.
+- **(review) Skip attribution covers connections, not sources:** a reachable macro DB with an empty/missing UST:DEBT series reads as `scored: 0`, indistinguishable from gates-unmet; a source-presence pre-check is the fix when wanted.
+- **(review) Stale B3 sym-factor scores from the pre-rebuild roster** are still stored/served (`_store` upserts, never retracts) — universes count 3 on the strength of rows whose roster is no longer PIT-valid; pairs with the date-starvation item above.
+
 ## Deferred from: Story Q5.2+Q4.5 TWR & weight history (2026-06-11)
 
 - **Console notional affordance missing:** the analytics panel shows "no notional set" but no console form (create or detail) exposes the field — setting it requires an API PATCH. A small detail-page editor is the fix when wanted.

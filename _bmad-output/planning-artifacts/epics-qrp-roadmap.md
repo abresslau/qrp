@@ -271,16 +271,19 @@ optimiser/backtest. Neither is wired yet.
 **AC:** `signal.factor` + `signal.score` (own DB); favourable-oriented z-score/rank/pctile;
 winsorised; membership from current roster; reads sym read-only. **(FR-21 basis, sym inputs.)**
 
-### Story Q9.2 — Signals from macro + altdata inputs  `[PARKED — data-layer first]`
+### Story Q9.2 — Signals from macro + altdata inputs  `[BUILT 2026-06-11]`
 As the Operator, I want signals derived from `macro` and `altdata`, not just sym returns
 (e.g. an attention-spike factor from altdata, a rate-regime factor from macro).
-**AC:** a signal can name inputs across modules (sym + macro + altdata), read each from its own
-DB (app-side, AR-R2), and compute a derived score; this is the FR-21 differentiator vs the raw
-modules. **(FR-21 — the unbuilt core.)**
+**AC (met):** `compute_universe` reads each input module over its OWN read-only connection
+(AR-R2; missing connection = attributed skip, never silent zero); two cross-module factors
+live — **`wiki_attention`** (altdata 7d/30d pageview ratio, sparse-by-honesty 10-name coverage)
+and **`fiscal_sens`** (1Y OLS beta of sym daily returns to macro UST:DEBT daily %-changes,
+502 names scored on sp500); all reads bounded at as_of_date (no look-ahead). **(FR-21 core.)**
 
-### Story Q9.3 — Input + method traceability  `[PARTIAL]`
-**AC:** each signal records its named inputs and method so it's reproducible and never
-fabricated; surfaced in the UI. **(FR-21 traceability.)**
+### Story Q9.3 — Input + method traceability  `[BUILT 2026-06-11 — folded into Q9.2]`
+**AC (met):** `signals.factor.inputs` (JSONB module-qualified refs) + `factor.method` for ALL
+five factors (definition choices and vintage caveats stated in the method text); served on both
+API models; console shows per-module input chips + the method line. **(FR-21 traceability.)**
 
 ### Story Q9.4 — Signals consumable by optimiser / backtest  `[PARKED — data-layer first]`
 **AC:** a signal's scores are selectable as inputs to `optimiser` (Q7.3 tilts) and `backtest`
@@ -336,7 +339,7 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 - FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.3/Q6.4 `[NEW]` (defined strategy, analytics loop)
 - FR-19 → Q8.2 `[BUILT]` + Q8.3 `[BUILT 2026-06-11]` (breadth: generic series model + SEC EDGAR)
 - FR-20 → Q8.1 `[BUILT]` + Q8.4 `[BUILT 2026-06-11]` (breadth: +FiscalData/OECD/Eurostat)
-- FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[NEW]`** (macro/altdata inputs) + Q9.3 `[PARTIAL]` + Q9.4 `[NEW]`
+- FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[BUILT 2026-06-11]`** (macro/altdata inputs) + Q9.3 `[BUILT 2026-06-11]` (traceability) + Q9.4 `[NEW — next in the un-parked loop]`
 - FR-22 → Q7.1/Q7.2 `[BUILT]` + Q7.3/Q7.4 `[NEW]` (constraints, signal inputs, portfolio output)
 
 ## Build status summary (2026-06-08)
@@ -345,11 +348,12 @@ The outstanding work, by value:
 - **v2 completion: ✅ DONE (2026-06-11).** FR-16 skill metrics (Q5.4), FR-13 Client entity (Q4.3),
   and the final polish pair — FR-15 TWR/PnL (Q5.2) + multi-date weight history (Q4.5) — all
   complete. FR-13…FR-17 are fully built: v2 ("run clients' portfolios") is closed.
-- **The research loop — ⏸️ PARKED (operator decision 2026-06-08):** Q6.4 (backtest→portfolios→
-  analytics) is done, but the remaining links — **Q9.2/Q9.4** (signals from macro/altdata; signals→
-  optimiser/backtest) and **Q7.3/Q7.4** (optimiser constraints+signal inputs; optimiser→portfolio) —
-  are **parked**. Rationale: wiring signal→optimiser→backtest on top of spike-grade data is premature;
-  **develop the databases first** (see next bullet). Resume the loop once the data layer is deeper.
+- **The research loop — ▶️ UN-PARKED (operator decision 2026-06-11):** the 2026-06-08 park
+  rationale ("develop the databases first") is met — macro is 5-source/23-series, altdata is
+  2-source/generic-model, Brazil GICS closed, v2 closed. Q6.4 (backtest→portfolios→analytics)
+  was already done. Build order: **Q9.2** (signals from macro/altdata — the FR-21 core) →
+  **Q9.4** (signals consumable by backtest/optimiser, with Q6.3's strategy spec as the backtest
+  vehicle) → **Q7.3/Q7.4** (optimiser constraints + signal tilts; optimiser→portfolio→scored).
 - **➡️ NEXT FOCUS — develop the databases (operator priority):** deepen the per-package data stores
   before building research on them: ✅ **Q8.3** (altdata: generic series model + SEC EDGAR, 2026-06-11),
   ✅ **Q8.4** (macro: +FiscalData/OECD/Eurostat, 2026-06-11), ✅ **QH.1** (Brazil GICS via B3,

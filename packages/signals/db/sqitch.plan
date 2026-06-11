@@ -3,3 +3,4 @@
 %uri=https://github.com/abresslau/qrp-signals
 
 signals 2026-06-08T15:00:00Z Andre <ab@gladstone-management.com> # signals schema: factor catalog + cross-sectional scores, own database
+factor_traceability [signals] 2026-06-11T20:00:00Z Andre <ab@gladstone-management.com> # FR-21 traceability: factor.inputs (module-qualified refs) + factor.method

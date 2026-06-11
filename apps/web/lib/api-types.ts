@@ -880,6 +880,10 @@ export interface components {
             description: string | null;
             /** Direction */
             direction: string;
+            /** Inputs */
+            inputs: string[];
+            /** Method */
+            method: string | null;
             /** Universe Id */
             universe_id: string;
             /** As Of Date */
@@ -899,6 +903,10 @@ export interface components {
             description: string | null;
             /** Direction */
             direction: string;
+            /** Inputs */
+            inputs: string[];
+            /** Method */
+            method: string | null;
             /** Universes */
             universes: number;
             /** Scores */

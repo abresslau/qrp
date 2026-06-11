@@ -43,12 +43,12 @@ class DbSignalGateway:
     def factors(self) -> list[dict]:
         rows = self._conn.execute(
             """
-            SELECT f.factor_key, f.name, f.description, f.direction,
+            SELECT f.factor_key, f.name, f.description, f.direction, f.inputs, f.method,
                    count(DISTINCT s.universe_id) AS universes,
-                   count(*) AS scores, max(s.as_of_date) AS as_of_date
+                   count(s.factor_key) AS scores, max(s.as_of_date) AS as_of_date
               FROM signals.factor f
               LEFT JOIN signals.score s USING (factor_key)
-             GROUP BY f.factor_key, f.name, f.description, f.direction
+             GROUP BY f.factor_key, f.name, f.description, f.direction, f.inputs, f.method
              ORDER BY f.name
             """
         ).fetchall()
@@ -58,11 +58,13 @@ class DbSignalGateway:
                 "name": name,
                 "description": desc,
                 "direction": direction,
+                "inputs": inputs or [],
+                "method": method,
                 "universes": u,
                 "scores": sc,
                 "as_of_date": ao.isoformat() if ao else None,
             }
-            for k, name, desc, direction, u, sc, ao in rows
+            for k, name, desc, direction, inputs, method, u, sc, ao in rows
         ]
 
     def universes_for(self, factor_key: str) -> list[str]:
@@ -74,7 +76,8 @@ class DbSignalGateway:
 
     def ranked(self, factor_key: str, universe_id: str, limit: int, bottom: bool) -> dict | None:
         meta = self._conn.execute(
-            "SELECT factor_key, name, description, direction FROM signals.factor WHERE factor_key=%s",
+            "SELECT factor_key, name, description, direction, inputs, method "
+            "FROM signals.factor WHERE factor_key=%s",
             (factor_key,),
         ).fetchone()
         if not meta:
@@ -84,7 +87,8 @@ class DbSignalGateway:
             (factor_key, universe_id),
         ).fetchone()[0]
         if as_of_date is None:
-            return None  # no scores for this factor+universe — a 404 at the router, not an empty 200
+            # no scores for this factor+universe — a 404 at the router, not an empty 200
+            return None
         order = "DESC" if bottom else "ASC"  # rank 1 = most favourable; bottom = least favourable
         rows = self._conn.execute(
             f"""
@@ -102,6 +106,8 @@ class DbSignalGateway:
             "name": meta[1],
             "description": meta[2],
             "direction": meta[3],
+            "inputs": meta[4] or [],
+            "method": meta[5],
             "universe_id": universe_id,
             "as_of_date": as_of_date.isoformat() if as_of_date else None,
             "bottom": bottom,
