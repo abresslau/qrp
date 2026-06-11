@@ -86,8 +86,9 @@ export default function MacroPage() {
     <div className="mx-auto max-w-6xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">macro</h1>
       <p className="mt-1 text-sm text-muted">
-        Central-bank &amp; macroeconomic series from public sources (World Bank, ECB). QRP-managed
-        reference data — independent of sym; never fabricated (no-data series are omitted).
+        Central-bank &amp; macroeconomic series from public sources (World Bank, ECB, US Treasury,
+        OECD, Eurostat). QRP-managed reference data — independent of sym; never fabricated
+        (no-data series are omitted).
       </p>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-[20rem_1fr]">

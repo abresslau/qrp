@@ -59,7 +59,7 @@ Deferred findings:
 Roadmap-depth FR gaps (spec'd, built to demo depth in the 2026-06-08 v1) + refactors that fold into the decided qrp/packages restructure:
 
 - FR-15: portfolio returns are a latest-weights × latest-returns dot product — not time-weighted, no PnL (money), weights history never consumed time-series-wise [portfolios/gateway.py:197-264; analytics/gateway.py:85-139 applies latest weights retroactively].
-- FR-20: macro observations carry `source` but no release/vintage date — restatements indistinguishable [macro/ingest.py:38-55].
+- FR-20: macro observations carry `source` but no release/vintage date — restatements indistinguishable [macro/ingest.py:38-55]. **✅ FOLDED into Story Q8.4 (2026-06-11):** `observation.last_changed_at` re-stamped only on value change + per-series `restated` count in the ingest summary. A full point-in-time vintage/revision table stays DEFERRED (no consumer needs pit macro yet; the column COMMENT says it is not a release date).
 - FR-22: optimiser takes no constraints input (hardcoded long-only sum=1), never consumes `signals.score`, and has no save-solution-as-Portfolio path [optimiser/engine.py:101-111, router.py:50-55].
 - FR-17: analytics benchmark picker lists only `instrument.kind='index'` — a sym Universe cannot be the benchmark [analytics/gateway.py:68-83].
 - Gateway encapsulation: backtest router reaches into `gw._sym`; several gateways type `sym_conn: ... | None` then dereference unconditionally [backtest/router.py:89; analytics/gateway.py:70]. Fold into the qrp structure-target refactor.
@@ -153,3 +153,16 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 
 - **Types freshness is not an enforced gate:** O.2's API surface (`/api/operate/history`, `heartbeat_at`, `takes_scope`) sat stale in the committed `lib/api-types.ts` until A.1's regen caught it up. The "CI freshness check" is a script with no runner (no remote/CI exists) — staleness is only caught when someone happens to regen. Candidate: a pre-commit hook or a `sym validate`-style local gate that diffs `gen:types` output against the committed file.
 - **NaN weight hypothetical:** a NUMERIC `'NaN'` weight would slip analytics' `total_w <= 0` guard (NaN comparisons are False) and serialize NaN metrics. No writer produces NaN today (`upload_weights` takes floats from validated API input) — revisit only if a new weights writer appears.
+
+## Deferred from: code review of Q8-4-broaden-macro-coverage (2026-06-11)
+
+- Mid-series partial failure understates committed state: macro ingest autocommits per row, so a DB error halfway through a series leaves rows persisted while the summary reports `obs: 0, ok: False` — the accounting can't see what was written before the death. Pairs with the "run-log row written up-front" ledger item (accounting-under-failure design).
+- Quarterly/weekly SDMX periods (`2025-Q1`, `2025-W23`) are skipped as garbled by `_parse_period` — a misconfigured non-monthly dataset yields a silently-empty series (`ok: True, obs: 0`), indistinguishable from genuine no-data. Needs frequency-aware period parsing if a quarterly source is ever configured.
+
+## Deferred from: Story Q8.4 broaden macro coverage (2026-06-11)
+
+- **Pre-existing sym test breakage (NOT from this story; fails on clean HEAD):** `test_durable_reviews.py::test_fx_coverage_warns_on_open_rejections` does `from tests.test_fx_coverage import _Conn` but `packages/sym/tests/` has no `__init__.py` → ModuleNotFoundError under the current pytest import mode. One-line fix (import the helper as a top-level `test_fx_coverage` module, or add `__init__.py`); out of Q8.4's macro-only scope.
+- **OECD CPI Japan ends 2021-06** in the `DF_PRICES_ALL` flow (USA/GBR/BRA run to 2026) — served-as-is, not padded. If a current JPN CPI matters, find the successor OECD flow or another source.
+- **World Bank euro-area CPI (`WB:FP.CPI.TOTL.ZG:EMU`) returns no data as of 2026-06-11** (the other 12 WB series fetch fine). The series never had observations (original "13 series" = 12 WB + ECB), so nothing is lost — but if euro-area CPI is wanted, `EU:HICP:EA` (Eurostat, monthly) now covers it better than the WB annual series would.
+- **ECB MRR change-point compression can strand one stale row:** the stored series keeps a previous run's last-observation row that today's compression no longer re-emits (upsert never deletes). Real observed values, harmless drift (+1 row); a reconcile-and-prune pass would need a delete rule the loader deliberately doesn't have.
+- **Eurostat `une_rt_m` has no euro-area aggregate** (EA/EA19/EA20 all return empty geo dimensions; probed 2026-06-11) — `EU27_2020` is configured instead; revisit if a true euro-area unemployment series appears.

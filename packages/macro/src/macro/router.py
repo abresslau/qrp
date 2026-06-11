@@ -1,4 +1,5 @@
-"""``/api/macro`` — central-bank / macroeconomic series (World Bank, ECB; QRP-managed)."""
+"""``/api/macro`` — central-bank / macroeconomic series (World Bank, ECB, US Treasury
+FiscalData, OECD, Eurostat; QRP-managed)."""
 
 from __future__ import annotations
 

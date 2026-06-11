@@ -238,10 +238,13 @@ satellite, web-scraping, geolocation, social sentiment, shipping, job postings).
 **AC:** the altdata schema/ingest generalises to ≥1 additional source archetype keyed by sym_id;
 source provenance recorded; probe-before-build per the env-source rule. **(FR-19 breadth.)**
 
-### Story Q8.4 — Broaden macro coverage  `[NEW]`
-**AC:** add indicators/sources beyond World Bank + ECB (e.g. a FRED adapter when reachable, US
-Treasury); each source-attributed; monthly/daily frequencies handled. **(FR-20 breadth; FRED was
-env-blocked at spike time.)**
+### Story Q8.4 — Broaden macro coverage  `[BUILT 2026-06-11]`
+**AC (met):** three sources added beyond World Bank + ECB — **US Treasury FiscalData** (daily
+debt outstanding + monthly avg interest rates Bills/Notes/Bonds), **OECD** (monthly CPI YoY ×
+USA/GBR/JPN/BRA), **Eurostat** (monthly EA HICP + EU27 unemployment); 13 → 23 series / 453 →
+12k obs, each source-attributed; daily+monthly handled. Restatement visibility folded in
+(`observation.last_changed_at` bumped only on value change + `restated` ingest counter).
+FRED stays out (still needs an API key — adapter when one exists on deploy). **(FR-20 breadth.)**
 
 ---
 
@@ -315,7 +318,7 @@ in v1). **(NFR-10 just-in-time framework + FR-2.)**
 - FR-17 → Q5.5 `[BUILT]`
 - FR-18 → Q6.1/Q6.2 `[BUILT]` + Q6.3/Q6.4 `[NEW]` (defined strategy, analytics loop)
 - FR-19 → Q8.2 `[BUILT]` + Q8.3 `[NEW]` (breadth)
-- FR-20 → Q8.1 `[BUILT]` + Q8.4 `[NEW]` (breadth)
+- FR-20 → Q8.1 `[BUILT]` + Q8.4 `[BUILT 2026-06-11]` (breadth: +FiscalData/OECD/Eurostat)
 - FR-21 → Q9.1 `[BUILT]` (sym) + **Q9.2 `[NEW]`** (macro/altdata inputs) + Q9.3 `[PARTIAL]` + Q9.4 `[NEW]`
 - FR-22 → Q7.1/Q7.2 `[BUILT]` + Q7.3/Q7.4 `[NEW]` (constraints, signal inputs, portfolio output)
 
