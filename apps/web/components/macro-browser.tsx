@@ -463,6 +463,22 @@ export function MacroBrowser({ category }: { category?: string }) {
     })).filter((g) => g.cards.length > 0);
   }, [series, category]);
 
+  // "what moved" strip (landing): biggest 12m % moves among price series (commodities /
+  // markets / fx), where a percentage move is meaningful (unlike rate/ratio levels).
+  const movers = useMemo(() => {
+    if (category) return [];
+    const priceCats = new Set(["commodities", "markets", "fx"]);
+    return series
+      .filter((s) => priceCats.has(s.category ?? "") && s.latest != null && s.chg_12m != null)
+      .map((s) => {
+        const prior = (s.latest as number) - (s.chg_12m as number);
+        return { s, pct: prior ? ((s.chg_12m as number) / prior) * 100 : null };
+      })
+      .filter((m): m is { s: SeriesSummary; pct: number } => m.pct != null)
+      .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+      .slice(0, 8);
+  }, [series, category]);
+
   // sections: group visible series by category in sell-side order (landing only)
   const sections = useMemo(() => {
     if (category) return [{ key: category, rows: visible }];
@@ -508,6 +524,31 @@ export function MacroBrowser({ category }: { category?: string }) {
             </div>
           </div>
         ))}
+
+      {/* 12-month movers (landing) */}
+      {!category && movers.length > 0 && (
+        <div className="mt-6">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+            12-month movers
+          </h2>
+          <div className="flex flex-wrap gap-2">
+            {movers.map(({ s, pct }) => (
+              <button
+                key={s.series_id}
+                type="button"
+                onClick={() => setClicked(s.series_id)}
+                className="flex items-center gap-2 rounded-full border border-border px-3 py-1 text-xs transition hover:bg-fg/5"
+              >
+                <span className="text-fg">{s.name}</span>
+                <span className={`tabular-nums ${deltaClass(pct)}`}>
+                  {pct > 0 ? "+" : ""}
+                  {pct.toFixed(1)}%
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {category && COMPARISON_CATEGORIES.includes(category) && seriesState === "ready" && (
         <div className="mt-5">
