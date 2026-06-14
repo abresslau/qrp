@@ -206,6 +206,7 @@ function FeaturedChart({
     const last = pts[pts.length - 1];
     return {
       W, H, padR, line, area, overlayLine, yTicks, xTicks,
+      zeroY: minY < 0 && maxY > 0 ? sy(0) : null,  // baseline for series that cross zero
       lastX: sx(xs[xs.length - 1]),
       lastY: sy(last.value),
       lastV: last.value,
@@ -242,6 +243,17 @@ function FeaturedChart({
           {t.label}
         </text>
       ))}
+      {geom.zeroY != null && (
+        <line
+          x1={48}
+          x2={geom.W - geom.padR}
+          y1={geom.zeroY}
+          y2={geom.zeroY}
+          className="text-muted"
+          stroke="currentColor"
+          strokeWidth={0.8}
+        />
+      )}
       <path d={geom.area} fill="url(#macroArea)" />
       <path
         d={geom.line}
