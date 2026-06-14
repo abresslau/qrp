@@ -421,6 +421,32 @@ def _parse_br_date(s: str) -> date:
     return date(int(y), int(m), int(d))
 
 
+def _bcb_get_json(url: str, attempts: int = 4):
+    """Fetch + JSON-parse a BCB SGS window, retrying transient non-JSON responses.
+
+    Beyond the HTTP/timeout retries in ``_get_retry``, the BCB sometimes returns a 200 with
+    an HTML throttling/error page that ``json.loads`` rejects — retry those with backoff
+    rather than failing the whole series on a transient hiccup. A 404 means no data in the
+    window (returns ``[]``); a persistent decode failure re-raises (attributed, not silent)."""
+    delay = 1.5
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            body = _get_retry(url)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return []
+            raise
+        try:
+            return json.loads(body.decode("utf-8", "replace"))
+        except json.JSONDecodeError as exc:  # 200 + HTML error page (transient throttle)
+            last = exc
+            if i < attempts - 1:
+                time.sleep(delay)
+                delay *= 2
+    raise last
+
+
 def fetch_bcb_sgs(
     code: int,
     series_id: str,
@@ -447,13 +473,7 @@ def fetch_bcb_sgs(
     while start <= this_year:
         chunk_end = min(start + 9, this_year)
         url = BCB_SGS_BASE.format(code=code, start=f"01/01/{start}", end=f"31/12/{chunk_end}")
-        try:
-            payload = json.loads(_get_retry(url).decode("utf-8", "replace"))
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:  # no data in this window — not an error
-                payload = []
-            else:
-                raise
+        payload = _bcb_get_json(url)
         if isinstance(payload, list):
             for row in payload:
                 d_raw = (row.get("data") or "").strip()

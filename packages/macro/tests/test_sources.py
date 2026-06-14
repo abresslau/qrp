@@ -453,3 +453,20 @@ def test_fetch_bcb_focus_12m_parses_and_skips_blank(monkeypatch):
     meta, obs = fetch_bcb_focus_12m("IPCA", "BCB:FOCUS_IPCA_12M", "x", "% per year")
     assert meta["source"] == "bcb_focus"
     assert obs == [(date(2026, 1, 2), 4.01), (date(2026, 1, 3), 4.05)]
+
+
+def test_bcb_get_json_retries_transient_html_then_succeeds(monkeypatch):
+    # the BCB occasionally returns a 200 + HTML throttle page; _bcb_get_json must retry it
+    # rather than fail the series on a transient decode error.
+    seq = [b"<html>Service unavailable</html>",
+           json.dumps([{"data": "01/01/2024", "valor": "1.0"}]).encode()]
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: seq.pop(0))
+    monkeypatch.setattr(sources.time, "sleep", lambda s: None)
+    assert sources._bcb_get_json("http://x") == [{"data": "01/01/2024", "valor": "1.0"}]
+
+
+def test_bcb_get_json_raises_on_persistent_non_json(monkeypatch):
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: b"<html>down</html>")
+    monkeypatch.setattr(sources.time, "sleep", lambda s: None)
+    with pytest.raises(json.JSONDecodeError):  # persistent failure attributed, never silent
+        sources._bcb_get_json("http://x", attempts=2)

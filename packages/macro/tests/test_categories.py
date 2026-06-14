@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 import macro.ingest as ingest
 from macro.gateway import DbMacroGateway
 
@@ -62,9 +64,15 @@ def test_gateway_categories_reads_distinct_non_null_from_db():
     assert "ORDER BY category" in sql
 
 
-def test_gateway_series_carries_category():
+def test_gateway_series_carries_category_and_enrichment():
+    # row shape: ...meta..., n_obs, first, last, latest, v_1m, v_3m, v_12m, v_ye, spark
     row = ("WB:X:US", "worldbank", "n", "g", "u", "annual", "gdp",
-           3, date(2023, 12, 31), date(2025, 12, 31), 1.5)
-    conn = _Conn({"LEFT JOIN macro.observation": [row]})
-    out = DbMacroGateway(conn).series()
-    assert out[0]["category"] == "gdp"
+           3, date(2023, 12, 31), date(2025, 12, 31), 1.5, 1.4, 1.3, 1.0, 0.9, [1.0, 1.2, 1.5])
+    conn = _Conn({"array_agg": [row]})  # marker unique to the enriched series() query
+    out = DbMacroGateway(conn).series()[0]
+    assert out["category"] == "gdp"
+    assert out["latest"] == 1.5
+    assert out["chg_1m"] == pytest.approx(0.1)  # latest - v_1m
+    assert out["chg_12m"] == pytest.approx(0.5)  # latest - v_12m
+    assert out["chg_ytd"] == pytest.approx(0.6)  # latest - prior year-end
+    assert out["spark"] == [1.0, 1.2, 1.5]
