@@ -70,6 +70,13 @@ const DASHBOARD_GROUPS: { title: string; ids: string[] }[] = [
   },
 ];
 
+// Series that read better together — a realised series and its market expectation overlaid
+// on one axis (the sell-side "actual vs Focus" inflation chart). Symmetric.
+const OVERLAY: Record<string, string> = {
+  "BCB:IPCA_12M": "BCB:FOCUS_IPCA_12M",
+  "BCB:FOCUS_IPCA_12M": "BCB:IPCA_12M",
+};
+
 function sourceLabel(s: string): string {
   return SOURCE_LABEL[s] ?? s;
 }
@@ -149,9 +156,16 @@ function Sparkline({ values, className = "" }: { values: number[]; className?: s
 
 // --- featured research chart -------------------------------------------------------------
 
-function FeaturedChart({ detail }: { detail: SeriesDetail }) {
+function FeaturedChart({
+  detail,
+  overlay,
+}: {
+  detail: SeriesDetail;
+  overlay?: SeriesDetail | null;
+}) {
   const pts = detail.observations;
   const geom = useMemo(() => {
+    const opts = overlay?.observations ?? [];
     if (pts.length < 2) return null;
     const W = 760;
     const H = 300;
@@ -159,38 +173,44 @@ function FeaturedChart({ detail }: { detail: SeriesDetail }) {
     const padR = 16;
     const padT = 16;
     const padB = 26;
+    const allPts = [...pts, ...opts];
     const xs = pts.map((p) => new Date(p.obs_date).getTime());
-    const ys = pts.map((p) => p.value);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
+    const allX = allPts.map((p) => new Date(p.obs_date).getTime());
+    const ys = allPts.map((p) => p.value);
+    const minX = Math.min(...allX);
+    const maxX = Math.max(...allX);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
     const spanX = maxX - minX || 1;
     const spanY = maxY - minY || 1;
     const sx = (t: number) => padL + ((t - minX) / spanX) * (W - padL - padR);
     const sy = (v: number) => H - padB - ((v - minY) / spanY) * (H - padT - padB);
-    const line = pts
-      .map((p, i) => `${i ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(p.value).toFixed(1)}`)
-      .join(" ");
-    const area = `${line} L${sx(maxX).toFixed(1)},${(H - padB).toFixed(1)} L${sx(minX).toFixed(1)},${(H - padB).toFixed(1)} Z`;
-    // 4 horizontal gridlines with value labels
+    const toLine = (arr: typeof pts) =>
+      arr
+        .map(
+          (p, i) =>
+            `${i ? "L" : "M"}${sx(new Date(p.obs_date).getTime()).toFixed(1)},${sy(p.value).toFixed(1)}`
+        )
+        .join(" ");
+    const line = toLine(pts);
+    const area = `${line} L${sx(xs[xs.length - 1]).toFixed(1)},${(H - padB).toFixed(1)} L${sx(xs[0]).toFixed(1)},${(H - padB).toFixed(1)} Z`;
+    const overlayLine = opts.length >= 2 ? toLine(opts) : "";
     const yTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
       const v = minY + f * spanY;
       return { y: sy(v), v };
     });
-    // ~5 dated x ticks
     const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
       const t = minX + f * spanX;
       return { x: sx(t), label: new Date(t).getFullYear().toString() };
     });
     const last = pts[pts.length - 1];
     return {
-      W, H, padR, line, area, yTicks, xTicks,
+      W, H, padR, line, area, overlayLine, yTicks, xTicks,
       lastX: sx(xs[xs.length - 1]),
       lastY: sy(last.value),
       lastV: last.value,
     };
-  }, [pts]);
+  }, [pts, overlay]);
 
   if (!geom) return <p className="text-sm text-muted">Not enough observations to chart.</p>;
   return (
@@ -230,6 +250,16 @@ function FeaturedChart({ detail }: { detail: SeriesDetail }) {
         strokeWidth={1.8}
         className="text-sky-500"
       />
+      {geom.overlayLine && (
+        <path
+          d={geom.overlayLine}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.6}
+          strokeDasharray="4 3"
+          className="text-amber-500"
+        />
+      )}
       <circle cx={geom.lastX} cy={geom.lastY} r={3} className="fill-sky-500" />
       <text
         x={geom.lastX - 6}
@@ -346,6 +376,7 @@ export function MacroBrowser({ category }: { category?: string }) {
   const [detail, setDetail] = useState<SeriesDetail | null>(null);
   const [errorFor, setErrorFor] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>("5Y");
+  const [overlay, setOverlay] = useState<SeriesDetail | null>(null);
 
   useEffect(() => {
     fetch("/api/macro/series", { cache: "no-store" })
@@ -391,8 +422,36 @@ export function MacroBrowser({ category }: { category?: string }) {
     };
   }, [sel]);
 
+  // companion overlay (e.g. IPCA realised vs Focus expectation) — fetched independently,
+  // with an out-of-order guard, and only kept while it matches the current selection.
+  useEffect(() => {
+    const companion = sel ? OVERLAY[sel] : undefined;
+    // No synchronous clear here (it would be a setState-in-effect); a series without a
+    // companion is handled by the `shownOverlay` derivation below, which only keeps an
+    // overlay that matches the current selection.
+    if (!companion) return;
+    let stale = false;
+    fetch(`/api/macro/series/${companion}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
+      .then((d: SeriesDetail) => {
+        if (!stale) setOverlay(d);
+      })
+      .catch(() => {
+        if (!stale) setOverlay(null);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [sel]);
+
   const shown = detail && detail.series_id === sel ? detail : null;
   const selSummary = visible.find((s) => s.series_id === sel) ?? null;
+  // only overlay when it's the right companion for the current selection and same unit
+  const shownOverlay =
+    shown && overlay && OVERLAY[shown.series_id] === overlay.series_id &&
+    overlay.unit === shown.unit
+      ? overlay
+      : null;
 
   // dashboard cockpit cards (landing only), grouped
   const cardGroups = useMemo(() => {
@@ -481,22 +540,40 @@ export function MacroBrowser({ category }: { category?: string }) {
                   </span>
                 </div>
               </div>
-              <div className="mt-2 flex justify-end gap-1">
-                {(Object.keys(RANGES) as RangeKey[]).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setRange(r)}
-                    className={`rounded px-2 py-0.5 text-xs transition ${
-                      range === r ? "bg-fg/10 text-fg" : "text-muted hover:bg-fg/5"
-                    }`}
-                  >
-                    {r}
-                  </button>
-                ))}
+              <div className="mt-2 flex items-center justify-between">
+                <div className="flex items-center gap-3 text-xs text-muted">
+                  {shownOverlay && (
+                    <>
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-0.5 w-4 bg-sky-500" /> {shown.name}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-0.5 w-4 border-t-2 border-dashed border-amber-500" />
+                        {shownOverlay.name}
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="flex gap-1">
+                  {(Object.keys(RANGES) as RangeKey[]).map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => setRange(r)}
+                      className={`rounded px-2 py-0.5 text-xs transition ${
+                        range === r ? "bg-fg/10 text-fg" : "text-muted hover:bg-fg/5"
+                      }`}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="mt-1">
-                <FeaturedChart detail={sliceByRange(shown, range)} />
+                <FeaturedChart
+                  detail={sliceByRange(shown, range)}
+                  overlay={shownOverlay ? sliceByRange(shownOverlay, range) : null}
+                />
               </div>
             </>
           ) : errorFor === sel ? (
