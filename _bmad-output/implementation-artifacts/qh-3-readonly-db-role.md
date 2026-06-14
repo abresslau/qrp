@@ -72,6 +72,14 @@ This is a hardening story (Epic QH), not new capability. It makes the **app-side
 - [x] [Review][Dismiss] `provision()` returns 0 when a surface relation is absent — it WARNs by name (no silent drop); defensible for phased rollout.
 - [x] [Review][Dismiss] AC2 phrasing "route `db_dsn()`" — `db_dsn()` intentionally kept full-cred; routing achieved by switching the gateway `connect()` default to `sym_readonly_dsn()`. Functionally correct; story wording tightened with the overclaim fix above.
 
+### Post-merge correction (2026-06-14, found by live `npm run dev` smoke)
+
+**Defect:** AC2 routed the gateway's default `connect()` (the `services/api` helper) through `qrp_readonly`, and AC7's "Overview renders through the read-only role" smoke was **never actually exercised in a browser**. The gateway's **first-party sym "See" module** (`modules/sym/gateway.py`) is QRP's observability window into sym and reads sym-INTERNAL relations by design — `universe`, `prices_raw`, `gics_scd`, `fx_rate`, `price_gaps`, `universe_member_resolution`, the review/validation logs — none of which are on the 10-relation surface. So the narrow role `permission denied`-ed the **entire** Q2 See surface (Overview/Universes/Heat map/Security detail/Attention/Validation): `GET /api/sym/overview` 500'd on `SELECT count(*) FROM universe`.
+
+**Root cause:** scope error. The AR-R3 read surface is the **cross-package** contract (the 8 `packages/*` consumers reading sym for returns/labels — correctly hardened, the real win of QH.3). The gateway's first-party See module is NOT a cross-package consumer; it is the platform's broad sym viewer, read-only **by convention**, exactly analogous to the `lineage` full-cred exception this same review already blessed. Routing it through the surface-only role was overreach.
+
+**Fix:** `services/api/src/qrp_api/db.py` `connect()` reverts to full creds (`db_dsn()`, read-only by convention) for the first-party See module; the 8 cross-package consumers keep `qrp_readonly` (their `db.py` helpers + `test_readonly_role.py` are untouched — that hardening stands). Verified live: all six See endpoints 200 (overview securities=2150/universes=14; heat map 838 cells with sectors). Ledgered: a **broad introspection-scoped read-only role** would harden this serving-path first-party reader physically (it's a bigger sym reader than offline lineage) — a follow-up decision, not done here.
+
 ## Dev Notes
 
 ### Current state of files being modified (read before changing)
