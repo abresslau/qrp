@@ -14,6 +14,7 @@ from macro.market_sources import fetch_yfinance
 from macro.sources import (
     fetch_bcb_focus_12m,
     fetch_bcb_sgs,
+    fetch_bls,
     fetch_ecb,
     fetch_eurostat,
     fetch_fiscaldata_avg_rates,
@@ -136,7 +137,14 @@ _BCB = [
     (433, "BCB:IPCA", "IPCA inflation (monthly)", "%", "monthly", "inflation", 1.0, False),
     (13522, "BCB:IPCA_12M", "IPCA inflation (12-month)", "% per year", "monthly",
      "inflation", 1.0, False),
+    (4466, "BCB:IPCA_CORE_TM", "IPCA core (trimmed means)", "%", "monthly",
+     "inflation", 1.0, False),
+    (11427, "BCB:IPCA_CORE_EX", "IPCA core (exclusion)", "%", "monthly",
+     "inflation", 1.0, False),
     (189, "BCB:IGPM", "IGP-M inflation (monthly)", "%", "monthly", "inflation", 1.0, False),
+    (188, "BCB:INPC", "INPC inflation (monthly)", "%", "monthly", "inflation", 1.0, False),
+    (190, "BCB:IGPDI", "IGP-DI inflation (monthly)", "%", "monthly", "inflation", 1.0, False),
+    (4391, "BCB:CDI", "CDI rate (monthly accumulated)", "%", "monthly", "rates", 1.0, False),
     # fx
     (1, "BCB:BRLUSD", "BRL/USD exchange rate (PTAX sell)", "BRL per USD", "daily",
      "fx", 1.0, False),
@@ -144,6 +152,9 @@ _BCB = [
     (24364, "BCB:IBCBR_SA", "IBC-Br economic activity (SA)", "index", "monthly",
      "activity", 1.0, False),
     (24363, "BCB:IBCBR", "IBC-Br economic activity (NSA)", "index", "monthly",
+     "activity", 1.0, False),
+    (28561, "BCB:NUCI", "Capacity utilisation (NUCI)", "%", "monthly", "activity", 1.0, False),
+    (1373, "BCB:VEHICLES", "Vehicle production (ANFAVEA)", "units", "monthly",
      "activity", 1.0, False),
     # fiscal
     (5793, "BCB:PRIMARY_RESULT", "Primary fiscal result (12m)", "% of GDP", "monthly",
@@ -163,6 +174,9 @@ _BCB = [
      "money", 1e-9, False),
     (20622, "BCB:CREDIT_GDP", "Credit outstanding to GDP", "% of GDP", "monthly",
      "money", 1.0, False),
+    (21082, "BCB:DEFAULT_RATE", "Credit default rate (inadimplência)", "%", "monthly",
+     "money", 1.0, False),
+    (29037, "BCB:HH_DEBT", "Household debt to income", "%", "monthly", "money", 1.0, False),
 ]
 
 # IBGE SIDRA series (Brazilian official statistics, no key). (table, variable, series_id,
@@ -178,6 +192,13 @@ _IBGE = [
      "employment", None, 1.0),
     (1846, 585, "IBGE:PIB", "GDP (PIB, nominal, quarterly)", "R$ trillion", "quarterly",
      "gdp", [(11255, 90707)], 1e-6),
+]
+
+# US BLS series (no key; FRED-free US coverage). (bls_series, series_id, name, unit, category).
+_BLS = [
+    ("CUUR0000SA0", "BLS:CPI", "US CPI (index, NSA)", "index", "inflation"),
+    ("LNS14000000", "BLS:UNRATE", "US unemployment rate", "%", "employment"),
+    ("CES0000000001", "BLS:PAYROLLS", "US nonfarm payrolls", "thousands", "employment"),
 ]
 
 # Eurostat datasets, every non-time dimension pinned (the fetcher asserts the shape):
@@ -346,6 +367,11 @@ def run_ingest(conn: psycopg.Connection) -> dict:
     for ticker, sid, name, unit, geo, category in _MARKET:
         try:
             _record(sid, fetch_yfinance(ticker, sid, name, unit, geo), category)
+        except Exception as exc:  # noqa: BLE001
+            _failed(sid, exc)
+    for bls_series, sid, name, unit, category in _BLS:
+        try:
+            _record(sid, fetch_bls(bls_series, sid, name, unit), category)
         except Exception as exc:  # noqa: BLE001
             _failed(sid, exc)
     # BCB Focus survey: market inflation expectations (the anchor Kinea tracks vs realised).

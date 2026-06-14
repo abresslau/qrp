@@ -503,6 +503,49 @@ def fetch_bcb_sgs(
     return meta, obs
 
 
+# --- US BLS (Bureau of Labor Statistics — CPI, unemployment, payrolls) -------------------
+# Public API v1, no key (FRED is blocked in-env; BLS fills the US gap). v1 caps a request at
+# ~10 years, so history is fetched in decade windows. Response: Results.series[0].data =
+# [{year, period:'M01'..'M12'|'M13'(annual avg, skipped), value}]. Values are strings.
+BLS_BASE = "https://api.bls.gov/publicAPI/v1/timeseries/data/{series}"
+
+
+def fetch_bls(
+    series: str, series_id: str, name: str, unit: str, geo: str = "United States",
+    start_year: int = 2005,
+) -> tuple[dict, list]:
+    """One BLS monthly series, fetched in ≤10-year windows. Monthly periods (M01-M12) are
+    dated to the 1st; the M13 annual average is skipped; garbled values are skipped."""
+    raw: dict[date, float] = {}
+    this_year = date.today().year
+    start = start_year
+    while start <= this_year:
+        chunk_end = min(start + 9, this_year)
+        url = BLS_BASE.format(series=series) + f"?startyear={start}&endyear={chunk_end}"
+        payload = json.loads(_get_retry(url, timeout=30).decode("utf-8", "replace"))
+        result = (payload.get("Results") or {}).get("series") or []
+        data = result[0].get("data", []) if result else []
+        for row in data:
+            period = (row.get("period") or "").strip()
+            if not period.startswith("M") or period == "M13":  # M13 = annual average
+                continue
+            try:
+                d = date(int(row["year"]), int(period[1:]), 1)
+                raw[d] = _finite((row.get("value") or "").strip())
+            except (ValueError, TypeError, KeyError):
+                continue
+        start = chunk_end + 1
+    meta = {
+        "series_id": series_id,
+        "source": "bls",
+        "name": name,
+        "geo": geo,
+        "unit": unit,
+        "frequency": "monthly",
+    }
+    return meta, sorted(raw.items())
+
+
 # --- BCB Olinda — Focus survey (market expectations) ------------------------------------
 # OData service, no key. `$format=json` is mandatory; records live under `value`. We pull the
 # SMOOTHED 12-month-ahead expectation (`Suavizada eq 'S'`, `baseCalculo eq 0`) for one
