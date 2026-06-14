@@ -1,16 +1,19 @@
 
 ## Deferred from: Story Q8.5 Kinea/Brazil central-bank macro feeders (2026-06-14)
 
-- **Brazilian sources reachable in-env but not yet wired:** IPEADATA (OData4 aggregator),
-  full BCB Focus (annual IPCA/Selic expectations by reference-year + Top-5; only the smoothed
-  12m-ahead IPCA is wired), IBGE PMC/PIM (retail / industrial production — table codes need
-  probing), SECEX/MDIC trade balance, CAGED formal employment, ANBIMA NTN-B real yields, B3 DI
-  curve / CDI. Each follows the same `fetch_* -> (meta, obs)` + `_record(category)` pattern; add
-  to `_BCB`/`_IBGE`/a new `_IPEA` and the dispatch loop. Probe reachability from Python urllib
-  first (the env blocks some hosts; BCB/IBGE/IPEADATA/Treasury confirmed reachable 2026-06-14).
-- **US/global gaps — FRED is BLOCKED in-env:** US CPI/payrolls (BLS), PCE/GDP (BEA) need their
-  own keyless APIs; commodities (Brent, gold, grains — Kinea's "energy + AI" spine) via World
-  Bank Pink Sheet or EIA. None built; FRED must not be assumed.
+- **Done in the overnight continuation:** commodities + markets + FX (yfinance), US BLS
+  (CPI/unemployment/payrolls), +9 BCB series, +6 World Bank indicators. See the Q8.5 story.
+- **Still not wired (reachable):** IPEADATA (OData4 aggregator — but its EMBI+ country-risk
+  series `JPM366_EMBI366` ends 2024-07 in-env, so it's STALE on a current board; find a fresh
+  code before wiring), full BCB Focus (annual IPCA/Selic by reference-year + Top-5; only the
+  smoothed 12m-ahead IPCA is wired), SECEX/MDIC trade balance (the BCB SGS trade codes
+  22704/22705 were REJECTED — magnitudes didn't reconcile; use SECEX directly), CAGED formal
+  employment, ANBIMA NTN-B real yields, B3 DI curve.
+- **IBGE PIM/PMC (industrial production / retail) needs code discovery:** guessed SIDRA tables
+  (8888/8880) returned zero rows and the `/agregados` catalog endpoint returned non-JSON; pull
+  the right (table, variable, classification) from `servicodados .../metadados` before wiring.
+- **US BEA (PCE/GDP) still missing** — needs a (free) BEA API key; FRED stays BLOCKED. BLS
+  history is ~3yr only (the keyless v1 ignores the year range; a registered key gives 20yr).
 - **BCB SGS code-correctness is by live probe, not a catalog contract:** the 15 wired codes were
   value-checked 2026-06-14, but SGS has no machine-readable units/validity feed — a code that the
   BCB retires or re-bases would silently drift. A periodic `--check` against expected ranges (the

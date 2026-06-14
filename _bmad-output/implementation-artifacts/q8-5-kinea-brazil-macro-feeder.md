@@ -78,10 +78,29 @@ the story's working notes; the implemented subset is recorded below.
 
 ## Result
 
-Macro store: **33 series / 12k obs → 235 series / 93k obs**, 12 categories, central banks
-included (sources: bcb 15, bcb_focus 1, ibge 4, treasury 4, + worldbank/oecd/ecb/eurostat/
-fiscaldata). Live values sanity-check against Kinea's narrative (Selic 14.5%, IPCA 12m 4.72%,
-Focus 4.04%, BRL/USD 5.08, unemployment 5.8%, DBGG 80.4% GDP, UST 30y 4.97%).
+Macro store: **33 series / 12k obs → 358 series / ~239k obs**, 14 categories. Live values
+sanity-check against Kinea's narrative (Selic 14.5%, IPCA 12m 4.72%, Focus 4.04%, BRL/USD
+5.08, unemployment 5.8%, DBGG 80.4% GDP, UST 30y 4.97%, Brent ~$87, gold ~$4.2k).
+
+Sources: bcb 24, bcb_focus 1, ibge 4, bls 3, treasury 4, market 22 (yfinance), worldbank
+279, oecd 12, ecb 3, eurostat 2, fiscaldata 4.
+
+### Continuation build (overnight 2026-06-14, "carry on until 7am")
+
+- **Commodities + markets** (yfinance, fresh): Brent, WTI, gold, natural gas, copper, corn,
+  soybeans, coffee, sugar; Ibovespa, S&P 500, Nasdaq, Euro Stoxx 50, Nikkei, FTSE, Mexbol,
+  DXY, VIX; FX pairs EUR/USD, USD/JPY, USD/CNY, GBP/USD. New `market_sources.py` (separate
+  from stdlib-only `sources.py`); new categories `commodities`, `markets`.
+- **More BCB** (+9): IPCA cores (trimmed + exclusion), INPC, IGP-DI, CDI, capacity
+  utilisation, vehicle production, credit default rate, household debt/income.
+- **US BLS** (no key, FRED-free): CPI, unemployment, nonfarm payrolls (~3yr — keyless cap).
+- **World Bank breadth** (+6 × panel): GDP deflator, govt expense, tax revenue, gross fixed
+  capital formation, labour-force participation, FDI inflows.
+- **BCB robustness**: `_bcb_get_json` retries the BCB's transient 200+HTML throttle pages.
+- **Display refinements**: grouped cockpit (Brazil / Global & markets); 12-month movers
+  strip; cross-country comparison overlays enabled for inflation/gdp/rates/employment/trade/
+  money/population; featured-chart 1Y/5Y/Max range selector; realised-vs-Focus inflation
+  overlay (dashed companion line + legend); zero baseline for sign-crossing series.
 
 ## Deferred (ledgered)
 
