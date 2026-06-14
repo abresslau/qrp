@@ -46,6 +46,8 @@
 generated: 2026-06-13
 last_updated: 2026-06-14
 # story qh-3-readonly-db-role created 2026-06-13; implemented + reviewed 2026-06-14 (-> done)
+# story q8-5-kinea-brazil-macro-feeder created + implemented 2026-06-14 (central-bank feeders
+#   BCB/IBGE/Focus/Treasury + sell-side macro display; -> done)
 project: QRP
 project_key: NOKEY
 tracking_system: file-system
@@ -207,6 +209,7 @@ development_status:
   q8-2-altdata-series-store-ingest: done
   q8-3-broaden-altdata-sources: done
   q8-4-broaden-macro-coverage: done
+  q8-5-kinea-brazil-macro-feeder: done
   epic-q8-retrospective: optional
 
   epic-q9: done

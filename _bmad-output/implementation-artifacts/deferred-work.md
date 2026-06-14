@@ -1,4 +1,31 @@
 
+## Deferred from: Story Q8.5 Kinea/Brazil central-bank macro feeders (2026-06-14)
+
+- **Brazilian sources reachable in-env but not yet wired:** IPEADATA (OData4 aggregator),
+  full BCB Focus (annual IPCA/Selic expectations by reference-year + Top-5; only the smoothed
+  12m-ahead IPCA is wired), IBGE PMC/PIM (retail / industrial production — table codes need
+  probing), SECEX/MDIC trade balance, CAGED formal employment, ANBIMA NTN-B real yields, B3 DI
+  curve / CDI. Each follows the same `fetch_* -> (meta, obs)` + `_record(category)` pattern; add
+  to `_BCB`/`_IBGE`/a new `_IPEA` and the dispatch loop. Probe reachability from Python urllib
+  first (the env blocks some hosts; BCB/IBGE/IPEADATA/Treasury confirmed reachable 2026-06-14).
+- **US/global gaps — FRED is BLOCKED in-env:** US CPI/payrolls (BLS), PCE/GDP (BEA) need their
+  own keyless APIs; commodities (Brent, gold, grains — Kinea's "energy + AI" spine) via World
+  Bank Pink Sheet or EIA. None built; FRED must not be assumed.
+- **BCB SGS code-correctness is by live probe, not a catalog contract:** the 15 wired codes were
+  value-checked 2026-06-14, but SGS has no machine-readable units/validity feed — a code that the
+  BCB retires or re-bases would silently drift. A periodic `--check` against expected ranges (the
+  provision_readonly `--check` ethos) would catch it; not built.
+- **Display: realised-vs-expected & forecasts:** the store holds only REALISED data, so the
+  sell-side staple of a forecast column / fan chart isn't reproducible yet; a realised-vs-Focus
+  overlay (IPCA actual vs BCB:FOCUS_IPCA_12M) is the cheap first step. Featured-chart hover
+  tooltips and per-category "top movers" are further polish.
+- **Refresh cadence:** ingestion is manual (`python -m macro.ingest` / gateway refresh). A
+  Dagster schedule is the productionisation — MUST set `execution_timezone` (never UTC default).
+- **`spark`/delta semantics:** deltas are ABSOLUTE (latest − prior), anchored to each series'
+  own latest obs date; for a daily series "1m ago" is the nearest obs ≤30d back. This is honest
+  but mixes pp (rates) and level (index/price) changes in one column — fine for a directional
+  research table, but a unit-aware %-change variant is the refinement if it ever misleads.
+
 ## Deferred from: Story QH.3 read-only DB role for sym reads (2026-06-14)
 
 - **Gateway first-party sym "See" module is a full-cred broad reader (post-merge correction, found by live smoke 2026-06-14):** QH.3 initially routed the gateway's `connect()` through `qrp_readonly`, which broke the WHOLE Q2 See surface — `modules/sym/gateway.py` reads sym-INTERNAL relations (`universe`, `prices_raw`, `gics_scd`, `price_gaps`, review/validation logs) that the surface-only role can't serve, so Overview 500'd. The See module is QRP's observability window into sym (read-only **by convention**), NOT a cross-package AR-R3 consumer — same posture as the `lineage` exception above. `services/api/db.py connect()` now uses full creds; the 8 cross-package consumers keep the physical `qrp_readonly` guarantee. **Follow-up:** a broad introspection-scoped read-only role (read-all-sym / write-nothing) would make this serving-path first-party reader physically write-incapable too — a bigger reader than offline lineage, so arguably the more deserving target of a future hardening story than lineage is.
