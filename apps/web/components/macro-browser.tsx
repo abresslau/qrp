@@ -106,6 +106,22 @@ function fmtDate(iso?: string | null): string {
   return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
+const RANGES = { "1Y": 1, "5Y": 5, Max: null } as const;
+type RangeKey = keyof typeof RANGES;
+
+/** Slice a detail to the last N years (anchored to the series' OWN last obs, since end
+ *  dates differ). Falls back to the full series if the window leaves < 2 points (e.g. an
+ *  annual series over 1Y) so the chart never goes blank. */
+function sliceByRange(detail: SeriesDetail, range: RangeKey): SeriesDetail {
+  const years = RANGES[range];
+  const obs = detail.observations;
+  if (years == null || obs.length === 0) return detail;
+  const cutoff = new Date(obs[obs.length - 1].obs_date);
+  cutoff.setFullYear(cutoff.getFullYear() - years);
+  const sliced = obs.filter((o) => new Date(o.obs_date) >= cutoff);
+  return sliced.length >= 2 ? { ...detail, observations: sliced } : detail;
+}
+
 // --- tiny sparkline (table + cards) ------------------------------------------------------
 
 function Sparkline({ values, className = "" }: { values: number[]; className?: string }) {
@@ -329,6 +345,7 @@ export function MacroBrowser({ category }: { category?: string }) {
   const [clicked, setClicked] = useState<string | null>(null);
   const [detail, setDetail] = useState<SeriesDetail | null>(null);
   const [errorFor, setErrorFor] = useState<string | null>(null);
+  const [range, setRange] = useState<RangeKey>("5Y");
 
   useEffect(() => {
     fetch("/api/macro/series", { cache: "no-store" })
@@ -464,8 +481,22 @@ export function MacroBrowser({ category }: { category?: string }) {
                   </span>
                 </div>
               </div>
-              <div className="mt-3">
-                <FeaturedChart detail={shown} />
+              <div className="mt-2 flex justify-end gap-1">
+                {(Object.keys(RANGES) as RangeKey[]).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRange(r)}
+                    className={`rounded px-2 py-0.5 text-xs transition ${
+                      range === r ? "bg-fg/10 text-fg" : "text-muted hover:bg-fg/5"
+                    }`}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1">
+                <FeaturedChart detail={sliceByRange(shown, range)} />
               </div>
             </>
           ) : errorFor === sel ? (
