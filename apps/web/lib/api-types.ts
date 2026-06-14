@@ -1664,6 +1664,19 @@ export interface components {
             end_date: string | null;
             /** Latest */
             latest: number | null;
+            /** Chg 1M */
+            chg_1m?: number | null;
+            /** Chg 3M */
+            chg_3m?: number | null;
+            /** Chg 12M */
+            chg_12m?: number | null;
+            /** Chg Ytd */
+            chg_ytd?: number | null;
+            /**
+             * Spark
+             * @default []
+             */
+            spark: number[];
         };
         /**
          * SignalTilt

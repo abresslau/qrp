@@ -34,6 +34,11 @@ class SeriesSummary(BaseModel):
     start_date: str | None  # observed coverage range (canonical date-naming convention)
     end_date: str | None
     latest: float | None
+    chg_1m: float | None = None  # absolute change vs ~1/3/12 months before the latest obs
+    chg_3m: float | None = None
+    chg_12m: float | None = None
+    chg_ytd: float | None = None  # vs last observation of the prior calendar year
+    spark: list[float] = []  # up to 48 most-recent values (chronological) for a sparkline
 
 
 class Observation(BaseModel):

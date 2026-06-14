@@ -10,18 +10,65 @@ class DbMacroGateway:
         self._conn = conn
 
     def series(self) -> list[dict]:
+        """Series catalog enriched for the research dashboard: latest value, point-in-time
+        deltas (1m/3m/12m and year-to-date) anchored to each series' OWN latest observation
+        date (the series have different frequencies and end dates), and a compact recent
+        sparkline. All computed in one indexed lateral-join pass — no per-series round trips.
+        Deltas are absolute (latest − prior), the natural change column for rate/%/index
+        series alike; NULL when there is no comparison point that far back."""
         rows = self._conn.execute(
             """
             SELECT s.series_id, s.source, s.name, s.geo, s.unit, s.frequency, s.category,
-                   count(o.*) AS n_obs, min(o.obs_date) AS first, max(o.obs_date) AS last,
-                   (SELECT value FROM macro.observation o2
-                     WHERE o2.series_id = s.series_id ORDER BY o2.obs_date DESC LIMIT 1) AS latest
+                   agg.n_obs, agg.first, l.obs_date AS last, l.value AS latest,
+                   v1.value AS v_1m, v3.value AS v_3m, v12.value AS v_12m, vye.value AS v_ye,
+                   sp.spark
               FROM macro.series s
-              LEFT JOIN macro.observation o USING (series_id)
-             GROUP BY s.series_id, s.source, s.name, s.geo, s.unit, s.frequency, s.category
+              LEFT JOIN LATERAL (
+                  SELECT count(*) AS n_obs, min(obs_date) AS first
+                    FROM macro.observation WHERE series_id = s.series_id
+              ) agg ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT obs_date, value FROM macro.observation
+                   WHERE series_id = s.series_id ORDER BY obs_date DESC LIMIT 1
+              ) l ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT value FROM macro.observation
+                   WHERE series_id = s.series_id AND obs_date <= l.obs_date - INTERVAL '1 month'
+                   ORDER BY obs_date DESC LIMIT 1
+              ) v1 ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT value FROM macro.observation
+                   WHERE series_id = s.series_id AND obs_date <= l.obs_date - INTERVAL '3 months'
+                   ORDER BY obs_date DESC LIMIT 1
+              ) v3 ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT value FROM macro.observation
+                   WHERE series_id = s.series_id AND obs_date <= l.obs_date - INTERVAL '12 months'
+                   ORDER BY obs_date DESC LIMIT 1
+              ) v12 ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT value FROM macro.observation
+                   WHERE series_id = s.series_id AND obs_date < date_trunc('year', l.obs_date)
+                   ORDER BY obs_date DESC LIMIT 1
+              ) vye ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT array_agg(value ORDER BY obs_date) AS spark FROM (
+                      SELECT obs_date, value FROM macro.observation
+                       WHERE series_id = s.series_id ORDER BY obs_date DESC LIMIT 48
+                  ) recent
+              ) sp ON TRUE
              ORDER BY s.name, s.geo
             """
         ).fetchall()
+
+        def _f(v) -> float | None:
+            return float(v) if v is not None else None
+
+        def _delta(latest, prior) -> float | None:
+            if latest is None or prior is None:
+                return None
+            return float(latest) - float(prior)
+
         return [
             {
                 "series_id": sid,
@@ -34,9 +81,15 @@ class DbMacroGateway:
                 "n_obs": n,
                 "start_date": f.isoformat() if f else None,
                 "end_date": last.isoformat() if last else None,
-                "latest": float(latest) if latest is not None else None,
+                "latest": _f(latest),
+                "chg_1m": _delta(latest, v1),
+                "chg_3m": _delta(latest, v3),
+                "chg_12m": _delta(latest, v12),
+                "chg_ytd": _delta(latest, vye),
+                "spark": [float(x) for x in spark] if spark else [],
             }
-            for sid, src, name, geo, unit, freq, category, n, f, last, latest in rows
+            for (sid, src, name, geo, unit, freq, category, n, f, last, latest,
+                 v1, v3, v12, vye, spark) in rows
         ]
 
     def categories(self) -> list[dict]:
