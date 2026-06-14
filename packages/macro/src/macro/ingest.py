@@ -10,6 +10,7 @@ from __future__ import annotations
 import psycopg
 
 from macro.db import connect
+from macro.market_sources import fetch_yfinance
 from macro.sources import (
     fetch_bcb_focus_12m,
     fetch_bcb_sgs,
@@ -31,7 +32,27 @@ from macro.sources import (
 CATEGORIES = (
     "inflation", "rates", "fx", "activity", "gdp", "employment",
     "fiscal", "debt", "external", "money", "trade", "population",
+    "commodities", "markets",
 )
+
+# Market series via yfinance (commodities + indices) — the cross-asset context a macro desk
+# reads alongside the official data (Kinea's energy/commodities spine). (ticker, series_id,
+# name, unit, geo, category). A ticker with no data is dropped, never faked.
+_MARKET = [
+    ("BZ=F", "MKT:BRENT", "Brent crude oil", "USD/bbl", "Global", "commodities"),
+    ("CL=F", "MKT:WTI", "WTI crude oil", "USD/bbl", "US", "commodities"),
+    ("GC=F", "MKT:GOLD", "Gold", "USD/oz", "Global", "commodities"),
+    ("NG=F", "MKT:NATGAS", "US natural gas (Henry Hub)", "USD/MMBtu", "US", "commodities"),
+    ("HG=F", "MKT:COPPER", "Copper", "USD/lb", "Global", "commodities"),
+    ("ZC=F", "MKT:CORN", "Corn", "USc/bushel", "Global", "commodities"),
+    ("ZS=F", "MKT:SOYBEAN", "Soybeans", "USc/bushel", "Global", "commodities"),
+    ("KC=F", "MKT:COFFEE", "Coffee (arabica)", "USc/lb", "Global", "commodities"),
+    ("SB=F", "MKT:SUGAR", "Sugar", "USc/lb", "Global", "commodities"),
+    ("^BVSP", "MKT:IBOV", "Ibovespa", "index", "Brazil", "markets"),
+    ("^GSPC", "MKT:SPX", "S&P 500", "index", "US", "markets"),
+    ("DX-Y.NYB", "MKT:DXY", "US dollar index (DXY)", "index", "US", "markets"),
+    ("^VIX", "MKT:VIX", "Volatility index (VIX)", "index", "US", "markets"),
+]
 
 # A major-economy panel for the annual World Bank indicators. EXISTING geo codes are kept
 # verbatim (US/BRA/EMU/GBR/JPN) so no historical series_id orphans; the rest broaden
@@ -320,6 +341,11 @@ def run_ingest(conn: psycopg.Connection) -> dict:
                             classifications=cls, scale=scale),
                 category,
             )
+        except Exception as exc:  # noqa: BLE001
+            _failed(sid, exc)
+    for ticker, sid, name, unit, geo, category in _MARKET:
+        try:
+            _record(sid, fetch_yfinance(ticker, sid, name, unit, geo), category)
         except Exception as exc:  # noqa: BLE001
             _failed(sid, exc)
     # BCB Focus survey: market inflation expectations (the anchor Kinea tracks vs realised).
