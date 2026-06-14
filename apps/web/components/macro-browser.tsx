@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from "react";
 
 import { COMPARISON_CATEGORIES, MacroCompare } from "@/components/macro-compare";
 import type { Schemas } from "@/lib/api";
@@ -163,6 +163,7 @@ function FeaturedChart({
   detail: SeriesDetail;
   overlay?: SeriesDetail | null;
 }) {
+  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const pts = detail.observations;
   const geom = useMemo(() => {
     const opts = overlay?.observations ?? [];
@@ -205,8 +206,9 @@ function FeaturedChart({
     });
     const last = pts[pts.length - 1];
     return {
-      W, H, padR, line, area, overlayLine, yTicks, xTicks,
+      W, H, padR, padT, padB, line, area, overlayLine, yTicks, xTicks,
       zeroY: minY < 0 && maxY > 0 ? sy(0) : null,  // baseline for series that cross zero
+      points: pts.map((p, i) => ({ x: sx(xs[i]), y: sy(p.value), v: p.value, d: p.obs_date })),
       lastX: sx(xs[xs.length - 1]),
       lastY: sy(last.value),
       lastV: last.value,
@@ -214,8 +216,39 @@ function FeaturedChart({
   }, [pts, overlay]);
 
   if (!geom) return <p className="text-sm text-muted">Not enough observations to chart.</p>;
+
+  const hoverPt = hoverIdx != null ? geom.points[hoverIdx] : null;
+  const onMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const vbX = ((e.clientX - rect.left) / rect.width) * geom.W;
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < geom.points.length; i++) {
+      const dist = Math.abs(geom.points[i].x - vbX);
+      if (dist < bestD) {
+        bestD = dist;
+        best = i;
+      }
+    }
+    setHoverIdx(best);
+  };
+
   return (
-    <svg viewBox={`0 0 ${geom.W} ${geom.H}`} className="w-full">
+    <>
+      <div className="mb-1 h-4 text-xs tabular-nums text-muted">
+        {hoverPt ? (
+          <span>
+            <span className="text-fg">{fmtDate(hoverPt.d)}</span> ·{" "}
+            <span className="text-fg">{fmtNum(hoverPt.v, detail.unit)}</span>
+          </span>
+        ) : null}
+      </div>
+      <svg
+        viewBox={`0 0 ${geom.W} ${geom.H}`}
+        className="w-full"
+        onMouseMove={onMove}
+        onMouseLeave={() => setHoverIdx(null)}
+      >
       <defs>
         <linearGradient id="macroArea" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="currentColor" stopOpacity="0.16" className="text-sky-500" />
@@ -281,7 +314,22 @@ function FeaturedChart({
       >
         {fmtNum(geom.lastV, detail.unit)}
       </text>
+      {hoverPt && (
+        <g>
+          <line
+            x1={hoverPt.x}
+            x2={hoverPt.x}
+            y1={geom.padT}
+            y2={geom.H - geom.padB}
+            className="text-fg/40"
+            stroke="currentColor"
+            strokeWidth={0.8}
+          />
+          <circle cx={hoverPt.x} cy={hoverPt.y} r={3.2} className="fill-sky-500" />
+        </g>
+      )}
     </svg>
+    </>
   );
 }
 
