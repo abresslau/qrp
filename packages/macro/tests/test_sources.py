@@ -10,14 +10,21 @@ import pytest
 
 import macro.sources as sources
 from macro.sources import (
+    _parse_br_date,
     _parse_period,
+    _sidra_period,
+    fetch_bcb_focus_12m,
+    fetch_bcb_sgs,
     fetch_ecb,
     fetch_eurostat,
     fetch_fiscaldata_avg_rates,
     fetch_fiscaldata_debt,
     fetch_fiscaldata_rows,
     fetch_oecd_cpi,
+    fetch_sidra,
+    fetch_treasury_par_yield,
     parse_sdmx_csv,
+    parse_treasury_par_yield,
 )
 
 
@@ -210,6 +217,65 @@ def test_fetch_fiscaldata_avg_rates_one_series_per_marketable_class(monkeypatch)
     assert metas["UST:AVG_RATE:BILLS"]["frequency"] == "monthly"
 
 
+# --- US Treasury par yield curve (Atom/XML feed) ------------------------------------------
+
+_PAR_YIELD_XML = """\
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<feed xml:base="https://home.treasury.gov/x"
+      xmlns:d="http://schemas.microsoft.com/ado/2007/08/dataservices"
+      xmlns:m="http://schemas.microsoft.com/ado/2007/08/dataservices/metadata"
+      xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">DailyTreasuryYieldCurveRateData</title>
+  <entry><content type="application/xml"><m:properties>
+    <d:NEW_DATE m:type="Edm.DateTime">2026-01-02T00:00:00</d:NEW_DATE>
+    <d:BC_1MONTH m:type="Edm.Double">3.72</d:BC_1MONTH>
+    <d:BC_3MONTH m:type="Edm.Double">3.80</d:BC_3MONTH>
+    <d:BC_2YEAR m:type="Edm.Double">3.47</d:BC_2YEAR>
+    <d:BC_10YEAR m:type="Edm.Double">4.19</d:BC_10YEAR>
+    <d:BC_30YEAR m:type="Edm.Double">4.86</d:BC_30YEAR>
+  </m:properties></content></entry>
+  <entry><content type="application/xml"><m:properties>
+    <d:NEW_DATE m:type="Edm.DateTime">2026-01-05T00:00:00</d:NEW_DATE>
+    <d:BC_2YEAR m:type="Edm.Double">3.50</d:BC_2YEAR>
+    <d:BC_10YEAR m:type="Edm.Double"></d:BC_10YEAR>
+  </m:properties></content></entry>
+  <entry><content type="application/xml"><m:properties>
+    <d:NEW_DATE m:type="Edm.DateTime">2026-01-06T00:00:00</d:NEW_DATE>
+    <d:BC_2YEAR m:type="Edm.Double">NaN</d:BC_2YEAR>
+    <d:BC_10YEAR m:type="Edm.Double">4.25</d:BC_10YEAR>
+  </m:properties></content></entry>
+</feed>
+"""
+
+
+def test_parse_treasury_par_yield_extracts_2y_and_10y_skipping_gaps():
+    out = parse_treasury_par_yield(_PAR_YIELD_XML)
+    assert out["2Y"] == [
+        (date(2026, 1, 2), 3.47),
+        (date(2026, 1, 5), 3.50),
+        # 2026-01-06 2Y cell is NaN -> skipped as garbled
+    ]
+    assert out["10Y"] == [
+        (date(2026, 1, 2), 4.19),
+        # 2026-01-05 10Y cell is blank -> skipped
+        (date(2026, 1, 6), 4.25),
+    ]
+
+
+def test_fetch_treasury_par_yield_concatenates_years_and_labels(monkeypatch):
+    monkeypatch.setattr(sources, "_get", lambda url: _PAR_YIELD_XML.encode())
+    series = fetch_treasury_par_yield(start_year=date.today().year)  # single year -> one feed
+    by_id = {meta["series_id"]: (meta, obs) for meta, obs in series}
+    assert set(by_id) == {
+        "UST:PAR_YIELD:3M", "UST:PAR_YIELD:2Y", "UST:PAR_YIELD:10Y", "UST:PAR_YIELD:30Y",
+    }
+    meta_2y, obs_2y = by_id["UST:PAR_YIELD:2Y"]
+    assert meta_2y["source"] == "treasury"
+    assert meta_2y["unit"] == "%"
+    assert meta_2y["frequency"] == "daily"
+    assert obs_2y[0] == (date(2026, 1, 2), 3.47)
+
+
 # --- Eurostat (JSON-stat 2.0) --------------------------------------------------------------
 
 
@@ -282,3 +348,108 @@ def test_fetch_eurostat_skips_non_finite_values(monkeypatch):
     monkeypatch.setattr(sources, "_get", lambda url: json.dumps(payload).encode())
     _, obs = fetch_eurostat("prc_hicp_manr", {"geo": "EA"}, "X", "x", "u")
     assert obs == [(date(2025, 1, 1), 2.5)]  # NaN/inf cells skipped as garbled
+
+
+# --- BCB SGS (Banco Central do Brasil) --------------------------------------------------
+
+
+def test_parse_br_date_dd_mm_yyyy():
+    assert _parse_br_date("01/03/2026") == date(2026, 3, 1)
+    assert _parse_br_date("31/12/1999") == date(1999, 12, 31)
+
+
+def test_fetch_bcb_sgs_parses_scales_and_dedupes_decade_boundaries(monkeypatch):
+    # Same payload returned for every decade window -> the inclusive-boundary dedupe must
+    # collapse to the unique dates (not multiply them), and `scale` is a labelled conversion.
+    payload = json.dumps(
+        [
+            {"data": "01/01/2024", "valor": "1000000"},
+            {"data": "01/02/2024", "valor": ""},        # empty -> skipped, never faked
+            {"data": "01/03/2024", "valor": "2000000"},
+        ]
+    ).encode()
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: payload)
+    meta, obs = fetch_bcb_sgs(
+        99, "BCB:X", "x", "R$ trillion", "monthly", scale=1e-6, start_year=2020
+    )
+    assert meta["source"] == "bcb"
+    assert obs == [(date(2024, 1, 1), 1.0), (date(2024, 3, 1), 2.0)]  # scaled, gap skipped
+
+
+def test_fetch_bcb_sgs_compress_steps_keeps_change_points(monkeypatch):
+    payload = json.dumps(
+        [
+            {"data": "01/01/2024", "valor": "14.50"},
+            {"data": "02/01/2024", "valor": "14.50"},  # repeat -> dropped
+            {"data": "03/01/2024", "valor": "14.25"},  # change -> kept
+            {"data": "04/01/2024", "valor": "14.25"},  # repeat -> dropped
+            {"data": "05/01/2024", "valor": "14.00"},  # last -> kept
+        ]
+    ).encode()
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: payload)
+    _, obs = fetch_bcb_sgs(
+        432, "BCB:SELIC_TARGET", "x", "%", "daily", start_year=2024, compress_steps=True
+    )
+    assert obs == [
+        (date(2024, 1, 1), 14.50),
+        (date(2024, 1, 3), 14.25),
+        (date(2024, 1, 5), 14.00),
+    ]
+
+
+# --- IBGE SIDRA -------------------------------------------------------------------------
+
+
+def test_sidra_period_monthly_and_quarterly():
+    assert _sidra_period("202605", "monthly") == date(2026, 5, 1)
+    assert _sidra_period("202601", "quarterly") == date(2026, 3, 1)   # Q1 -> month 3
+    assert _sidra_period("202504", "quarterly") == date(2025, 12, 1)  # Q4 -> month 12
+    with pytest.raises(ValueError):
+        _sidra_period("202609", "quarterly")  # quarter 9 is invalid
+
+
+_SIDRA_PIB = [
+    # legend first: the period dimension is D4 ("Trimestre"), NOT D3 ("Setores")
+    {"V": "Valor", "D3C": "Setores (Código)", "D3N": "Setores",
+     "D4C": "Trimestre (Código)", "D4N": "Trimestre"},
+    {"V": "3235708", "D3C": "90707", "D4C": "202503"},
+    {"V": "...", "D3C": "90707", "D4C": "202504"},        # sentinel -> skipped
+    {"V": "3250979", "D3C": "90707", "D4C": "202601"},
+]
+
+
+def test_fetch_sidra_finds_period_in_d4_and_skips_sentinels(monkeypatch):
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: json.dumps(_SIDRA_PIB).encode())
+    meta, obs = fetch_sidra(
+        1846, 585, "IBGE:PIB", "GDP", "R$ trillion", frequency="quarterly",
+        classifications=[(11255, 90707)], scale=1e-6,
+    )
+    assert meta["source"] == "ibge"
+    assert obs == [(date(2025, 9, 1), 3.235708), (date(2026, 3, 1), 3.250979)]
+
+
+def test_fetch_sidra_raises_when_no_period_dimension(monkeypatch):
+    legend_only = [{"V": "Valor", "D1C": "Brasil (Código)"}, {"V": "1", "D1C": "1"}]
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: json.dumps(legend_only).encode())
+    with pytest.raises(ValueError, match="no period dimension"):
+        fetch_sidra(1, 1, "X", "x", "u")
+
+
+# --- BCB Focus (market expectations) ----------------------------------------------------
+
+
+def test_fetch_bcb_focus_12m_parses_and_skips_blank(monkeypatch):
+    # one short page (< the 10000 page size) stops the OData walk; the blank-Data row and
+    # the null-median row are skipped, never faked.
+    page = {
+        "value": [
+            {"Data": "2026-01-02", "Mediana": 4.01},
+            {"Data": "2026-01-03", "Mediana": 4.05},
+            {"Data": "", "Mediana": 9.9},
+            {"Data": "2026-01-06", "Mediana": None},
+        ]
+    }
+    monkeypatch.setattr(sources, "_get_retry", lambda url, **kw: json.dumps(page).encode())
+    meta, obs = fetch_bcb_focus_12m("IPCA", "BCB:FOCUS_IPCA_12M", "x", "% per year")
+    assert meta["source"] == "bcb_focus"
+    assert obs == [(date(2026, 1, 2), 4.01), (date(2026, 1, 3), 4.05)]

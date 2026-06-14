@@ -44,6 +44,17 @@ _META = {
 }
 
 
+def _empty_focus(*args, **kwargs):
+    """No-op stub for the BCB Focus fetcher: a valid meta with no observations, so the
+    run_ingest dispatch tests can neutralize that source without a network call (the
+    empty-obs series is dropped by _upsert, contributing nothing to the summary SQL)."""
+    meta = {
+        "series_id": "BCB:FOCUS_IPCA_12M", "source": "bcb_focus", "name": "f",
+        "geo": "Brazil", "unit": "% per year", "frequency": "daily",
+    }
+    return meta, []
+
+
 def test_upsert_counts_obs_and_restatements_separately():
     conn = FakeConn(obs_results=[(False,), None, (True,)])
     obs = [(date(2025, 1, 1), 1.0), (date(2025, 2, 1), 2.0), (date(2025, 3, 1), 3.0)]
@@ -102,6 +113,10 @@ def test_run_ingest_attaches_declared_categories(monkeypatch):
     # run the FULL dispatch with fakes and inspect what reached the SQL
     monkeypatch.setattr(ingest, "_ECB", [])
     monkeypatch.setattr(ingest, "_EUROSTAT", [])
+    monkeypatch.setattr(ingest, "_BCB", [])
+    monkeypatch.setattr(ingest, "_IBGE", [])
+    monkeypatch.setattr(ingest, "fetch_treasury_par_yield", lambda *a, **k: [])
+    monkeypatch.setattr(ingest, "fetch_bcb_focus_12m", _empty_focus)
     monkeypatch.setattr(ingest, "_OECD_CPI_GEOS", ["USA"])
     monkeypatch.setattr(
         ingest, "_WB",
@@ -161,6 +176,10 @@ def test_run_ingest_attributes_failures_per_series(monkeypatch):
     monkeypatch.setattr(ingest, "_WB", [])
     monkeypatch.setattr(ingest, "_ECB", [])
     monkeypatch.setattr(ingest, "_EUROSTAT", [])
+    monkeypatch.setattr(ingest, "_BCB", [])
+    monkeypatch.setattr(ingest, "_IBGE", [])
+    monkeypatch.setattr(ingest, "fetch_treasury_par_yield", lambda *a, **k: [])
+    monkeypatch.setattr(ingest, "fetch_bcb_focus_12m", _empty_focus)
     monkeypatch.setattr(ingest, "_OECD_CPI_GEOS", ["USA", "GBR"])
 
     def fake_oecd(geo):

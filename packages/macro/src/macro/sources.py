@@ -17,18 +17,41 @@ import csv
 import io
 import json
 import math
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import date
 
 _UA = {"User-Agent": "qrp-macro/1.0 (personal research)"}
 _TIMEOUT = 20.0
 
 
-def _get(url: str) -> bytes:
+def _get(url: str, timeout: float = _TIMEOUT) -> bytes:
     req = urllib.request.Request(url, headers=_UA)
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:  # noqa: S310 (trusted hosts)
+    with urllib.request.urlopen(req, timeout=timeout) as r:  # noqa: S310 (trusted hosts)
         return r.read()
+
+
+def _get_retry(url: str, timeout: float = 45.0, attempts: int = 4) -> bytes:
+    """``_get`` with backoff for slow/throttled hosts (BCB returns 429/5xx on bursts and is
+    occasionally slow on deep-history windows). Retries on timeout and transient HTTP/URL
+    errors; a 404 (no data in window) propagates so callers can treat it as empty."""
+    delay = 1.5
+    for i in range(attempts):
+        try:
+            return _get(url, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 or exc.code < 500 and exc.code != 429:
+                raise
+            last = exc
+        except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
+            last = exc
+        if i < attempts - 1:
+            time.sleep(delay)
+            delay *= 2
+    raise last
 
 
 def _parse_period(p: str) -> date:
@@ -296,6 +319,306 @@ def fetch_fiscaldata_avg_rates() -> list[tuple[dict, list]]:
         }
         out.append((meta, _fiscaldata_obs(by_sec[sec], "avg_interest_rate_amt")))
     return out
+
+
+# --- US Treasury Daily Par Yield Curve (home.treasury.gov XML Atom feed) -----------------
+# The par yield curve is NOT on the fiscaldata.treasury.gov JSON API — it is published as
+# an Atom/XML feed on the Treasury resource center. ?data=daily_treasury_yield_curve with
+# field_tdr_date_value=<YYYY> returns one <entry> per business day for that year; each
+# entry's <m:properties> carries NEW_DATE plus BC_<TENOR> par rate columns. No API key.
+TREASURY_PAR_YIELD_BASE = (
+    "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml"
+    "?data=daily_treasury_yield_curve&field_tdr_date_value={year}"
+)
+
+# Atom + Microsoft ADO dataservices namespaces used by the feed.
+_ATOM_NS = "{http://www.w3.org/2005/Atom}"
+_D_NS = "{http://schemas.microsoft.com/ado/2007/08/dataservices}"
+
+# The two tenors a macro desk lives on (2s10s). BC_<TENOR> is the par yield column name.
+_PAR_TENORS: dict[str, tuple[str, str]] = {
+    # series_id suffix -> (XML property tag, human label)
+    "3M": ("BC_3MONTH", "3-month"),
+    "2Y": ("BC_2YEAR", "2-year"),
+    "10Y": ("BC_10YEAR", "10-year"),
+    "30Y": ("BC_30YEAR", "30-year"),
+}
+
+
+def parse_treasury_par_yield(xml_text: str) -> dict[str, list[tuple[date, float]]]:
+    """Parse the Treasury par-yield Atom feed into ``{tenor_suffix: [(date, rate)]}``.
+
+    One <entry> per business day; NEW_DATE is the observation date (an ISO datetime,
+    taken date-only). A missing/blank/garbled tenor cell is skipped for that day (a fresh
+    tenor with no history yet, or a holiday gap), never invented. Returns sorted pairs.
+    """
+    out: dict[str, list[tuple[date, float]]] = {suffix: [] for suffix in _PAR_TENORS}
+    root = ET.fromstring(xml_text)
+    for entry in root.iter(f"{_ATOM_NS}entry"):
+        props = entry.find(f".//{_D_NS}NEW_DATE")
+        if props is None or not (props.text or "").strip():
+            continue
+        try:
+            d = date.fromisoformat((props.text or "").strip()[:10])
+        except ValueError:
+            continue
+        for suffix, (tag, _label) in _PAR_TENORS.items():
+            cell = entry.find(f".//{_D_NS}{tag}")
+            raw = (cell.text or "").strip() if cell is not None else ""
+            if not raw:
+                continue
+            try:
+                out[suffix].append((d, _finite(raw)))
+            except (ValueError, TypeError):
+                continue
+    for suffix in out:
+        out[suffix].sort()
+    return out
+
+
+def fetch_treasury_par_yield(start_year: int = 1990) -> list[tuple[dict, list]]:
+    """US Treasury par yield curve 2Y & 10Y (daily), one series per tenor.
+
+    The feed is per-year, so this fetches each year from ``start_year`` to the current
+    year and concatenates. A year with no published data yields an empty feed (no entries)
+    and simply contributes nothing — never faked. Returns ``(meta, observations)`` per tenor.
+    """
+    per_tenor: dict[str, list[tuple[date, float]]] = {suffix: [] for suffix in _PAR_TENORS}
+    for year in range(start_year, date.today().year + 1):
+        xml_text = _get(TREASURY_PAR_YIELD_BASE.format(year=year)).decode("utf-8", "replace")
+        for suffix, obs in parse_treasury_par_yield(xml_text).items():
+            per_tenor[suffix].extend(obs)
+    out: list[tuple[dict, list]] = []
+    for suffix, (_tag, label) in _PAR_TENORS.items():
+        obs = per_tenor[suffix]
+        obs.sort()
+        meta = {
+            "series_id": f"UST:PAR_YIELD:{suffix}",
+            "source": "treasury",
+            "name": f"US Treasury par yield — {label}",
+            "geo": "United States",
+            "unit": "%",
+            "frequency": "daily",
+        }
+        out.append((meta, obs))
+    return out
+
+
+# --- BCB SGS (Banco Central do Brasil — Sistema Gerenciador de Séries Temporais) --------
+# Open JSON REST, no API key. Range queries are capped at ~10 years server-side, so history
+# is fetched in decade windows and concatenated. `valor` is a string with a '.' decimal; an
+# empty `valor` is a genuine gap (skipped, never faked). The BCB returns HTTP 406 to a
+# default library User-Agent — the module-wide custom UA in `_get` avoids it.
+BCB_SGS_BASE = (
+    "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{code}/dados"
+    "?formato=json&dataInicial={start}&dataFinal={end}"
+)
+
+
+def _parse_br_date(s: str) -> date:
+    """BCB SGS dates are dd/MM/yyyy (monthly series are dated to the 1st)."""
+    d, m, y = s.split("/")
+    return date(int(y), int(m), int(d))
+
+
+def fetch_bcb_sgs(
+    code: int,
+    series_id: str,
+    name: str,
+    unit: str,
+    frequency: str,
+    geo: str = "Brazil",
+    scale: float = 1.0,
+    start_year: int = 1990,
+    compress_steps: bool = False,
+) -> tuple[dict, list]:
+    """One BCB SGS series by numeric code, fetched in ≤10-year windows and concatenated.
+
+    ``scale`` is a labelled unit conversion (the UST:DEBT trillions precedent), e.g. 1e-9 to
+    store an R$-thousand money aggregate as R$ trillions, or 1e-3 to store a USD-million
+    reserves series as USD billions — never a transformation of the data. ``compress_steps``
+    keeps only change-points (plus the first and last obs) for a step-function series like
+    the Selic target, so a daily feed repeating the same level every business day stores as
+    a meaningful step series (the ECB policy-rate precedent).
+    """
+    raw: list[tuple[date, float]] = []
+    this_year = date.today().year
+    start = start_year
+    while start <= this_year:
+        chunk_end = min(start + 9, this_year)
+        url = BCB_SGS_BASE.format(code=code, start=f"01/01/{start}", end=f"31/12/{chunk_end}")
+        try:
+            payload = json.loads(_get_retry(url).decode("utf-8", "replace"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:  # no data in this window — not an error
+                payload = []
+            else:
+                raise
+        if isinstance(payload, list):
+            for row in payload:
+                d_raw = (row.get("data") or "").strip()
+                v_raw = (row.get("valor") or "").strip()
+                if not d_raw or not v_raw:
+                    continue
+                try:
+                    raw.append((_parse_br_date(d_raw), _finite(v_raw) * scale))
+                except (ValueError, TypeError):
+                    continue
+        start = chunk_end + 1
+    obs = sorted(dict(raw).items())  # dedupe inclusive decade boundaries, then sort
+    if compress_steps:
+        obs = [
+            (d, v)
+            for i, (d, v) in enumerate(obs)
+            if i == 0 or i == len(obs) - 1 or v != obs[i - 1][1]
+        ]
+    meta = {
+        "series_id": series_id,
+        "source": "bcb",
+        "name": name,
+        "geo": geo,
+        "unit": unit,
+        "frequency": frequency,
+    }
+    return meta, obs
+
+
+# --- BCB Olinda — Focus survey (market expectations) ------------------------------------
+# OData service, no key. `$format=json` is mandatory; records live under `value`. We pull the
+# SMOOTHED 12-month-ahead expectation (`Suavizada eq 'S'`, `baseCalculo eq 0`) for one
+# indicator as a clean (survey-date, median) series — the expectations anchor a desk tracks
+# against realised inflation. Paged by `$skip` until a short page.
+FOCUS_INFL12M = (
+    "https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/"
+    "ExpectativasMercadoInflacao12Meses"
+)
+
+
+def fetch_bcb_focus_12m(
+    indicator: str, series_id: str, name: str, unit: str, geo: str = "Brazil"
+) -> tuple[dict, list]:
+    """Focus survey 12-month-ahead expectation (smoothed median) for ``indicator`` (e.g.
+    'IPCA'), as a (survey-date, median) daily series. No key; paged via OData ``$skip``."""
+    rows: list[dict] = []
+    skip = 0
+    page = 10000
+    while True:
+        params = {
+            "$filter": (
+                f"Suavizada eq 'S' and Indicador eq '{indicator}' and baseCalculo eq 0"
+            ),
+            "$select": "Data,Mediana",
+            "$orderby": "Data",
+            "$top": str(page),
+            "$skip": str(skip),
+            "$format": "json",
+        }
+        q = "?" + urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
+        payload = json.loads(_get_retry(FOCUS_INFL12M + q, timeout=45).decode("utf-8", "replace"))
+        batch = payload.get("value") or []
+        rows.extend(batch)
+        if len(batch) < page:
+            break
+        skip += page
+    obs: list[tuple[date, float]] = []
+    for r in rows:
+        d_raw = (r.get("Data") or "").strip()
+        v = r.get("Mediana")
+        if not d_raw or v is None:
+            continue
+        try:
+            obs.append((date.fromisoformat(d_raw), _finite(v)))
+        except (ValueError, TypeError):
+            continue
+    obs.sort()
+    meta = {
+        "series_id": series_id,
+        "source": "bcb_focus",
+        "name": name,
+        "geo": geo,
+        "unit": unit,
+        "frequency": "daily",
+    }
+    return meta, obs
+
+
+# --- IBGE SIDRA (Brazilian official statistics: IPCA, PNAD unemployment, PIB) ------------
+# Open JSON REST, no key. The response is a FLAT array whose first element is a legend
+# (header) and the rest are data rows; `V` is the value (string; non-numeric sentinels
+# '-'/'..'/'...'/'X' mean missing), and the period lives in whichever dimension the legend
+# names "Mês"/"Trimestre". Host `apisidra.ibge.gov.br` (the `api.sidra` host has a cert
+# mismatch). An empty UA can 403 — the module UA in `_get` avoids it.
+SIDRA_BASE = "https://apisidra.ibge.gov.br/values/t/{table}/n1/all/v/{variable}{cls}/p/all"
+
+_SIDRA_MISSING = {"-", "..", "...", "X", "x", ""}
+
+
+def _sidra_period(code: str, frequency: str) -> date:
+    """SIDRA period codes: monthly/rolling-quarter = AAAAMM (dated to the month-1st);
+    quarterly = AAAA0T where the last two digits are the quarter 01-04 (dated to the
+    quarter-end month-1st). Anything else raises (skipped by the caller)."""
+    year = int(code[:4])
+    part = int(code[4:6])
+    if frequency == "quarterly":
+        if not 1 <= part <= 4:
+            raise ValueError(f"bad SIDRA quarter {code!r}")
+        return date(year, part * 3, 1)
+    return date(year, part, 1)
+
+
+def fetch_sidra(
+    table: int,
+    variable: int,
+    series_id: str,
+    name: str,
+    unit: str,
+    frequency: str = "monthly",
+    classifications: list[tuple[int, int]] | None = None,
+    geo: str = "Brazil",
+    scale: float = 1.0,
+) -> tuple[dict, list]:
+    """One IBGE SIDRA series (national level). ``classifications`` pins extra dimensions as
+    ``(classification_id, category_id)`` pairs (e.g. PIB's sector dimension). The period
+    dimension is found from the legend by name, so a table whose period sits in a different
+    ``D{n}`` column (PIB's is D4, not D3) parses correctly. ``scale`` is a labelled unit
+    conversion (the UST:DEBT precedent)."""
+    cls = "".join(f"/c{cid}/{cat}" for cid, cat in (classifications or []))
+    url = SIDRA_BASE.format(table=table, variable=variable, cls=cls) + "?formato=json"
+    data = json.loads(_get_retry(url).decode("utf-8", "replace"))
+    meta = {
+        "series_id": series_id,
+        "source": "ibge",
+        "name": name,
+        "geo": geo,
+        "unit": unit,
+        "frequency": frequency,
+    }
+    if not isinstance(data, list) or len(data) < 2:
+        return meta, []
+    legend = data[0]
+    period_key = next(
+        (
+            k
+            for k, v in legend.items()
+            if k.endswith("C") and isinstance(v, str)
+            and ("Mês" in v or "Trimestre" in v or "Ano" in v)
+        ),
+        None,
+    )
+    if period_key is None:
+        raise ValueError(f"sidra t{table}: no period dimension in legend")
+    obs: list[tuple[date, float]] = []
+    for row in data[1:]:
+        v_raw = (row.get("V") or "").strip()
+        p_raw = (row.get(period_key) or "").strip()
+        if v_raw in _SIDRA_MISSING or not p_raw:
+            continue
+        try:
+            obs.append((_sidra_period(p_raw, frequency), _finite(v_raw) * scale))
+        except (ValueError, TypeError):
+            continue
+    obs.sort()
+    return meta, obs
 
 
 # --- Eurostat (JSON-stat 2.0) ------------------------------------------------------------

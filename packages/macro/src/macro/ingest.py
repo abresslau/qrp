@@ -11,49 +11,153 @@ import psycopg
 
 from macro.db import connect
 from macro.sources import (
+    fetch_bcb_focus_12m,
+    fetch_bcb_sgs,
     fetch_ecb,
     fetch_eurostat,
     fetch_fiscaldata_avg_rates,
     fetch_fiscaldata_debt,
     fetch_oecd_cpi,
+    fetch_sidra,
+    fetch_treasury_par_yield,
     fetch_worldbank,
 )
 
-# Canonical category slugs (lower-case, URL-safe — they appear in console paths).
-# Every catalog entry below declares one; the series upsert refuses anything else.
-CATEGORIES = ("inflation", "rates", "gdp", "employment", "debt", "population")
+# Canonical category slugs (lower-case, URL-safe — they appear in console paths and must
+# match the `^[a-z]+$` DB CHECK). Every catalog entry declares one; the upsert refuses
+# anything else. The console submenu reads the live category set, so a new slug here (once
+# a series populates it) appears in the sidebar automatically. The slugs map to the standard
+# sell-side macro buckets (activity/inflation/labor/monetary/fx/fiscal/external/credit).
+CATEGORIES = (
+    "inflation", "rates", "fx", "activity", "gdp", "employment",
+    "fiscal", "debt", "external", "money", "trade", "population",
+)
 
-# World Bank annual indicators × countries (US, Brazil, Euro area, UK, Japan):
-# (indicator, name, unit, category, scale, geos). Population head-counts are stored in
-# millions (labelled scale, the UST:DEBT trillions precedent).
-_WB = [
-    ("FP.CPI.TOTL.ZG", "CPI inflation (YoY)", "% per year", "inflation", 1.0,
-     ["US", "BRA", "EMU", "GBR", "JPN"]),
-    ("NY.GDP.MKTP.KD.ZG", "Real GDP growth", "% per year", "gdp", 1.0, ["US", "BRA", "EMU"]),
-    ("FR.INR.RINR", "Real interest rate", "%", "rates", 1.0, ["US", "BRA"]),
-    ("SL.UEM.TOTL.ZS", "Unemployment rate", "% of labour force", "employment", 1.0,
-     ["US", "BRA", "EMU"]),
-    ("SP.POP.TOTL", "Population", "millions", "population", 1e-6,
-     ["US", "BRA", "EMU", "GBR", "JPN"]),
-    ("SP.POP.GROW", "Population growth", "% per year", "population", 1.0,
-     ["US", "BRA", "EMU", "GBR", "JPN"]),
+# A major-economy panel for the annual World Bank indicators. EXISTING geo codes are kept
+# verbatim (US/BRA/EMU/GBR/JPN) so no historical series_id orphans; the rest broaden
+# coverage. A country an indicator doesn't cover yields an empty series and is dropped
+# (never faked), so a wide panel on a partial indicator is safe.
+_WB_GEOS = [
+    "US", "CHN", "JPN", "DEU", "IND", "GBR", "FRA", "BRA",
+    "CAN", "KOR", "ITA", "ESP", "MEX", "AUS", "EMU",
 ]
 
-# ECB Data Portal series: (key, series_id, name, unit, frequency, category).
+# World Bank annual indicators × the economy panel: (indicator, name, unit, category,
+# scale, geos). Levels are stored in labelled units via `scale` (the UST:DEBT trillions
+# precedent): population head-counts in millions, nominal GDP in USD trillions.
+_WB = [
+    ("FP.CPI.TOTL.ZG", "CPI inflation (YoY)", "% per year", "inflation", 1.0, _WB_GEOS),
+    ("NY.GDP.MKTP.KD.ZG", "Real GDP growth", "% per year", "gdp", 1.0, _WB_GEOS),
+    ("NY.GDP.MKTP.CD", "GDP (nominal)", "USD trillions", "gdp", 1e-12, _WB_GEOS),
+    ("NY.GDP.PCAP.CD", "GDP per capita", "current US$", "gdp", 1.0, _WB_GEOS),
+    ("FR.INR.RINR", "Real interest rate", "%", "rates", 1.0, _WB_GEOS),
+    ("FR.INR.LEND", "Lending interest rate", "%", "rates", 1.0, _WB_GEOS),
+    ("SL.UEM.TOTL.ZS", "Unemployment rate", "% of labour force", "employment", 1.0, _WB_GEOS),
+    ("GC.DOD.TOTL.GD.ZS", "Central govt debt", "% of GDP", "debt", 1.0, _WB_GEOS),
+    ("SP.POP.TOTL", "Population", "millions", "population", 1e-6, _WB_GEOS),
+    ("SP.POP.GROW", "Population growth", "% per year", "population", 1.0, _WB_GEOS),
+    ("BN.CAB.XOKA.GD.ZS", "Current account balance", "% of GDP", "trade", 1.0, _WB_GEOS),
+    ("NE.EXP.GNFS.ZS", "Exports of goods & services", "% of GDP", "trade", 1.0, _WB_GEOS),
+    ("NE.IMP.GNFS.ZS", "Imports of goods & services", "% of GDP", "trade", 1.0, _WB_GEOS),
+    ("FM.LBL.BMNY.ZG", "Broad money growth", "% per year", "money", 1.0, _WB_GEOS),
+]
+
+# ECB Data Portal series: (key, series_id, name, unit, frequency, category). The three
+# ECB policy rates (main refinancing, deposit facility, marginal lending) are the standee
+# corridor; each is a daily feed the fetcher compresses to change-points.
 _ECB = [
     (
-        "FM/D.U2.EUR.4F.KR.MRR_FR.LEV",  # daily feed; fetcher compresses to change-points
+        "FM/D.U2.EUR.4F.KR.MRR_FR.LEV",
         "ECB:MRR",
         "ECB main refinancing rate",
         "%",
         "daily",
         "rates",
     ),
+    (
+        "FM/D.U2.EUR.4F.KR.DFR.LEV",
+        "ECB:DFR",
+        "ECB deposit facility rate",
+        "%",
+        "daily",
+        "rates",
+    ),
+    (
+        "FM/D.U2.EUR.4F.KR.MLFR.LEV",
+        "ECB:MLFR",
+        "ECB marginal lending rate",
+        "%",
+        "daily",
+        "rates",
+    ),
 ]
 
-# OECD CPI YoY (monthly) per REF_AREA — all category `inflation`. An area the flow
-# doesn't serve 404s and is mapped to an empty series (omitted by the no-data rule).
-_OECD_CPI_GEOS = ["USA", "GBR", "JPN", "BRA"]
+# OECD CPI YoY (monthly) per REF_AREA — all category `inflation`. Monthly series chart far
+# better than the annual WB CPI, so cover the panel widely. An area the flow doesn't serve
+# 404s and is mapped to an empty series (omitted by the no-data rule). ISO-3 codes here
+# (the OECD key), distinct from the WB panel's mixed codes.
+_OECD_CPI_GEOS = [
+    "USA", "GBR", "JPN", "BRA", "DEU", "FRA", "CAN", "KOR", "ITA", "ESP", "AUS", "MEX",
+]
+
+# BCB SGS (Banco Central do Brasil) series — the Brazilian macro spine a desk watches, all
+# from the central bank's open SGS API (no key). (code, series_id, name, unit, frequency,
+# category, scale, compress_steps). Codes verified live against the SGS catalog 2026-06-14.
+# Levels are stored in labelled units via `scale` (reserves USD-mn → USD-bn; M3 R$-thousand
+# → R$-trillion). Policy/step series compress to change-points.
+_BCB = [
+    # monetary / rates
+    (432, "BCB:SELIC_TARGET", "Selic target rate (Copom)", "% p.a.", "daily",
+     "rates", 1.0, True),
+    (1178, "BCB:SELIC", "Selic rate (effective, annualized)", "% p.a.", "daily",
+     "rates", 1.0, False),
+    # inflation
+    (433, "BCB:IPCA", "IPCA inflation (monthly)", "%", "monthly", "inflation", 1.0, False),
+    (13522, "BCB:IPCA_12M", "IPCA inflation (12-month)", "% per year", "monthly",
+     "inflation", 1.0, False),
+    (189, "BCB:IGPM", "IGP-M inflation (monthly)", "%", "monthly", "inflation", 1.0, False),
+    # fx
+    (1, "BCB:BRLUSD", "BRL/USD exchange rate (PTAX sell)", "BRL per USD", "daily",
+     "fx", 1.0, False),
+    # activity
+    (24364, "BCB:IBCBR_SA", "IBC-Br economic activity (SA)", "index", "monthly",
+     "activity", 1.0, False),
+    (24363, "BCB:IBCBR", "IBC-Br economic activity (NSA)", "index", "monthly",
+     "activity", 1.0, False),
+    # fiscal
+    (5793, "BCB:PRIMARY_RESULT", "Primary fiscal result (12m)", "% of GDP", "monthly",
+     "fiscal", 1.0, False),
+    # debt stocks
+    (13762, "BCB:DBGG", "Gross general government debt (DBGG)", "% of GDP", "monthly",
+     "debt", 1.0, False),
+    (4513, "BCB:NET_DEBT", "Net public sector debt", "% of GDP", "monthly",
+     "debt", 1.0, False),
+    # external
+    (22701, "BCB:CURRENT_ACCOUNT", "Current account balance (monthly)", "USD million",
+     "monthly", "external", 1.0, False),
+    (13621, "BCB:RESERVES", "International reserves", "USD billion", "daily",
+     "external", 1e-3, False),
+    # money / credit
+    (27813, "BCB:M3", "Broad money M3 (end of period)", "R$ trillion", "monthly",
+     "money", 1e-9, False),
+    (20622, "BCB:CREDIT_GDP", "Credit outstanding to GDP", "% of GDP", "monthly",
+     "money", 1.0, False),
+]
+
+# IBGE SIDRA series (Brazilian official statistics, no key). (table, variable, series_id,
+# name, unit, frequency, category, classifications, scale). IBGE owns the data BCB doesn't:
+# the PNAD-Contínua unemployment rate (labor) and quarterly PIB (GDP), plus the IPCA index
+# level / YTD that complement BCB's monthly %. Codes verified live 2026-06-14.
+_IBGE = [
+    (1737, 2266, "IBGE:IPCA_INDEX", "IPCA index level", "index", "monthly",
+     "inflation", None, 1.0),
+    (1737, 69, "IBGE:IPCA_YTD", "IPCA inflation (year to date)", "%", "monthly",
+     "inflation", None, 1.0),
+    (6381, 4099, "IBGE:UNEMP", "Unemployment rate (PNAD Contínua)", "%", "monthly",
+     "employment", None, 1.0),
+    (1846, 585, "IBGE:PIB", "GDP (PIB, nominal, quarterly)", "R$ trillion", "quarterly",
+     "gdp", [(11255, 90707)], 1e-6),
+]
 
 # Eurostat datasets, every non-time dimension pinned (the fetcher asserts the shape):
 # (code, filters, series_id, name, unit, category).
@@ -164,6 +268,19 @@ def run_ingest(conn: psycopg.Connection) -> dict:
         _record("UST:DEBT", fetch_fiscaldata_debt(), "debt")
     except Exception as exc:  # noqa: BLE001
         _failed("UST:DEBT", exc)
+    # US Treasury par yield curve (2Y/10Y) — the 2s10s a macro desk lives on. ONE shared
+    # per-year HTTP walk feeds both tenors; the wildcard id catches a fetch failure, and
+    # upsert failures are attributed per tenor below.
+    try:
+        par_yield_series = fetch_treasury_par_yield()
+    except Exception as exc:  # noqa: BLE001
+        _failed("UST:PAR_YIELD:*", exc)
+    else:
+        for meta, obs in par_yield_series:
+            try:
+                _record(meta["series_id"], (meta, obs), "rates")
+            except Exception as exc:  # noqa: BLE001
+                _failed(meta["series_id"], exc)
     try:
         rate_series = fetch_fiscaldata_avg_rates()
     except Exception as exc:  # noqa: BLE001
@@ -186,6 +303,37 @@ def run_ingest(conn: psycopg.Connection) -> dict:
             _record(sid, fetch_eurostat(code, filters, sid, name, unit), category)
         except Exception as exc:  # noqa: BLE001
             _failed(sid, exc)
+    for code, sid, name, unit, freq, category, scale, compress in _BCB:
+        try:
+            _record(
+                sid,
+                fetch_bcb_sgs(code, sid, name, unit, freq, scale=scale, compress_steps=compress),
+                category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _failed(sid, exc)
+    for table, var, sid, name, unit, freq, category, cls, scale in _IBGE:
+        try:
+            _record(
+                sid,
+                fetch_sidra(table, var, sid, name, unit, frequency=freq,
+                            classifications=cls, scale=scale),
+                category,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _failed(sid, exc)
+    # BCB Focus survey: market inflation expectations (the anchor Kinea tracks vs realised).
+    try:
+        _record(
+            "BCB:FOCUS_IPCA_12M",
+            fetch_bcb_focus_12m(
+                "IPCA", "BCB:FOCUS_IPCA_12M",
+                "IPCA inflation expectation (12m ahead, Focus)", "% per year",
+            ),
+            "inflation",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _failed("BCB:FOCUS_IPCA_12M", exc)
 
     # Drop any catalog rows left without observations (e.g. a source with no data for a geo).
     conn.execute(
