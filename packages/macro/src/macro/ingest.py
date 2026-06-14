@@ -91,6 +91,13 @@ _WB = [
     ("NE.EXP.GNFS.ZS", "Exports of goods & services", "% of GDP", "trade", 1.0, _WB_GEOS),
     ("NE.IMP.GNFS.ZS", "Imports of goods & services", "% of GDP", "trade", 1.0, _WB_GEOS),
     ("FM.LBL.BMNY.ZG", "Broad money growth", "% per year", "money", 1.0, _WB_GEOS),
+    ("NY.GDP.DEFL.KD.ZG", "GDP deflator inflation", "% per year", "inflation", 1.0, _WB_GEOS),
+    ("GC.XPN.TOTL.GD.ZS", "Government expense", "% of GDP", "fiscal", 1.0, _WB_GEOS),
+    ("GC.TAX.TOTL.GD.ZS", "Tax revenue", "% of GDP", "fiscal", 1.0, _WB_GEOS),
+    ("NE.GDI.FTOT.ZS", "Gross fixed capital formation", "% of GDP", "activity", 1.0, _WB_GEOS),
+    ("SL.TLF.CACT.ZS", "Labour force participation", "% of population 15+", "employment",
+     1.0, _WB_GEOS),
+    ("BX.KLT.DINV.WD.GD.ZS", "FDI net inflows", "% of GDP", "external", 1.0, _WB_GEOS),
 ]
 
 # ECB Data Portal series: (key, series_id, name, unit, frequency, category). The three
