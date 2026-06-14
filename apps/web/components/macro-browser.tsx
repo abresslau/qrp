@@ -39,18 +39,35 @@ const CATEGORY_TITLE: Record<string, string> = {
 };
 const CATEGORY_ORDER = Object.keys(CATEGORY_TITLE);
 
-// Headline indicators for the dashboard cockpit (landing only), in display order.
-const DASHBOARD: { id: string; label: string }[] = [
-  { id: "BCB:SELIC_TARGET", label: "Selic (target)" },
-  { id: "BCB:IPCA_12M", label: "IPCA (12m)" },
-  { id: "BCB:FOCUS_IPCA_12M", label: "IPCA expect. (12m)" },
-  { id: "BCB:BRLUSD", label: "BRL / USD" },
-  { id: "IBGE:UNEMP", label: "Unemployment" },
-  { id: "BCB:IBCBR_SA", label: "IBC-Br activity" },
-  { id: "BCB:DBGG", label: "Gross debt (% GDP)" },
-  { id: "BCB:CURRENT_ACCOUNT", label: "Current account" },
-  { id: "UST:PAR_YIELD:10Y", label: "UST 10y" },
-  { id: "UST:PAR_YIELD:2Y", label: "UST 2y" },
+// Headline indicators for the dashboard cockpit (landing only), grouped like a desk's
+// front page: Brazil on top, the global/markets cross-asset read below.
+const DASHBOARD_GROUPS: { title: string; ids: string[] }[] = [
+  {
+    title: "Brazil",
+    ids: [
+      "BCB:SELIC_TARGET",
+      "BCB:IPCA_12M",
+      "BCB:FOCUS_IPCA_12M",
+      "BCB:BRLUSD",
+      "IBGE:UNEMP",
+      "BCB:IBCBR_SA",
+      "BCB:DBGG",
+      "BCB:CURRENT_ACCOUNT",
+    ],
+  },
+  {
+    title: "Global & markets",
+    ids: [
+      "UST:PAR_YIELD:10Y",
+      "UST:PAR_YIELD:2Y",
+      "BLS:UNRATE",
+      "MKT:BRENT",
+      "MKT:GOLD",
+      "MKT:SPX",
+      "MKT:IBOV",
+      "MKT:DXY",
+    ],
+  },
 ];
 
 function sourceLabel(s: string): string {
@@ -360,11 +377,14 @@ export function MacroBrowser({ category }: { category?: string }) {
   const shown = detail && detail.series_id === sel ? detail : null;
   const selSummary = visible.find((s) => s.series_id === sel) ?? null;
 
-  // dashboard cockpit cards (landing only)
-  const cards = useMemo(() => {
+  // dashboard cockpit cards (landing only), grouped
+  const cardGroups = useMemo(() => {
     if (category) return [];
     const byId = new Map(series.map((s) => [s.series_id, s]));
-    return DASHBOARD.map((d) => byId.get(d.id)).filter((s): s is SeriesSummary => !!s);
+    return DASHBOARD_GROUPS.map((g) => ({
+      title: g.title,
+      cards: g.ids.map((id) => byId.get(id)).filter((s): s is SeriesSummary => !!s),
+    })).filter((g) => g.cards.length > 0);
   }, [series, category]);
 
   // sections: group visible series by category in sell-side order (landing only)
@@ -399,13 +419,19 @@ export function MacroBrowser({ category }: { category?: string }) {
       )}
 
       {/* cockpit cards (landing) */}
-      {!category && cards.length > 0 && (
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {cards.map((s) => (
-            <StatCard key={s.series_id} s={s} onClick={() => setClicked(s.series_id)} />
-          ))}
-        </div>
-      )}
+      {!category &&
+        cardGroups.map((g) => (
+          <div key={g.title} className="mt-5">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
+              {g.title}
+            </h2>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {g.cards.map((s) => (
+                <StatCard key={s.series_id} s={s} onClick={() => setClicked(s.series_id)} />
+              ))}
+            </div>
+          </div>
+        ))}
 
       {category && COMPARISON_CATEGORIES.includes(category) && seriesState === "ready" && (
         <div className="mt-5">

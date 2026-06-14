@@ -7,9 +7,19 @@ import type { Schemas } from "@/lib/api";
 type SeriesSummary = Schemas["SeriesSummary"];
 type SeriesDetail = Schemas["SeriesDetail"];
 
-// Comparison is gated per category while the pattern is judged on ONE metric
-// (operator instruction, Story C.2). Rolling out = adding slugs here.
-export const COMPARISON_CATEGORIES = ["population"];
+// Comparison overlays a same-(name, unit) group across countries. Enabled for the buckets
+// whose World-Bank/OECD panels share an indicator name across geographies (a cross-country
+// macro overlay — the sell-side staple). Categories of bespoke single-name series
+// (fx/activity/commodities/markets/debt) have no comparable group and render none.
+export const COMPARISON_CATEGORIES = [
+  "inflation",
+  "gdp",
+  "rates",
+  "employment",
+  "trade",
+  "money",
+  "population",
+];
 
 // Fixed palette; index-stable per chart so a toggled-off line keeps its colour on return.
 const PALETTE = [
