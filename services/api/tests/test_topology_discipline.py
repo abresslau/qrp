@@ -9,8 +9,9 @@ without a runner rots, the A.1 types-freshness lesson):
    DDL coupling is the same disease);
 2. consumer packages read ONLY the documented sym read surface (AR-R3 "consumers read
    sym's stable views" — base tables are the accepted surface until the federation
-   restructure, per the architecture note; the allowlist below is the contract and
-   additions must be made HERE, deliberately);
+   restructure, per the architecture note; the allowlist lives in
+   ``qrp_api.sym_contract`` and additions must be made THERE, deliberately — it is the
+   single source shared with the ``qrp_readonly`` role provisioner, Story QH.3);
 3. no consumer imports the sym Python package — cross-package DATA flows over
    read-only connections; cross-package CODE reuse flows through the peer packages'
    own seams (portfolios/signals/backtest), never through sym internals.
@@ -26,6 +27,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from qrp_api.sym_contract import SYM_INTERNAL_RELATIONS, SYM_READ_SURFACE
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -46,33 +49,9 @@ PROJECT_SCHEMAS = {
 ALL_PACKAGE_SCHEMAS = {"qrp", "altdata", "backtest", "macro", "optimiser", "portfolios",
                        "signals"}
 
-# AR-R3: the sym read surface consumers may touch (base tables accepted until the
-# federation restructure — architecture revision log 2026-06-08). Extend DELIBERATELY.
-SYM_READ_SURFACE = {
-    "fact_returns",
-    "fact_index_returns",
-    "securities",
-    "security_symbology",
-    "security_names",
-    "universe_membership",
-    "fundamentals",
-    "return_window",
-    "instrument",
-    "pipeline_run_log",  # Operate's correlated run history (FR-6/FR-8)
-}
-
-# The known sym public relations OUTSIDE the read surface (kept current by hand from
-# sym's migrations; the vocabulary GUARD below catches strays naming anything newer,
-# so an omission here cannot silently widen the contract).
-SYM_INTERNAL_RELATIONS = {
-    "prices_raw", "prices_review", "gics_scd", "exchange", "trading_calendar",
-    "trading_calendar_version", "universe", "membership_event", "membership_proposal",
-    "universe_member_completeness", "universe_accuracy_check", "fx_rate",
-    "fx_rate_review", "securities_review_queue", "pipeline_backfill_progress",
-    "instrument_xref", "corporate_actions", "currency", "index_levels", "price_gaps",
-    "universe_benchmark", "universe_member_resolution", "universe_monitor_log",
-    "v_fx", "v_fx_daily", "v_prices_adjusted", "validation_run_log",
-}
+# SYM_READ_SURFACE + SYM_INTERNAL_RELATIONS are imported from qrp_api.sym_contract — the
+# single source shared with the qrp_readonly role provisioner (Story QH.3). Extend the
+# surface THERE, deliberately.
 
 CONSUMER_PACKAGES = ("altdata", "analytics", "backtest", "macro", "optimiser",
                      "portfolios", "signals", "operate")

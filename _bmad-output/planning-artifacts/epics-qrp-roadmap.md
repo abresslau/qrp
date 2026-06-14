@@ -323,10 +323,19 @@ the SEC SIC fallback lead.
 EOD engine with the price source swapped; labelled live/delayed, not persisted. **(Engine ready;
 deferred until a source exists on deploy.)**
 
-### Story QH.3 — Read-only DB role for sym reads  `[NEW]`
-**AC:** consumer reads of the sym package use a least-privilege **read-only** Postgres role (the
-DuckDB `READ_ONLY` attach proved the pattern; the API still uses full creds per package). **(NFR
-hardening; architecture-qrp dual-credential follow-up.)**
+### Story QH.3 — Read-only DB role for sym reads  `[BUILT 2026-06-14]`
+**AC (met):** consumer reads of the sym package go through a least-privilege **`qrp_readonly`**
+Postgres role (CONNECT on sym + `SELECT` on the AR-R3 read surface only — no write, no DDL, no
+sym-internal relations); a write through a read connection is **physically refused** by Postgres
+(the psycopg analogue of the DuckDB `READ_ONLY` attach, proven by a live-gated test). Routed
+centrally in the `connect()` helpers (`connect("sym")` → read-only, own-DB → full creds);
+provisioned by `tools/provision_readonly.py` (rides `deploy_all`), grants single-sourced from
+`qrp_api.sym_contract.SYM_READ_SURFACE` (shared with the topology gate). Op-execution keeps full
+creds via the `uv run sym` subprocess — the dual-credential model realised. 786 tests pass.
+Cross-module reads beyond sym (signals→macro/altdata) and the offline `lineage` introspection
+generator (reads sym-internal relations across all DBs) stay full-cred — both ledgered as
+deliberate exceptions to the role discipline. **(NFR hardening; serving-path consumers covered;
+architecture-qrp dual-credential follow-up CLOSED.)**
 
 ### Story QH.4 — Operate live progress via SSE  `[NEW]`
 **AC:** the Operate job panel streams via SSE instead of 2s polling; status still derived from

@@ -61,8 +61,20 @@ shared Postgres").**
   **base tables are accepted until the DuckDB-federation restructure lands** — the spec'd published
   views mostly don't exist, and building them now would be throwaway work given the federation
   direction above. The views-only contract is NOT abandoned: it re-materializes as the per-package
-  read-only role + `ATTACH READ_ONLY` discipline when the restructure is built. Until then,
-  reads-are-read-only remains a code-review-enforced discipline, not a physical one.
+  read-only role + `ATTACH READ_ONLY` discipline when the restructure is built.
+  **✅ The app-side psycopg read path is now PHYSICAL, not convention (Story QH.3,
+  2026-06-14):** consumer sym reads go through the least-privilege `qrp_readonly` role
+  (LOGIN, CONNECT on sym, `SELECT` on exactly the AR-R3 read surface — nothing else), so a
+  write or DDL through a read connection is refused by Postgres, and even sym-INTERNAL
+  relations are unreadable. Routed centrally in the `connect()` helpers (`connect("sym")`
+  → read-only; own-DB → full creds); provisioned by `tools/provision_readonly.py` (rides
+  `deploy_all`), grants derived from the same `qrp_api.sym_contract.SYM_READ_SURFACE` the
+  topology gate asserts. Op-execution keeps full creds (the `uv run sym` subprocess), so
+  the dual-credential model is realised. Pre-provision, reads fall back to full creds
+  (read-only by convention). The DuckDB `ATTACH READ_ONLY` federation path remains the
+  successor for cross-DB SQL; cross-module reads beyond sym (e.g. signals→macro) and the
+  offline `lineage` introspection generator (reads sym-internal relations across all DBs) are
+  deliberate full-cred exceptions, ledgered. The guarantee covers serving-path consumers.
 - **New design items it introduces:** a **materialization tier** (regenerable Parquet snapshots
   for heavy analytical paths; never authoritative), a **live-vs-materialized freshness contract**
   per read surface, and **meta-orchestration** (deploy-all migrations / compose-up-all DBs / one

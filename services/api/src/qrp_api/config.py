@@ -97,5 +97,43 @@ def package_dsn(package: str) -> str:
 
 
 def db_dsn() -> str:
-    """The sym package's database (sym is a peer package; its database is named ``sym``)."""
+    """The sym package's database, full credentials (sym is a peer named ``sym``).
+
+    This is the privileged path; consumer READS should use ``sym_readonly_dsn()`` so the
+    least-privilege role enforces reads-are-read-only physically (Story QH.3).
+    """
     return package_dsn("sym")
+
+
+def sym_readonly_dsn() -> str:
+    """Least-privilege DSN for consumer READS of the sym package (Story QH.3).
+
+    sym is a read-only upstream peer; consumer reads go through the ``qrp_readonly``
+    Postgres role whose grants (``SELECT`` on the AR-R3 read surface only) make a write
+    physically impossible — not merely a code-review convention. Op-execution and each
+    package's writes to its own database keep full credentials and do not use this DSN.
+
+    Resolution precedence: ``SYM_READONLY_URL`` (whole DSN) > ``PGRO_USER`` /
+    ``PGRO_PASSWORD`` role creds on the shared instance (host/port/dbname from the same
+    ``PG*`` env as ``package_dsn``) > the full-cred sym DSN as a pre-provision fallback,
+    so an environment that has not yet provisioned the role still reads (read-only by
+    convention until it does).
+    """
+    _load_dotenv()
+    url = os.environ.get("SYM_READONLY_URL")
+    if url:
+        return url
+    ro_user = os.environ.get("PGRO_USER")
+    if not ro_user:
+        return db_dsn()
+    host = os.environ.get("PGHOST", _INSTANCE_DEFAULTS["host"])
+    port = os.environ.get("PGPORT", _INSTANCE_DEFAULTS["port"])
+    dbname = os.environ.get("SYM_DB_NAME", "sym")
+    parts = [f"host={host}", f"port={port}", f"dbname={dbname}", f"user={ro_user}"]
+    password = os.environ.get("PGRO_PASSWORD")
+    if password:
+        # same libpq keyword-DSN quoting as package_dsn (a password with spaces/quotes
+        # must be single-quoted with backslash-escaped \ and ' or the DSN won't parse).
+        quoted = password.replace("\\", "\\\\").replace("'", "\\'")
+        parts.append(f"password='{quoted}'")
+    return " ".join(parts)

@@ -120,6 +120,12 @@ def _fk_referential(base: dict) -> dict:
 
 
 def _dsn() -> dict:
+    # FULL (privileged) creds, by design — NOT the qrp_readonly role (Story QH.3). lineage
+    # is an offline introspection generator, not a serving-path consumer: it reads sym-
+    # INTERNAL relations and introspects pg_catalog across ALL package DBs (_combined_schema /
+    # _fk_referential below), which the surface-only, sym-only read role cannot serve. It is
+    # the documented exception to the read-only-role discipline (it only ever SELECTs; the
+    # topology gate also excludes it from CONSUMER_PACKAGES). See deferred-work.md (QH.3).
     from qrp_api.config import _load_dotenv
     _load_dotenv()
     return dict(host=os.environ.get("PGHOST", "localhost"), port=os.environ.get("PGPORT", "5432"),

@@ -30,8 +30,42 @@ def _load_env() -> None:
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
 
+def _sym_readonly_target() -> str:
+    """Read-only sym access via the least-privilege ``qrp_readonly`` role (Story QH.3).
+
+    sym is a foreign, read-only upstream peer; its read surface is reachable through a
+    role that physically refuses writes (SELECT on the AR-R3 surface only), not by
+    convention. Precedence: ``SYM_READONLY_URL`` (whole DSN) > ``PGRO_USER`` /
+    ``PGRO_PASSWORD`` role creds (host/port from the libpq ``PG*`` env) > the full-cred
+    sym DSN as a pre-provision fallback, so a not-yet-provisioned environment still reads.
+
+    Operate reads sym only for run history (``pipeline_run_log``); it actuates sym ops via
+    the ``uv run sym`` subprocess with full credentials, never over this read connection.
+    """
+    url = os.environ.get("SYM_READONLY_URL")
+    if url:
+        return url
+    ro_user = os.environ.get("PGRO_USER")
+    if not ro_user:
+        return os.environ.get("SYM_DATABASE_URL") or "dbname=sym"
+    parts = [f"dbname={os.environ.get('SYM_DB_NAME', 'sym')}", f"user={ro_user}"]
+    password = os.environ.get("PGRO_PASSWORD")
+    if password:
+        quoted = password.replace("\\", "\\\\").replace("'", "\\'")
+        parts.append(f"password='{quoted}'")
+    return " ".join(parts)
+
+
 def connect(dbname: str = _OWN) -> psycopg.Connection:
-    """Connect to a database on the shared instance (PG* env supplies the rest)."""
+    """Connect to a database on the shared instance (PG* env supplies the rest).
+
+    A connection to ``sym`` (a foreign, read-only upstream peer) goes through the
+    least-privilege ``qrp_readonly`` role (Story QH.3); this package's own database keeps
+    full credentials (it writes there). sym ops are actuated by the Operate subprocess,
+    never over this read connection.
+    """
     _load_env()
+    if dbname == "sym" and dbname != _OWN:
+        return psycopg.connect(_sym_readonly_target(), connect_timeout=5)
     target = os.environ.get(f"{dbname.upper()}_DATABASE_URL") or f"dbname={dbname}"
     return psycopg.connect(target, connect_timeout=5)

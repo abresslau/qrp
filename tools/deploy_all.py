@@ -152,6 +152,20 @@ def run(only: list[str] | None, status_only: bool) -> int:
         + (f"; created: {', '.join(created)}" if created else "")
         + (f"; FAILED: {', '.join(failures)}" if failures else "")
     )
+    # Provision the qrp_readonly role once sym is in place (Story QH.3). Non-fatal: a
+    # missing PGRO_PASSWORD only means consumers fall back to full-cred reads until set.
+    # Imported lazily (not at module top) so `--status`/`--help` and a `python -m` import
+    # never require the provisioner / qrp_api to be importable.
+    if "sym" in names and "sym" not in failures:
+        if env.get("PGRO_PASSWORD"):
+            try:  # script form puts tools/ on sys.path; -m form needs the package path
+                import provision_readonly
+            except ModuleNotFoundError:
+                from tools import provision_readonly
+            provision_readonly.provision(env)
+        else:
+            print("[qrp_readonly] skipped — set PGRO_PASSWORD in .env to provision the "
+                  "read-only role (reads fall back to full creds until then)")
     return 1 if failures else 0
 
 
