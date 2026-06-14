@@ -210,6 +210,10 @@ _IBGE = [
      "employment", None, 1.0),
     (1846, 585, "IBGE:PIB", "GDP (PIB, nominal, quarterly)", "R$ trillion", "quarterly",
      "gdp", [(11255, 90707)], 1e-6),
+    (8888, 12607, "IBGE:PIM", "Industrial production (PIM, SA)", "index", "monthly",
+     "activity", [(544, 129314)], 1.0),
+    (8880, 7170, "IBGE:PMC", "Retail sales volume (PMC, SA)", "index", "monthly",
+     "activity", [(11046, 56734)], 1.0),
 ]
 
 # US BLS series (no key; FRED-free US coverage). (bls_series, series_id, name, unit, category).
