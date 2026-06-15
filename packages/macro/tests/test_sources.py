@@ -106,7 +106,7 @@ def test_fetch_ecb_compresses_to_change_points(monkeypatch):
 
 
 def test_fetch_oecd_cpi_maps_404_to_empty_series(monkeypatch):
-    def fake_get(url: str) -> bytes:
+    def fake_get(url: str, **kw) -> bytes:
         raise _http_error(404)  # OECD NoRecordsFound (verified live for unserved geos)
 
     monkeypatch.setattr(sources, "_get", fake_get)
@@ -132,7 +132,7 @@ def test_fetch_fiscaldata_rows_paginates_until_short_page(monkeypatch):
     }
     urls: list[str] = []
 
-    def fake_get(url: str) -> bytes:
+    def fake_get(url: str, **kw) -> bytes:
         urls.append(url)
         page = int(url.split("page%5Bnumber%5D=")[1].split("&")[0])
         return json.dumps(pages[page]).encode()
@@ -155,7 +155,7 @@ def test_fetch_fiscaldata_rows_follows_total_pages_past_capped_pages(monkeypatch
         3: {"data": [{"v": "3"}], "meta": {"total-pages": 3}},
     }
 
-    def fake_get(url: str) -> bytes:
+    def fake_get(url: str, **kw) -> bytes:
         page = int(url.split("page%5Bnumber%5D=")[1].split("&")[0])
         return json.dumps(pages[page]).encode()
 
@@ -166,7 +166,7 @@ def test_fetch_fiscaldata_rows_follows_total_pages_past_capped_pages(monkeypatch
 
 def test_fetch_fiscaldata_rows_missing_data_key_is_an_error_not_eof(monkeypatch):
     monkeypatch.setattr(
-        sources, "_get", lambda url: json.dumps({"error": "Invalid Query Param"}).encode()
+        sources, "_get", lambda url, **kw: json.dumps({"error": "Invalid Query Param"}).encode()
     )
     with pytest.raises(ValueError, match="no 'data'"):
         fetch_fiscaldata_rows("/v2/test", "v")

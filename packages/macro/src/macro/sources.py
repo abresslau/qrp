@@ -234,7 +234,8 @@ def fetch_fiscaldata_rows(endpoint: str, fields: str, page_size: int = 10000) ->
             f"{FISCALDATA_BASE}{endpoint}?fields={fields}"
             f"&page%5Bsize%5D={page_size}&page%5Bnumber%5D={page}&sort=record_date"
         )
-        payload = json.loads(_get(url).decode("utf-8", "replace"))
+        # retry transient drops/throttles (observed: 'Remote end closed connection')
+        payload = json.loads(_get_retry(url, timeout=30).decode("utf-8", "replace"))
         if not isinstance(payload, dict) or "data" not in payload:
             raise ValueError(f"fiscaldata {endpoint}: response has no 'data' (page {page})")
         batch = payload["data"] or []
