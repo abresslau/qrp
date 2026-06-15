@@ -362,6 +362,32 @@ function FeaturedChart({
             strokeWidth={0.8}
           />
           <circle cx={hoverPt.x} cy={hoverPt.y} r={3.2} className="fill-sky-500" />
+          {(() => {
+            const anchor =
+              hoverPt.x > geom.W * 0.8 ? "end" : hoverPt.x < geom.W * 0.2 ? "start" : "middle";
+            const above = hoverPt.y > geom.padT + 26;
+            const ty = above ? hoverPt.y - 10 : hoverPt.y + 16;
+            return (
+              <>
+                <text
+                  x={hoverPt.x}
+                  y={ty}
+                  textAnchor={anchor}
+                  className="fill-fg text-[11px] font-semibold"
+                >
+                  {fmtNum(hoverPt.v, detail.unit)}
+                </text>
+                <text
+                  x={hoverPt.x}
+                  y={ty + 11}
+                  textAnchor={anchor}
+                  className="fill-muted text-[9px]"
+                >
+                  {fmtDate(hoverPt.d)}
+                </text>
+              </>
+            );
+          })()}
         </g>
       )}
     </svg>

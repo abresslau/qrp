@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
 
@@ -52,8 +52,24 @@ function fmt(v: number, unit?: string | null): string {
   return `${v.toFixed(2)}${unit?.includes("%") ? "%" : ""}`;
 }
 
+// value of a series nearest to timestamp t (its observations are date-sorted)
+function valueAt(obs: { obs_date: string; value: number }[], t: number): number | null {
+  if (obs.length === 0) return null;
+  let best = obs[0];
+  let bestD = Infinity;
+  for (const o of obs) {
+    const d = Math.abs(new Date(o.obs_date).getTime() - t);
+    if (d < bestD) {
+      bestD = d;
+      best = o;
+    }
+  }
+  return best.value;
+}
+
 function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [hoverT, setHoverT] = useState<number | null>(null);
 
   const plottable = useMemo(
     () => loaded.filter((l) => l.detail.observations.length >= 2),
@@ -64,8 +80,9 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
     [plottable, hidden]
   );
 
-  const { lines, lo, hi, x0, x1 } = useMemo(() => {
-    if (visible.length === 0) return { lines: [], lo: 0, hi: 0, x0: "", x1: "" };
+  const { lines, lo, hi, x0, x1, minX, maxX } = useMemo(() => {
+    if (visible.length === 0)
+      return { lines: [], lo: 0, hi: 0, x0: "", x1: "", minX: 0, maxX: 1 };
     const W = 720;
     const H = 240;
     const PAD = 28;
@@ -95,8 +112,22 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
       hi: maxY,
       x0: new Date(minX).getFullYear().toString(),
       x1: new Date(maxX).getFullYear().toString(),
+      minX,
+      maxX,
     };
   }, [visible]);
+
+  const W = 720;
+  const PAD = 28;
+  const hoverX =
+    hoverT != null ? PAD + ((hoverT - minX) / (maxX - minX || 1)) * (W - 2 * PAD) : null;
+  const onMove = (e: ReactMouseEvent<SVGSVGElement>) => {
+    if (visible.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const vbX = ((e.clientX - rect.left) / rect.width) * W;
+    const frac = Math.min(1, Math.max(0, (vbX - PAD) / (W - 2 * PAD)));
+    setHoverT(minX + frac * (maxX - minX));
+  };
 
   // colour by position in the GROUP (stable from the summaries), not in `plottable` —
   // out-of-order detail loads must not reshuffle colours mid-load
@@ -117,7 +148,11 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
     <div className="rounded-xl border border-border bg-surface p-4">
       <div className="flex items-baseline justify-between">
         <div className="font-medium text-fg">{group.name}</div>
-        <div className="text-xs text-muted">{group.unit}</div>
+        <div className="text-xs text-muted">
+          {hoverT != null
+            ? new Date(hoverT).toLocaleDateString("en-US", { year: "numeric", month: "short" })
+            : group.unit}
+        </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {loaded.map((l) => {
@@ -146,14 +181,35 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
               <span className="tabular-nums text-muted">
                 {short
                   ? "not plottable"
-                  : fmt(l.detail.observations.at(-1)!.value, group.unit)}
+                  : fmt(
+                      (hoverT != null && !off
+                        ? valueAt(l.detail.observations, hoverT)
+                        : null) ?? l.detail.observations.at(-1)!.value,
+                      group.unit
+                    )}
               </span>
             </button>
           );
         })}
       </div>
       <div className="mt-3">
-        <svg viewBox="0 0 720 240" className="w-full">
+        <svg
+          viewBox="0 0 720 240"
+          className="w-full"
+          onMouseMove={onMove}
+          onMouseLeave={() => setHoverT(null)}
+        >
+          {hoverX != null && (
+            <line
+              x1={hoverX}
+              x2={hoverX}
+              y1={12}
+              y2={228}
+              className="text-fg/40"
+              stroke="currentColor"
+              strokeWidth={0.8}
+            />
+          )}
           {lines.map((ln) => (
             <path
               key={ln.id}
