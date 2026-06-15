@@ -100,6 +100,14 @@ function fmtDelta(v: number | null | undefined): string {
   return `${v > 0 ? "+" : ""}${v.toFixed(dp)}`;
 }
 
+// 12-month % change (unit-independent, so it ranks mixed-unit series fairly). null when
+// there's no comparison point or a zero base.
+function pct12m(s: SeriesSummary): number | null {
+  if (s.latest == null || s.chg_12m == null) return null;
+  const prior = s.latest - s.chg_12m;
+  return prior ? (s.chg_12m / prior) * 100 : null;
+}
+
 function deltaClass(v: number | null | undefined): string {
   if (v == null) return "text-muted";
   if (v > 0) return "text-emerald-600 dark:text-emerald-400";
@@ -480,6 +488,7 @@ export function MacroBrowser({ category }: { category?: string }) {
   const [errorFor, setErrorFor] = useState<string | null>(null);
   const [range, setRange] = useState<RangeKey>("5Y");
   const [overlay, setOverlay] = useState<SeriesDetail | null>(null);
+  const [sortMode, setSortMode] = useState<"name" | "move">("name");
 
   useEffect(() => {
     fetch("/api/macro/series", { cache: "no-store" })
@@ -582,9 +591,20 @@ export function MacroBrowser({ category }: { category?: string }) {
       .slice(0, 8);
   }, [series, category]);
 
-  // sections: group visible series by category in sell-side order (landing only)
+  // sections: group visible series by category in sell-side order (landing only), each
+  // section's rows ordered by the active sort (name = API order; move = |12m %| desc).
   const sections = useMemo(() => {
-    if (category) return [{ key: category, rows: visible }];
+    const sortRows = (rows: SeriesSummary[]) => {
+      if (sortMode !== "move") return rows;
+      return [...rows].sort((a, b) => {
+        const pa = pct12m(a);
+        const pb = pct12m(b);
+        if (pa == null) return 1;
+        if (pb == null) return -1;
+        return Math.abs(pb) - Math.abs(pa);
+      });
+    };
+    if (category) return [{ key: category, rows: sortRows(visible) }];
     const by = new Map<string, SeriesSummary[]>();
     for (const s of visible) {
       const k = s.category ?? "other";
@@ -593,8 +613,8 @@ export function MacroBrowser({ category }: { category?: string }) {
     const ordered = [...by.keys()].sort(
       (a, b) => (CATEGORY_ORDER.indexOf(a) + 1 || 99) - (CATEGORY_ORDER.indexOf(b) + 1 || 99)
     );
-    return ordered.map((k) => ({ key: k, rows: by.get(k)! }));
-  }, [visible, category]);
+    return ordered.map((k) => ({ key: k, rows: sortRows(by.get(k)!) }));
+  }, [visible, category, sortMode]);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -738,6 +758,23 @@ export function MacroBrowser({ category }: { category?: string }) {
 
       {/* research tables, grouped by theme */}
       <div className="mt-6 space-y-6">
+        {seriesState === "ready" && visible.length > 0 && (
+          <div className="flex items-center justify-end gap-1 text-xs">
+            <span className="mr-1 text-muted">Sort</span>
+            {(["name", "move"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setSortMode(m)}
+                className={`rounded px-2 py-0.5 transition ${
+                  sortMode === m ? "bg-fg/10 text-fg" : "text-muted hover:bg-fg/5"
+                }`}
+              >
+                {m === "name" ? "Name" : "12M move"}
+              </button>
+            ))}
+          </div>
+        )}
         {seriesState === "ready" && visible.length === 0 && (
           <div className="rounded-xl border border-border p-6 text-center text-sm text-muted">
             {category ? `No series in “${CATEGORY_TITLE[category] ?? category}”.` : "No macro series loaded."}
