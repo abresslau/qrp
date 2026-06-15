@@ -113,6 +113,20 @@ function fmtDate(iso?: string | null): string {
   return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
+function fmtMonthYear(iso?: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
+
+// Frequency-aware staleness so naturally-lagging series (annual WB, quarterly PIB) aren't
+// falsely flagged — only data well past its expected refresh cadence reads as stale.
+const _STALE_DAYS: Record<string, number> = { daily: 21, monthly: 80, quarterly: 250 };
+function isStale(endDate?: string | null, freq?: string | null): boolean {
+  if (!endDate) return true;
+  const days = (Date.now() - Date.parse(endDate)) / 86_400_000;
+  return days > (_STALE_DAYS[freq ?? ""] ?? 800); // default (annual) = ~26 months
+}
+
 const RANGES = { "1Y": 1, "5Y": 5, Max: null } as const;
 type RangeKey = keyof typeof RANGES;
 
@@ -350,7 +364,12 @@ function StatCard({ s, onClick }: { s: SeriesSummary; onClick: () => void }) {
         <Sparkline values={s.spark} />
       </div>
       <div className="mt-1 flex items-center justify-between text-xs">
-        <span className="text-muted">{s.geo}</span>
+        <span className="text-muted">
+          {s.geo} ·{" "}
+          <span className={isStale(s.end_date, s.frequency) ? "text-amber-600 dark:text-amber-400" : ""}>
+            {fmtMonthYear(s.end_date)}
+          </span>
+        </span>
         <span className={`tabular-nums ${deltaClass(s.chg_12m)}`}>
           {fmtDelta(s.chg_12m)} <span className="text-muted">12m</span>
         </span>
@@ -393,7 +412,17 @@ function ResearchTable({
             <td className="px-3 py-2">
               <div className="font-medium text-fg">{s.name}</div>
               <div className="text-xs text-muted">
-                {s.geo} · {sourceLabel(s.source)} · {s.frequency}
+                {s.geo} · {sourceLabel(s.source)} · {s.frequency} ·{" "}
+                <span
+                  className={
+                    isStale(s.end_date, s.frequency)
+                      ? "text-amber-600 dark:text-amber-400"
+                      : ""
+                  }
+                  title={isStale(s.end_date, s.frequency) ? "stale vs expected cadence" : undefined}
+                >
+                  as of {fmtMonthYear(s.end_date)}
+                </span>
               </div>
             </td>
             <td className="px-2 py-2 text-right tabular-nums text-fg">
