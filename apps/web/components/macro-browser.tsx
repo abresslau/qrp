@@ -135,7 +135,7 @@ function isStale(endDate?: string | null, freq?: string | null): boolean {
   return days > (_STALE_DAYS[freq ?? ""] ?? 800); // default (annual) = ~26 months
 }
 
-const RANGES = { "1Y": 1, "5Y": 5, Max: null } as const;
+const RANGES = { "1Y": 1, "2Y": 2, "3Y": 3, "5Y": 5, "10Y": 10, Max: null } as const;
 type RangeKey = keyof typeof RANGES;
 
 /** Download a series' FULL observation history as CSV (date,value) — the analyst's
