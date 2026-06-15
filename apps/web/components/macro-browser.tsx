@@ -270,15 +270,7 @@ function FeaturedChart({
   };
 
   return (
-    <>
-      <div className="mb-1 h-4 text-xs tabular-nums text-muted">
-        {hoverPt ? (
-          <span>
-            <span className="text-fg">{fmtDate(hoverPt.d)}</span> ·{" "}
-            <span className="text-fg">{fmtNum(hoverPt.v, detail.unit)}</span>
-          </span>
-        ) : null}
-      </div>
+    <div className="relative">
       <svg
         viewBox={`0 0 ${geom.W} ${geom.H}`}
         className="w-full"
@@ -361,37 +353,28 @@ function FeaturedChart({
             stroke="currentColor"
             strokeWidth={0.8}
           />
-          <circle cx={hoverPt.x} cy={hoverPt.y} r={3.2} className="fill-sky-500" />
-          {(() => {
-            const anchor =
-              hoverPt.x > geom.W * 0.8 ? "end" : hoverPt.x < geom.W * 0.2 ? "start" : "middle";
-            const above = hoverPt.y > geom.padT + 26;
-            const ty = above ? hoverPt.y - 10 : hoverPt.y + 16;
-            return (
-              <>
-                <text
-                  x={hoverPt.x}
-                  y={ty}
-                  textAnchor={anchor}
-                  className="fill-fg text-[11px] font-semibold"
-                >
-                  {fmtNum(hoverPt.v, detail.unit)}
-                </text>
-                <text
-                  x={hoverPt.x}
-                  y={ty + 11}
-                  textAnchor={anchor}
-                  className="fill-muted text-[9px]"
-                >
-                  {fmtDate(hoverPt.d)}
-                </text>
-              </>
-            );
-          })()}
+          <circle cx={hoverPt.x} cy={hoverPt.y} r={3.5} className="fill-sky-500" />
         </g>
       )}
     </svg>
-    </>
+      {hoverPt && (
+        <div
+          className="pointer-events-none absolute z-10 whitespace-nowrap rounded-md border border-border bg-fg px-2 py-1 text-bg shadow-lg"
+          style={{
+            left: `${(hoverPt.x / geom.W) * 100}%`,
+            top: `${(hoverPt.y / geom.H) * 100}%`,
+            transform: `translate(${
+              hoverPt.x / geom.W > 0.8 ? "-100%" : hoverPt.x / geom.W < 0.2 ? "0%" : "-50%"
+            }, ${hoverPt.y / geom.H > 0.25 ? "calc(-100% - 10px)" : "10px"})`,
+          }}
+        >
+          <div className="text-xs font-semibold tabular-nums">
+            {fmtNum(hoverPt.v, detail.unit)}
+          </div>
+          <div className="text-[10px] opacity-70">{fmtDate(hoverPt.d)}</div>
+        </div>
+      )}
+    </div>
   );
 }
 
