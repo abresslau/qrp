@@ -849,6 +849,17 @@ export function MacroBrowser({ category }: { category?: string }) {
           </section>
         ))}
       </div>
+
+      {seriesState === "ready" && (
+        <p className="mt-6 border-t border-border pt-3 text-xs leading-relaxed text-muted/80">
+          Changes are absolute moves vs ~1 / 3 / 12 months before each series&rsquo; own latest
+          observation; YTD is vs the prior calendar year-end. Sparklines show the last 48
+          observations. Sources: BCB · IBGE · US&nbsp;Treasury · US&nbsp;BLS · ECB · OECD ·
+          Eurostat · World&nbsp;Bank · market data (commodities, indices, FX) via yfinance.
+          No-data series are omitted and values are never fabricated. Data reflects this
+          environment&rsquo;s simulated-2026 feeds.
+        </p>
+      )}
     </div>
   );
 }
