@@ -489,6 +489,7 @@ export function MacroBrowser({ category }: { category?: string }) {
   const [range, setRange] = useState<RangeKey>("5Y");
   const [overlay, setOverlay] = useState<SeriesDetail | null>(null);
   const [sortMode, setSortMode] = useState<"name" | "move">("name");
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     fetch("/api/macro/series", { cache: "no-store" })
@@ -503,10 +504,16 @@ export function MacroBrowser({ category }: { category?: string }) {
       });
   }, [category]);
 
-  const visible = useMemo(
-    () => (category ? series.filter((s) => s.category === category) : series),
-    [series, category]
-  );
+  const visible = useMemo(() => {
+    let v = category ? series.filter((s) => s.category === category) : series;
+    const q = query.trim().toLowerCase();
+    if (q) {
+      v = v.filter((s) =>
+        `${s.name} ${s.geo ?? ""} ${s.source} ${s.series_id}`.toLowerCase().includes(q)
+      );
+    }
+    return v;
+  }, [series, category, query]);
 
   // Selection is DERIVED: the clicked series while visible, else the first visible one.
   const sel =
@@ -650,14 +657,23 @@ export function MacroBrowser({ category }: { category?: string }) {
         series omitted).
       </p>
 
+      <input
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Filter series — name, country, source…"
+        className="mt-4 w-full max-w-md rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-muted focus:border-fg/30 focus:outline-none"
+      />
+
       {seriesState === "error" && (
         <div className="mt-6 rounded-xl border border-border p-6 text-center text-sm text-muted">
           Couldn’t load series (API unreachable).
         </div>
       )}
 
-      {/* cockpit cards (landing) */}
+      {/* cockpit cards (landing; hidden while searching to focus on results) */}
       {!category &&
+        !query.trim() &&
         cardGroups.map((g) => (
           <div key={g.title} className="mt-5">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
@@ -681,7 +697,7 @@ export function MacroBrowser({ category }: { category?: string }) {
       )}
 
       {/* 12-month movers (landing) */}
-      {!category && movers.length > 0 && (
+      {!category && !query.trim() && movers.length > 0 && (
         <div className="mt-6">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">
             12-month movers
@@ -812,7 +828,11 @@ export function MacroBrowser({ category }: { category?: string }) {
         )}
         {seriesState === "ready" && visible.length === 0 && (
           <div className="rounded-xl border border-border p-6 text-center text-sm text-muted">
-            {category ? `No series in “${CATEGORY_TITLE[category] ?? category}”.` : "No macro series loaded."}
+            {query.trim()
+              ? `No series match “${query.trim()}”.`
+              : category
+                ? `No series in “${CATEGORY_TITLE[category] ?? category}”.`
+                : "No macro series loaded."}
           </div>
         )}
         {sections.map(({ key, rows }) => (
