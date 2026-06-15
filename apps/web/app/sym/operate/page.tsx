@@ -45,12 +45,36 @@ export default function OperatePage() {
     loadJobs();
   }, [loadJobs]);
 
-  // Poll while any job is active.
+  // Live job updates over SSE (Story QH.4) — replaces the old 2s/6s polling. The server
+  // pushes a frame only when the jobs payload changes. EventSource auto-reconnects on
+  // transient drops; if the stream is unavailable (no EventSource, or the server closed
+  // it — e.g. a 503 when the ledger is down) we fall back to polling so the panel is
+  // never worse than before.
   useEffect(() => {
-    const active = jobs.some((j) => j.status === "queued" || j.status === "running");
-    const id = setInterval(loadJobs, active ? 2000 : 6000);
-    return () => clearInterval(id);
-  }, [jobs, loadJobs]);
+    if (typeof EventSource === "undefined") {
+      const id = setInterval(loadJobs, 3000);
+      return () => clearInterval(id);
+    }
+    const es = new EventSource("/api/operate/jobs/stream?limit=25");
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    es.onmessage = (e) => {
+      try {
+        setJobs(JSON.parse(e.data) as Job[]);
+      } catch {
+        /* ignore a malformed frame; the next one supersedes it */
+      }
+    };
+    es.onerror = () => {
+      // CONNECTING => EventSource is retrying on its own; only a CLOSED stream is dead.
+      if (es.readyState === EventSource.CLOSED && pollId === null) {
+        pollId = setInterval(loadJobs, 3000);
+      }
+    };
+    return () => {
+      es.close();
+      if (pollId) clearInterval(pollId);
+    };
+  }, [loadJobs]);
 
   async function run(op: OpDef) {
     const args = op.takes_universe ? [universe] : [];

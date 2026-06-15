@@ -337,9 +337,17 @@ generator (reads sym-internal relations across all DBs) stay full-cred — both 
 deliberate exceptions to the role discipline. **(NFR hardening; serving-path consumers covered;
 architecture-qrp dual-credential follow-up CLOSED.)**
 
-### Story QH.4 — Operate live progress via SSE  `[NEW]`
-**AC:** the Operate job panel streams via SSE instead of 2s polling; status still derived from
-`pipeline_run_log` + heartbeat. **(FR-8 nice-to-have, deferred in v1.)**
+### Story QH.4 — Operate live progress via SSE  `[BUILT 2026-06-15]`
+**AC (met):** the Operate job panel streams via `GET /api/operate/jobs/stream` (SSE,
+`text/event-stream`) instead of the old 2s/6s client polling. The server re-reads the ledger
+on a short cadence (~1s active / ~5s idle) and pushes a `data:` frame **only when the jobs
+payload changes** (keepalive comment otherwise); status is still derived from the heartbeat /
+`pipeline_run_log` machinery because the stream reuses `DbOperateGateway.list()` verbatim
+(`orphaned` CASE + read-repair unchanged). Dedicated ledger connection per stream, closed in
+`finally`; honest **503 envelope at open** if the ledger is unreachable; mid-stream DB error
+ends the stream cleanly. Console uses `EventSource` with a CLOSED-gated fallback to polling, so
+it's never worse than before. No DB migration, no new dependency. operate 21/21 + api 56/56
+(incl. topology gate) green. **(FR-8 nice-to-have, now built.)**
 
 ### Story QH.5 — Migration finish-off: meta-orchestration + invariant guard  `[BUILT 2026-06-11]`
 **AC (met):** `tools/deploy_all.py` — the DSN registry (8 projects incl. the sym/operate
@@ -390,7 +398,8 @@ The outstanding work, by value:
   (macro/altdata) only become worthwhile once those sources are real — both raw modules now
   carry multi-source data.
 - **Breadth + hardening (medium):** ✅ Q8.3/Q8.4 done (multi-source altdata + macro, 2026-06-11); ✅ QH.1 done (Brazil GICS via B3 — non-Brazil gaps ledgered); ✅ QH.5 done (deploy-all + topology gate + DuckDB spike, 2026-06-11). Remaining hardening: non-Brazil GICS, QH.3 read-only role, QH.6 framework trigger.
-- **Deferred-by-design:** live quotes (QH.2), SSE (QH.4), generic framework/palette (QH.6).
+- **Deferred-by-design:** live quotes (QH.2, no in-env source), generic framework/palette (QH.6).
+  SSE (QH.4) is now BUILT (2026-06-15).
 - **Console (ad-hoc, 2026-06-11):** Story C.1 — sidebar submenus (chevron expand/collapse
   decoupled from navigation + open-down animation, per operator change request); sym static
   sub-items + macro data-driven categories (`macro.series.category`, `/api/macro/categories`,

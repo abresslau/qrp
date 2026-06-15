@@ -44,10 +44,12 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-14
+last_updated: 2026-06-15
 # story qh-3-readonly-db-role created 2026-06-13; implemented + reviewed 2026-06-14 (-> done)
 # story q8-5-kinea-brazil-macro-feeder created + implemented 2026-06-14 (central-bank feeders
 #   BCB/IBGE/Focus/Treasury + sell-side macro display; -> done)
+# story qh-4-operate-sse-progress created 2026-06-15 (Operate panel: SSE stream replaces 2s
+#   polling; status still derived from heartbeat/pipeline_run_log; -> ready-for-dev)
 project: QRP
 project_key: NOKEY
 tracking_system: file-system
@@ -224,7 +226,7 @@ development_status:
   qh-1-close-brazil-gics-gap: done
   qh-2-live-quote-source: backlog
   qh-3-readonly-db-role: done
-  qh-4-operate-sse-progress: backlog
+  qh-4-operate-sse-progress: done
   qh-5-migration-finish-off: done
   qh-6-generic-module-framework-palette: backlog
   epic-qh-retrospective: optional

@@ -1,4 +1,10 @@
 
+## Deferred from: code review of qh-4-operate-sse-progress (2026-06-15)
+
+- **Per-tick `_repair_orphans` write + one Starlette threadpool worker per active SSE stream:** the stream calls `gw.list()` every active tick (~1s), which fires an orphan-repair `UPDATE` then a SELECT off the event loop via `run_in_threadpool`. This matches the pre-existing `/jobs` polling (which also repaired per poll) and AC1 mandates reusing `list()` verbatim, so it's not a regression — but with many concurrent consoles it's N×1Hz writes on the ledger and N threadpool workers (default ~40) consumed in bursts, which could contend with other sync routes. Owner-operated → low concurrency today. The hardening if multi-console use ever lands: a read-only stream read path (move orphan-repair out of the per-tick read, e.g. to the executor) + a concurrent-stream cap.
+- **Up to ~5s post-disconnect linger:** `job_event_stream` checks `request.is_disconnected()` once at the top of the loop, then sleeps the idle interval (5s). A client that leaves right after the check holds its ledger connection + threadpool slot until the next iteration — at most one idle interval. Acceptable here; the fix (if it matters) is a mid-sleep disconnect re-check or a shorter idle cap.
+- **Live console end-to-end verification (Network-tab, real Next proxy) is still the operator step:** the SSE wiring, framing, 503-at-open, disconnect teardown, and headers are all unit-verified, and `StreamingResponse` through Starlette `TestClient` hangs on teardown (infinite generator never receives a disconnect under TestClient), so the live incremental-flush-through-the-proxy check is left to the operator/this code review's manual pass per the story's Verification section.
+
 ## Deferred from: Story Q8.5 Kinea/Brazil central-bank macro feeders (2026-06-14)
 
 - **Done in the overnight continuation:** commodities + markets + FX (yfinance), US BLS
