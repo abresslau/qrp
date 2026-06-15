@@ -78,7 +78,7 @@ the story's working notes; the implemented subset is recorded below.
 
 ## Result
 
-Macro store: **33 series / 12k obs → 358 series / ~239k obs**, 14 categories. Live values
+Macro store: **33 series / 12k obs → 370 series / ~291k obs**, 14 categories. Live values
 sanity-check against Kinea's narrative (Selic 14.5%, IPCA 12m 4.72%, Focus 4.04%, BRL/USD
 5.08, unemployment 5.8%, DBGG 80.4% GDP, UST 30y 4.97%, Brent ~$87, gold ~$4.2k).
 
@@ -121,15 +121,26 @@ claude-opus-4-8[1m]
 
 ### File List
 - `packages/macro/src/macro/sources.py` (UPDATE) — `fetch_bcb_sgs`, `fetch_sidra`,
-  `fetch_bcb_focus_12m`, `_get_retry`, Treasury tenors 3M/30Y, `_parse_br_date`, `_sidra_period`
-- `packages/macro/src/macro/ingest.py` (UPDATE) — `_BCB`/`_IBGE` catalogs + Focus call;
-  categories fx/activity/fiscal/external; broadened WB/OECD/ECB
+  `fetch_bcb_focus_12m`, `fetch_bls`, `_get_retry`, `_bcb_get_json`, Treasury tenors
+  3M/30Y, `_parse_br_date`, `_sidra_period`; FiscalData fetcher retry-hardened
+- `packages/macro/src/macro/market_sources.py` (NEW) — yfinance commodities/markets/FX
+  (`fetch_yfinance`, `_history` seam)
+- `packages/macro/src/macro/ingest.py` (UPDATE) — `_BCB`(24)/`_IBGE`(PIM/PMC/PNAD/PIB/IPCA)/
+  `_BLS`/`_MARKET` catalogs + Focus call; categories fx/activity/fiscal/external/commodities/
+  markets; broadened WB/OECD/ECB
 - `packages/macro/src/macro/gateway.py` (UPDATE) — enriched `series()` (deltas + sparkline)
 - `packages/macro/src/macro/router.py` (UPDATE) — `SeriesSummary` change/spark fields
-- `packages/macro/tests/test_sources.py` (UPDATE) — parser tests for the new fetchers
+- `packages/macro/pyproject.toml` (UPDATE) — yfinance dependency
+- `packages/macro/tests/test_sources.py` (UPDATE) — parser tests (BCB/SIDRA/Focus/BLS/retry)
 - `packages/macro/tests/test_ingest.py` (UPDATE) — dispatch tests neutralize new sources
-- `apps/web/components/macro-browser.tsx` (REWRITE) — sell-side research display
+- `packages/macro/tests/test_categories.py` (UPDATE) — enriched gateway row shape
+- `packages/macro/tests/test_market_sources.py` (NEW) — yfinance fetcher tests
+- `apps/web/components/macro-browser.tsx` (REWRITE) — sell-side research display (cockpit,
+  movers, comparison overlays, range selector, overlay, zero baseline, hover crosshair,
+  staleness, CSV export, sort toggle, sub-cockpit, keyboard nav, search, footnote, as-of)
+- `apps/web/components/macro-compare.tsx` (UPDATE) — comparison enabled for cross-country buckets
 - `apps/web/lib/api-types.ts` (REGEN)
+- `.gitignore` (UPDATE) — ignore transient `_*.log`
 
 ### References
 - [Source: kinea.com.br/blog — Cartas do Gestor]
