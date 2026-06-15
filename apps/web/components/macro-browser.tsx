@@ -648,6 +648,15 @@ export function MacroBrowser({ category }: { category?: string }) {
           </div>
         ))}
 
+      {/* category sub-cockpit: top highlights of the viewed bucket (respects the sort) */}
+      {category && sections[0] && sections[0].rows.length > 0 && (
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {sections[0].rows.slice(0, 8).map((s) => (
+            <StatCard key={s.series_id} s={s} onClick={() => setClicked(s.series_id)} />
+          ))}
+        </div>
+      )}
+
       {/* 12-month movers (landing) */}
       {!category && movers.length > 0 && (
         <div className="mt-6">
