@@ -130,6 +130,20 @@ function isStale(endDate?: string | null, freq?: string | null): boolean {
 const RANGES = { "1Y": 1, "5Y": 5, Max: null } as const;
 type RangeKey = keyof typeof RANGES;
 
+/** Download a series' FULL observation history as CSV (date,value) — the analyst's
+ *  export-to-Excel path. Builds a Blob client-side; no server round trip. */
+function downloadCsv(detail: SeriesDetail): void {
+  const header = `# ${detail.name} — ${detail.geo ?? ""} (${detail.unit ?? ""}); source ${detail.source}`;
+  const lines = [header, "date,value", ...detail.observations.map((o) => `${o.obs_date},${o.value}`)];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${detail.series_id.replace(/[^A-Za-z0-9]+/g, "_")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** Slice a detail to the last N years (anchored to the series' OWN last obs, since end
  *  dates differ). Falls back to the full series if the window leaves < 2 points (e.g. an
  *  annual series over 1Y) so the chart never goes blank. */
@@ -684,7 +698,7 @@ export function MacroBrowser({ category }: { category?: string }) {
                     </>
                   )}
                 </div>
-                <div className="flex gap-1">
+                <div className="flex items-center gap-1">
                   {(Object.keys(RANGES) as RangeKey[]).map((r) => (
                     <button
                       key={r}
@@ -697,6 +711,14 @@ export function MacroBrowser({ category }: { category?: string }) {
                       {r}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => downloadCsv(shown)}
+                    className="ml-1 rounded border border-border px-2 py-0.5 text-xs text-muted transition hover:bg-fg/5"
+                    title="Download full history as CSV"
+                  >
+                    CSV
+                  </button>
                 </div>
               </div>
               <div className="mt-1">
