@@ -3,12 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { STATIC_SUBNAV, type SubItem } from "@/lib/nav";
+import { SUBNAV_PROVIDERS, type SubItem } from "@/lib/nav";
 import { ThemeToggle } from "@/components/theme-toggle";
-import type { Schemas } from "@/lib/api";
 
 type Module = { key: string; name: string; description: string; enabled: boolean };
-type CategorySummary = Schemas["CategorySummary"];
 
 function Chevron({ open }: { open: boolean }) {
   return (
@@ -38,44 +36,54 @@ export function Sidebar({
     .filter((m) => m.enabled)
     .map((m) => ({ key: m.key, name: m.name, href: `/${m.key}` }));
 
-  // macro's submenu is data-driven: categories live in the macro DB, so the submenu can
-  // never drift from the data. A failed fetch shows NO submenu (never an error-as-data);
-  // navigating into /macro retries an empty list so one cold-start failure doesn't hide
-  // the submenu for the whole session.
-  const [macroSub, setMacroSub] = useState<SubItem[]>([]);
-  const macroSubRef = useRef<SubItem[]>([]);
-  const macroEnabled = modules.some((m) => m.key === "macro" && m.enabled);
-  const loadCategories = useCallback(() => {
-    fetch("/api/macro/categories", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((cats: CategorySummary[]) => {
-        const sub = cats.map((c) => ({
-          href: `/macro/${encodeURIComponent(c.category)}`,
-          label: c.category,
-          badge: c.n_series,
-        }));
-        macroSubRef.current = sub;
-        setMacroSub(sub);
+  // Async submenus (e.g. macro categories) are data-driven, so they can never drift from the
+  // data. Resolved per module via the registry's `fetch` providers, with a fail-safe: a failed
+  // or late fetch never wipes a WORKING submenu, and an empty submenu retries on any route
+  // change so one cold-start failure can't hide it for the whole session. This is generic over
+  // ANY fetch-kind provider — no module name is hardcoded (NFR-10).
+  const [fetched, setFetched] = useState<Record<string, SubItem[]>>({});
+  const fetchedRef = useRef<Record<string, SubItem[]>>({});
+  const loadedOkRef = useRef<Set<string>>(new Set());
+  const asyncKeysSig = items
+    .filter((it) => SUBNAV_PROVIDERS[it.key]?.kind === "fetch")
+    .map((it) => it.key)
+    .join(",");
+  const loadSub = useCallback((key: string) => {
+    const p = SUBNAV_PROVIDERS[key];
+    if (!p || p.kind !== "fetch") return;
+    p.load()
+      .then((sub) => {
+        loadedOkRef.current.add(key); // a successful load (even of an empty list) is not retried
+        fetchedRef.current = { ...fetchedRef.current, [key]: sub };
+        setFetched((f) => ({ ...f, [key]: sub }));
       })
       .catch(() => {
-        // a late/stale failure (e.g. the cold-start fetch losing a race to a successful
-        // retry) must never wipe a WORKING submenu
-        if (macroSubRef.current.length === 0) setMacroSub([]);
+        // a late/stale failure (e.g. a cold-start fetch losing a race to a successful retry)
+        // must never wipe a WORKING submenu; leaving the key un-"loaded" lets it retry
+        if ((fetchedRef.current[key] ?? []).length === 0) {
+          setFetched((f) => ({ ...f, [key]: [] }));
+        }
       });
   }, []);
   useEffect(() => {
-    // retry an empty list on ANY route change (cheap no-op once populated) — a single
-    // cold-start failure must not hide the submenu for the session
-    if (macroEnabled && macroSubRef.current.length === 0) loadCategories();
-  }, [macroEnabled, pathname, loadCategories]);
+    // load each async submenu once; only a FAILED load retries on a later route change (so a
+    // cold-start failure can't hide it for the session) — a successful-but-empty result does
+    // NOT re-fetch every navigation.
+    for (const key of asyncKeysSig ? asyncKeysSig.split(",") : []) {
+      if (!loadedOkRef.current.has(key)) loadSub(key);
+    }
+  }, [asyncKeysSig, pathname, loadSub]);
 
   // Expand/collapse is DECOUPLED from navigation (operator change request): the chevron
   // toggles a submenu in place; the module label navigates; the active module defaults
   // to expanded until the user says otherwise.
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
-  const subnavFor = (key: string): SubItem[] =>
-    key === "macro" ? macroSub : (STATIC_SUBNAV[key] ?? []);
+  const subnavFor = (key: string): SubItem[] => {
+    const p = SUBNAV_PROVIDERS[key];
+    if (!p) return [];
+    return p.kind === "static" ? p.items : (fetched[key] ?? []);
+  };
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface px-4 py-6">

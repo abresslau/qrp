@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { Sidebar } from "@/components/sidebar";
+import { CommandPalette } from "@/components/command-palette";
 import { apiGet } from "@/lib/api";
 
 type Module = { key: string; name: string; description: string; enabled: boolean };
@@ -32,6 +33,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <Sidebar name={name} tagline={platform?.tagline} modules={platform?.modules ?? []} />
           <main className="flex-1 px-8 py-7">{children}</main>
         </div>
+        <CommandPalette modules={platform?.modules ?? []} />
       </body>
     </html>
   );

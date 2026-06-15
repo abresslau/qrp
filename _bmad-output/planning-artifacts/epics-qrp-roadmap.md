@@ -361,10 +361,21 @@ env blocker is gone): extension installs, cross-DB join correct, writes physical
 finding recorded in architecture-qrp.md; serving-path adoption stays its own story.
 **(DB-per-package migration follow-ups closed.)**
 
-### Story QH.6 — Generic module framework + command palette (FR-2)  `[NEW]`
-**AC:** now that 8 modules exist (the "build module #2 first" trigger is long past), extract the
-generic module-registry / per-module bundle loader and ship the command palette (FR-2, deferred
-in v1). **(NFR-10 just-in-time framework + FR-2.)**
+### Story QH.6 — Generic module framework + command palette (FR-2)  `[BUILT 2026-06-15]`
+**AC (met):** the bespoke per-module subnav wiring (`sidebar.tsx`'s `key === "macro"` + inline
+fetch, C.1's "until module #3" seam) is generalized into a `SUBNAV_PROVIDERS` registry
+(`lib/nav.ts`) — static or async `fetch` providers keyed by module; the sidebar consumes it
+generically, so adding a module is **registry-only, no shell edit** (NFR-10). The FR-2 command
+palette (`components/command-palette.tsx`, mounted as a client island in the server layout) opens
+from anywhere via ⌘K/Ctrl+K (Esc/backdrop close), navigates to every enabled **area** and
+**screen** (sourced from the SAME registry — no drift), and launches the FR-7 **operations**
+(read-only ops `POST /run` directly; writer/arg ops route to `/sym/operate` where the guard UX
+lives — both land on Operate so the job shows live via the QH.4 SSE stream). Scope held to the
+real work: the backend toggle-mounting framework (AR-Q3) and Next's file-routing "bundle loader"
+already existed — no speculative abstraction. Frontend-only, no new dependency, no migration.
+tsc + eslint + `next build` (18/18 routes) all green. Deferred (ledgered): palette entity-search,
+write-op actuation in the palette, console UI test infra. **(NFR-10 just-in-time framework + FR-2,
+now built.)**
 
 ## FR Coverage Map
 - FR-13 → Q4.3 **(Client entity `[BUILT]` — model + API + UI)** + Q4.1/Q4.4 (portfolio CRUD `[BUILT]`) ✅ complete

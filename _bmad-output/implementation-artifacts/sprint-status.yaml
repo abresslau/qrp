@@ -49,7 +49,9 @@ last_updated: 2026-06-15
 # story q8-5-kinea-brazil-macro-feeder created + implemented 2026-06-14 (central-bank feeders
 #   BCB/IBGE/Focus/Treasury + sell-side macro display; -> done)
 # story qh-4-operate-sse-progress created 2026-06-15 (Operate panel: SSE stream replaces 2s
-#   polling; status still derived from heartbeat/pipeline_run_log; -> ready-for-dev)
+#   polling; status still derived from heartbeat/pipeline_run_log; -> done, reviewed 2026-06-15)
+# story qh-6-generic-module-framework-palette created 2026-06-15 (frontend subnav-provider
+#   registry generalizing the bespoke subnavFor + FR-2 command palette; -> ready-for-dev)
 project: QRP
 project_key: NOKEY
 tracking_system: file-system
@@ -228,5 +230,5 @@ development_status:
   qh-3-readonly-db-role: done
   qh-4-operate-sse-progress: done
   qh-5-migration-finish-off: done
-  qh-6-generic-module-framework-palette: backlog
+  qh-6-generic-module-framework-palette: done
   epic-qh-retrospective: optional
