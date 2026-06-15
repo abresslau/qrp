@@ -646,11 +646,24 @@ export function MacroBrowser({ category }: { category?: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [orderedIds, sel]);
 
+  // freshest observation across the store — the report date (research decks date everything)
+  const asOf = useMemo(
+    () => series.reduce((m, s) => (s.end_date && s.end_date > m ? s.end_date : m), ""),
+    [series]
+  );
+
   return (
     <div className="mx-auto max-w-6xl">
-      <h1 className="text-lg font-semibold tracking-tight text-fg">
-        Macro{category ? <span className="text-muted"> · {CATEGORY_TITLE[category] ?? category}</span> : null}
-      </h1>
+      <div className="flex items-baseline justify-between gap-3">
+        <h1 className="text-lg font-semibold tracking-tight text-fg">
+          Macro{category ? <span className="text-muted"> · {CATEGORY_TITLE[category] ?? category}</span> : null}
+        </h1>
+        {asOf && (
+          <span className="text-xs text-muted">
+            {series.length} series · data as of {fmtDate(asOf)}
+          </span>
+        )}
+      </div>
       <p className="mt-1 text-sm text-muted">
         Central-bank &amp; macroeconomic series — BCB, IBGE, US Treasury, ECB, OECD, Eurostat,
         World Bank. QRP-managed reference data, independent of sym; never fabricated (no-data
