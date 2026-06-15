@@ -616,6 +616,29 @@ export function MacroBrowser({ category }: { category?: string }) {
     return ordered.map((k) => ({ key: k, rows: sortRows(by.get(k)!) }));
   }, [visible, category, sortMode]);
 
+  // Arrow ↑/↓ move the selection through the visible list, in display order (terminal feel).
+  const orderedIds = useMemo(
+    () => sections.flatMap((s) => s.rows.map((r) => r.series_id)),
+    [sections]
+  );
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (orderedIds.length === 0) return;
+      e.preventDefault();
+      const cur = sel ? orderedIds.indexOf(sel) : -1;
+      const next =
+        e.key === "ArrowDown"
+          ? Math.min(orderedIds.length - 1, cur + 1)
+          : Math.max(0, cur - 1);
+      setClicked(orderedIds[next]);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [orderedIds, sel]);
+
   return (
     <div className="mx-auto max-w-6xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">
@@ -768,7 +791,9 @@ export function MacroBrowser({ category }: { category?: string }) {
       {/* research tables, grouped by theme */}
       <div className="mt-6 space-y-6">
         {seriesState === "ready" && visible.length > 0 && (
-          <div className="flex items-center justify-end gap-1 text-xs">
+          <div className="flex items-center justify-between gap-1 text-xs">
+            <span className="text-muted/70">↑↓ navigate · click a row to chart</span>
+            <div className="flex items-center gap-1">
             <span className="mr-1 text-muted">Sort</span>
             {(["name", "move"] as const).map((m) => (
               <button
@@ -782,6 +807,7 @@ export function MacroBrowser({ category }: { category?: string }) {
                 {m === "name" ? "Name" : "12M move"}
               </button>
             ))}
+            </div>
           </div>
         )}
         {seriesState === "ready" && visible.length === 0 && (
