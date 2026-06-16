@@ -133,6 +133,19 @@ page. Shared posture (stated once, referenced per-universe):
 - **Rebalance cadence:** quarterly (Mar/Jun/Sep/Dec) + ad-hoc.
 - **Monitor / gating:** shared mechanics above; `calendar_mic=XNYS`.
 
+## nasdaq100 — Nasdaq 100
+
+- **Source:** Wikipedia "Nasdaq-100" (Components table), tokens `ticker:*@XNAS`
+  (US, Nasdaq-listed — bare tickers, no Yahoo suffix); snapshot + the page's
+  dated changes history. **103 current members** (incl. multi-class GOOGL/GOOG;
+  the index targets ~100-101). `source_pref=['wikipedia','fmp']` — FMP `nasdaq`
+  is a keyed secondary (free tier needs a key); Wikipedia is the active keyless
+  source. NOT the Nasdaq Composite (~3000, no curated list).
+- **PIT boundary:** `pit_valid_from=2007-02-01` (the depth of the page's
+  changes-table backfill; membership before that is unknown).
+- **Rebalance cadence:** annual December reconstitution + ad-hoc.
+- **Monitor / gating:** shared mechanics above; `calendar_mic=XNAS`.
+
 ## dax — DAX 40
 
 - **Source:** Wikipedia "DAX", `ticker:*@XETR` (Yahoo-suffix tokens);

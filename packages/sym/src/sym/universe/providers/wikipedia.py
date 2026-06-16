@@ -152,6 +152,10 @@ _BUILTIN_SPECS: dict[str, dict] = {
     "sp500": {"title": "List of S&P 500 companies", "mic": "XNYS"},
     "sp400": {"title": "List of S&P 400 companies", "mic": "XNYS"},
     "sp600": {"title": "List of S&P 600 companies", "mic": "XNYS"},
+    # Nasdaq-100 (US, Nasdaq-listed). The article's "Components" table carries a Ticker column;
+    # bare tickers map directly to XNAS (no yahoo suffix). Wikipedia is the keyless fallback for
+    # FMP's "nasdaq" constituent endpoint (free tier needs a key).
+    "nasdaq100": {"title": "Nasdaq-100", "mic": "XNAS"},
     # European flagships (current snapshot; build-forward PIT). Yahoo-suffixed.
     "dax": {"title": "DAX", "mic": "XETR", "yahoo_suffix": True},
     "cac40": {"title": "CAC 40", "mic": "XPAR", "yahoo_suffix": True},
