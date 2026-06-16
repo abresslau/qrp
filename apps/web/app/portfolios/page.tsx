@@ -12,6 +12,7 @@ export default function PortfoliosPage() {
   const [list, setList] = useState<P[]>([]);
   const [clients, setClients] = useState<C[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [name, setName] = useState("");
   const [client, setClient] = useState("");
   const [newClient, setNewClient] = useState("");
@@ -21,19 +22,31 @@ export default function PortfoliosPage() {
   // effect can call it without tripping react-hooks/set-state-in-effect (loading starts true).
   function fetchData() {
     Promise.all([
-      fetch("/api/portfolios", { cache: "no-store" }).then((r) => r.json()),
-      fetch("/api/portfolios/clients", { cache: "no-store" }).then((r) => r.json()),
+      fetch("/api/portfolios", { cache: "no-store" }).then((r) => {
+        if (!r.ok) throw new Error(`portfolios ${r.status}`); // an HTTP error is a load failure, not a list
+        return r.json();
+      }),
+      fetch("/api/portfolios/clients", { cache: "no-store" }).then((r) => {
+        if (!r.ok) throw new Error(`clients ${r.status}`);
+        return r.json();
+      }),
     ])
       .then(([p, c]: [P[], C[]]) => {
         setList(p);
         setClients(c);
+        setError(false);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      // QH.8: surface a load failure honestly (an empty list must not look like a real failure).
+      .catch(() => {
+        setError(true);
+        setLoading(false);
+      });
   }
-  // For event-handler refreshes (e.g. after create) we DO want the immediate loading flip.
+  // For event-handler refreshes (e.g. after create / retry) we DO want the immediate loading flip.
   function load() {
     setLoading(true);
+    setError(false);
     fetchData();
   }
   useEffect(() => {
@@ -179,7 +192,21 @@ export default function PortfoliosPage() {
                 </td>
               </tr>
             ))}
-            {!loading && shown.length === 0 && (
+            {!loading && error && (
+              <tr>
+                <td colSpan={4} className="px-4 py-6 text-center text-muted">
+                  Couldn&apos;t load portfolios.{" "}
+                  <button
+                    type="button"
+                    onClick={load}
+                    className="font-medium text-fg underline hover:no-underline"
+                  >
+                    Retry
+                  </button>
+                </td>
+              </tr>
+            )}
+            {!loading && !error && shown.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-4 py-6 text-center text-muted">
                   {filter

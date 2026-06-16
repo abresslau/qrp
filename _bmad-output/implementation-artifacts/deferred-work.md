@@ -1,4 +1,13 @@
 
+## Deferred from: code review of qh-8-console-fetch-hardening (2026-06-16)
+
+Beyond QH.8's ACs or no React-19 impact — candidates for a follow-up console pass:
+- **Palette reopen-before-run-resolves still navigates:** `openRef` guards close→stay-closed (AC3, tested) but a read-only op that resolves after the palette is closed AND reopened still `router.push`es, yanking the user out of the new session. Needs a run-session/generation token, not just an open flag.
+- **`analytics-panel` manual-refresh controller not aborted on unmount:** the effect cleanup captures the mount controller; a refresh in flight at unmount isn't aborted. Nil React-19 impact (silent no-op); a clean fix without reintroducing the exhaustive-deps warning needs restructuring.
+- **`portfolios` retry/create double-fetch race:** no abort token, so a slow failed mount resolving after a fast successful retry can clobber rows with a stale error (the AC1 stale-overwrite class, unfixed on this page).
+- **`portfolios` create paths ignore `r.ok` / no try-catch:** a failed `createPortfolio`/`createClient` is silent or an unhandled rejection (pre-existing).
+- **Palette `setOps`/`setAsyncScreens` lack an unmount guard** (React-19 no-op; asymmetric with the benchmarks alive-guard) and the submenu loop has **no in-flight dedupe** (rapid ⌘K toggling fires concurrent `load()` for one key, last-resolver-wins).
+
 ## Deferred from: code review of qh-7-console-test-harness (2026-06-16)
 
 Pre-existing component issues surfaced by the QH.7 review (NOT introduced by it — QH.7 only added tests + lint fixes). Candidates for a future console-hardening pass:

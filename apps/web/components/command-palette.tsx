@@ -30,7 +30,14 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
   const [asyncScreens, setAsyncScreens] = useState<Record<string, ReadonlyArray<{ href: string; label: string }>>>({});
   const [msg, setMsg] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const loadedRef = useRef(false);
+  const opsLoadedRef = useRef(false); // ops list: latched once loaded
+  const subLoadedRef = useRef<Set<string>>(new Set()); // async submenus: latched per source ON SUCCESS
+  // QH.8: mirror of `open` for async resolutions to read — a fetch settling after the palette
+  // closed must not navigate or surface a message. (A ref, not state: no extra render.)
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   // Global open/close shortcut. ⌘K/Ctrl+K toggles from anywhere (captured even inside inputs —
   // the modifier makes it unambiguous); Esc closes. Setting state in an event handler (not in
@@ -54,19 +61,30 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
   // Lazy-load on first open (cached for the session): the FR-7 ops, and any async submenu
   // providers (e.g. macro). All sets happen in promise callbacks, never synchronously here.
   useEffect(() => {
-    if (!open || loadedRef.current) return;
-    fetch("/api/operate/ops", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
-      .then((d: OpDef[]) => {
-        setOps(Array.isArray(d) ? d : []);
-        loadedRef.current = true; // latch only on success → a failed load retries on reopen
-      })
-      .catch(() => {});
+    if (!open) return;
+    // Ops and each async submenu latch INDEPENDENTLY, and only on success — so a failed ops
+    // load OR a failed submenu provider each retries on the next open (QH.8: matches the
+    // sidebar's retry-on-route-change; previously a single latch suppressed submenu retries).
+    if (!opsLoadedRef.current) {
+      fetch("/api/operate/ops", { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
+        .then((d: OpDef[]) => {
+          // Latch only on a well-formed array — a malformed-but-200 body is a failure, so leave it
+          // unlatched to retry on reopen (mirrors the failure path), not silently empty forever.
+          if (!Array.isArray(d)) return;
+          setOps(d);
+          opsLoadedRef.current = true;
+        })
+        .catch(() => {});
+    }
     for (const m of modules.filter((x) => x.enabled)) {
       const p = SUBNAV_PROVIDERS[m.key];
-      if (p?.kind === "fetch") {
+      if (p?.kind === "fetch" && !subLoadedRef.current.has(m.key)) {
         p.load()
-          .then((sub) => setAsyncScreens((s) => ({ ...s, [m.key]: sub })))
+          .then((sub) => {
+            subLoadedRef.current.add(m.key); // a successful (even empty) load is not retried
+            setAsyncScreens((s) => ({ ...s, [m.key]: sub }));
+          })
           .catch(() => {});
       }
     }
@@ -139,6 +157,9 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
           // O.4 envelope: {error:{message}} on failure, RunResult {ok,job_id,reason} on success.
           const res: { ok?: boolean; job_id?: number; reason?: string; error?: { message?: string } } =
             await r.json().catch(() => ({}));
+          // QH.8: if the user closed the palette while the run was in flight, do not navigate or
+          // surface a message on the dismissed palette — the op still ran server-side.
+          if (!openRef.current) return;
           if (r.ok && res.ok) {
             setOpen(false);
             router.push("/sym/operate");
@@ -146,7 +167,9 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
             setMsg(`Rejected: ${res.error?.message ?? res.reason ?? "unknown"}`);
           }
         })
-        .catch(() => setMsg("Run failed — open Operate to retry"));
+        .catch(() => {
+          if (openRef.current) setMsg("Run failed — open Operate to retry");
+        });
     },
     [router],
   );

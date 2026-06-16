@@ -228,7 +228,7 @@ development_status:
   epic-q9-retrospective: optional
 
   # ===== QRP Epic QH: Production Hardening (cross-cutting) =====
-  epic-qh: done  # QH.1-7 all done. QH.7 (console test harness) reviewed + patched 2026-06-16. QH.2 merged 889141a.
+  epic-qh: done  # QH.1-8 all done. QH.8 (console fetch-hardening) reviewed + 2 patches applied 2026-06-16.
   qh-1-close-brazil-gics-gap: done
   qh-2-live-quote-source: done  # reviewed 2026-06-16: 2 honesty-bug patches applied (freshness rollup, malformed-numeric degradation), 78 tests green; live quotes via Yahoo v8 chart REST (US ~real-time, B3 ~15m); see reference-env-external-sources
   qh-3-readonly-db-role: done
@@ -236,4 +236,5 @@ development_status:
   qh-5-migration-finish-off: done
   qh-6-generic-module-framework-palette: done
   qh-7-console-test-harness: done  # 2026-06-16: vitest harness + 17 tests (palette/registry/live-badge); 12-error lint baseline cleared; reviewed + 5 patches applied; npm test 17/17, eslint 0, tsc + next build green
+  qh-8-console-fetch-hardening: done  # 2026-06-16: AbortController newest-wins + benchmarks alive guard, palette openRef close-safety + latch split, portfolios error+retry; reviewed + 2 patches (r.ok check, ops array-latch); 25 tests, eslint 0/0, tsc + build green
   epic-qh-retrospective: done  # held 2026-06-15; augmented 2026-06-16 (epic-qh-retro-2026-06-16.md) after QH.2 actually landed

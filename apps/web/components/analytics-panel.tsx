@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
 
@@ -46,28 +46,48 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
 
   // Live PnL (Story QH.2): a swapped (live-quote) price source, fetched on demand, not
   // persisted. Independent of the benchmark/window selectors — it's today's mark vs prior close.
+  // QH.8: newest-request-wins via an AbortController. Each call aborts the prior in-flight request
+  // so a slow response for a previous `pid` (or a superseded manual refresh) can't overwrite the
+  // current mark, and the aborted check prevents setState after teardown.
+  const liveAbort = useRef<AbortController | null>(null);
   const loadLive = useCallback(() => {
-    fetch(`/api/analytics/portfolios/${pid}/live`, { cache: "no-store" })
+    liveAbort.current?.abort();
+    const ac = new AbortController();
+    liveAbort.current = ac;
+    fetch(`/api/analytics/portfolios/${pid}/live`, { cache: "no-store", signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`live ${r.status}`))))
-      .then((d: LivePnl) => setLive(d))
-      .catch(() => setLive(null));
+      .then((d: LivePnl) => {
+        if (!ac.signal.aborted) setLive(d);
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setLive(null);
+      });
   }, [pid]);
   useEffect(() => {
     loadLive();
+    const ac = liveAbort.current; // capture for cleanup (avoid reading the ref in the teardown)
+    return () => ac?.abort();
   }, [loadLive]);
 
   useEffect(() => {
+    let alive = true;
     fetch("/api/analytics/benchmarks", { cache: "no-store" })
       .then((r) => {
         if (!r.ok) throw new Error(`benchmarks ${r.status}`);
         return r.json();
       })
       .then((d: Benchmark[]) => {
+        if (!alive) return;
         setBenches(d);
         const sp = d.find((x) => x.name === "S&P 500") ?? d[0];
         if (sp) setBench(sp.id);
       })
-      .catch(() => setBenches([]));
+      .catch(() => {
+        if (alive) setBenches([]);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   useEffect(() => {
