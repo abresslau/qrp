@@ -18,10 +18,18 @@ from __future__ import annotations
 
 import math
 from bisect import bisect_left
-from datetime import date
+from datetime import date, datetime, timezone
 
 import psycopg
-from portfolios.gateway import portfolio_exists, read_portfolio_terms, read_weight_history
+from portfolios.gateway import (
+    portfolio_exists,
+    read_latest_weights,
+    read_portfolio_terms,
+    read_weight_history,
+)
+
+from analytics import quotes
+from analytics.quotes import QuoteSourceUnreachable
 
 # Annualisation: trading days per year (daily return series).
 ANN = 252
@@ -196,6 +204,122 @@ class DbAnalyticsGateway:
             {"id": meta[0], "name": meta[1], "currency": meta[2]},
             {d: float(r) for d, r in rows},
         )
+
+    def live_pnl(self, pid: int, *, now: float | None = None) -> dict:
+        """Live portfolio PnL (Story QH.2): the EOD weight×return engine with the price source
+        swapped to live quotes. Per constituent the live return = quote price / its own previous
+        close − 1; the portfolio return is the SAME coverage-honest weighted sum the EOD path
+        uses (``Σ w·r`` normalised by covered |weight|). Quotes are fetched externally and NEVER
+        persisted. Freshness = worst across PRICED constituents; ``as_of`` = oldest priced quote.
+        Raises LookupError (404) for a missing portfolio, QuoteSourceUnreachable (503) only when
+        EVERY mappable constituent fails with a network error.
+        """
+        if not portfolio_exists(self._conn, pid):
+            raise LookupError(f"portfolio {pid} not found")
+        as_of, weights = read_latest_weights(self._conn, pid)
+        terms = read_portfolio_terms(self._conn, pid)
+        notional = float(terms[0]) if terms and terms[0] is not None else None
+        base_ccy = terms[1] if terms else None
+        result: dict = {
+            "portfolio_id": pid,
+            "weights_as_of": as_of.isoformat() if as_of else None,
+            "as_of": None, "freshness": "unavailable",
+            "n_constituents": len(weights), "n_priced": 0,
+            "total_weight": 0.0, "covered_weight": 0.0,
+            "live_return": None, "live_return_normalized": None,
+            "notional": notional, "base_currency": base_ccy, "pnl": None,
+            "constituents": [],
+        }
+        if not weights:
+            return result
+
+        figis = list(weights)
+        meta = {
+            f: (tk, mic)
+            for f, tk, mic in self._sym.execute(
+                """
+                SELECT s.composite_figi, tk.symbol_value, s.mic
+                  FROM securities s
+                  LEFT JOIN LATERAL (
+                      SELECT symbol_value FROM security_symbology y
+                       WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
+                       ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+                  ) tk ON TRUE
+                 WHERE s.composite_figi = ANY(%s)
+                """,
+                (figis,),
+            ).fetchall()
+        }
+
+        now = quotes.now_epoch() if now is None else now
+        total_abs = covered_abs = port_ret = 0.0
+        n_priced = attempted = net_errors = 0
+        any_delayed = False
+        oldest_epoch: int | None = None
+        constituents: list[dict] = []
+        for figi, wq in weights.items():
+            w = float(wq)
+            total_abs += abs(w)
+            tk, mic = meta.get(figi, (None, None))
+            ysym = quotes.yahoo_symbol_for(tk, mic)
+            lr = None
+            cfresh = "unavailable"
+            if ysym is not None:
+                attempted += 1
+                try:
+                    q = quotes.fetch_raw_quote(ysym)
+                except QuoteSourceUnreachable:
+                    net_errors += 1
+                    q = None
+                if q is not None:
+                    lr = quotes.live_return(q.price, q.prev_close)
+                    if lr is not None:
+                        # Freshness is meaningful only for a PRICED name, and it stays in the
+                        # {live,delayed,unavailable} vocabulary. classify_freshness(None) -> 'delayed',
+                        # so a priced-but-timeless quote is 'delayed' — never silently 'live'.
+                        cfresh, _ = quotes.classify_freshness(q.quote_epoch, now)
+                        any_delayed = any_delayed or cfresh == "delayed"
+                        if q.quote_epoch is not None:
+                            oldest_epoch = (
+                                q.quote_epoch if oldest_epoch is None
+                                else min(oldest_epoch, q.quote_epoch)
+                            )
+            contrib = None
+            if lr is not None:
+                covered_abs += abs(w)
+                port_ret += w * lr
+                n_priced += 1
+                contrib = w * lr
+            constituents.append(
+                {"figi": figi, "ticker": tk, "weight": w, "live_return": lr,
+                 "contribution": contrib, "freshness": cfresh}
+            )
+
+        if attempted and net_errors == attempted:
+            raise QuoteSourceUnreachable(
+                f"quote provider unreachable ({net_errors}/{attempted} constituents)"
+            )
+
+        norm = (port_ret / covered_abs) if covered_abs > 0 else None
+        constituents.sort(
+            key=lambda x: abs(x["contribution"]) if x["contribution"] is not None else -1,
+            reverse=True,
+        )
+        result.update(
+            n_priced=n_priced,
+            total_weight=total_abs,
+            covered_weight=covered_abs,
+            live_return=port_ret if covered_abs > 0 else None,
+            live_return_normalized=norm,
+            freshness=("unavailable" if n_priced == 0 else "delayed" if any_delayed else "live"),
+            as_of=(
+                datetime.fromtimestamp(oldest_epoch, tz=timezone.utc).isoformat()
+                if oldest_epoch is not None else None
+            ),
+            pnl=(notional * norm) if (notional is not None and norm is not None) else None,
+            constituents=constituents,
+        )
+        return result
 
     def analytics(self, pid: int, benchmark_id: int, window: str) -> dict:
         w = (window or "ALL").upper()

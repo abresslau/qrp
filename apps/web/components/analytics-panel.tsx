@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
 
 type Benchmark = Schemas["Benchmark"];
 type Analytics = Schemas["Analytics"];
+type LivePnl = Schemas["LivePnl"];
+
+const FRESH_STYLE: Record<string, string> = {
+  live: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  delayed: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  unavailable: "border-border bg-fg/5 text-muted",
+};
 
 const WINDOWS = ["ALL", "1Y", "YTD", "6M", "3M"] as const;
 
@@ -35,6 +42,19 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
   const [win, setWin] = useState<string>("ALL");
   const [a, setA] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(false);
+  const [live, setLive] = useState<LivePnl | null>(null);
+
+  // Live PnL (Story QH.2): a swapped (live-quote) price source, fetched on demand, not
+  // persisted. Independent of the benchmark/window selectors — it's today's mark vs prior close.
+  const loadLive = useCallback(() => {
+    fetch(`/api/analytics/portfolios/${pid}/live`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`live ${r.status}`))))
+      .then((d: LivePnl) => setLive(d))
+      .catch(() => setLive(null));
+  }, [pid]);
+  useEffect(() => {
+    loadLive();
+  }, [loadLive]);
 
   useEffect(() => {
     fetch("/api/analytics/benchmarks", { cache: "no-store" })
@@ -115,6 +135,37 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
             }
             cls={r.pnl == null ? "text-muted text-sm" : tone(r.pnl)}
           />
+        </div>
+      )}
+
+      {live && live.n_priced > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg px-3 py-2">
+          <span className="text-[11px] uppercase tracking-wide text-muted">Live PnL</span>
+          <span className={`text-lg font-semibold tabular-nums ${tone(live.live_return_normalized)}`}>
+            {pct(live.live_return_normalized)}
+          </span>
+          {live.pnl != null && (
+            <span className={`text-sm tabular-nums ${tone(live.pnl)}`}>
+              {`${live.pnl >= 0 ? "+" : ""}${live.pnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+              {live.base_currency ? ` ${live.base_currency}` : ""}
+            </span>
+          )}
+          <span
+            className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${FRESH_STYLE[live.freshness] ?? FRESH_STYLE.unavailable}`}
+          >
+            {live.freshness}
+          </span>
+          <span className="text-[11px] text-muted">
+            {live.n_priced}/{live.n_constituents} priced
+            {live.as_of ? ` · as of ${new Date(live.as_of).toLocaleTimeString()}` : ""} · not stored
+          </span>
+          <button
+            type="button"
+            onClick={loadLive}
+            className="ml-auto rounded-md border border-border px-2 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
+          >
+            ↻ refresh
+          </button>
         </div>
       )}
 

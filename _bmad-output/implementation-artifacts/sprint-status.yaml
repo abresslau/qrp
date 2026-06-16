@@ -44,14 +44,18 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-15
+last_updated: 2026-06-16
 # story qh-3-readonly-db-role created 2026-06-13; implemented + reviewed 2026-06-14 (-> done)
 # story q8-5-kinea-brazil-macro-feeder created + implemented 2026-06-14 (central-bank feeders
 #   BCB/IBGE/Focus/Treasury + sell-side macro display; -> done)
 # story qh-4-operate-sse-progress created 2026-06-15 (Operate panel: SSE stream replaces 2s
 #   polling; status still derived from heartbeat/pipeline_run_log; -> done, reviewed 2026-06-15)
 # story qh-6-generic-module-framework-palette created 2026-06-15 (frontend subnav-provider
-#   registry generalizing the bespoke subnavFor + FR-2 command palette; -> ready-for-dev)
+#   registry generalizing the bespoke subnavFor + FR-2 command palette; -> done, reviewed 2026-06-15)
+# Epic QH retrospective held 2026-06-15 (epic-qh-retro-2026-06-15.md). DECISION: QH.2 is
+#   deploy-gated (engine ready; no live quote source reachable in-env), NOT incomplete — Epic QH
+#   counts functionally complete (QH.4+QH.6 landed on main fb6ad86). Headline action: console
+#   test harness (vitest + @testing-library) for the palette + subnav registry.
 project: QRP
 project_key: NOKEY
 tracking_system: file-system
@@ -224,11 +228,11 @@ development_status:
   epic-q9-retrospective: optional
 
   # ===== QRP Epic QH: Production Hardening (cross-cutting) =====
-  epic-qh: in-progress
+  epic-qh: done  # all stories done; QH.2 reviewed + patched 2026-06-16 (live quotes via Yahoo v8 chart REST). Retro held 2026-06-15.
   qh-1-close-brazil-gics-gap: done
-  qh-2-live-quote-source: backlog
+  qh-2-live-quote-source: done  # reviewed 2026-06-16: 2 honesty-bug patches applied (freshness rollup, malformed-numeric degradation), 78 tests green; live quotes via Yahoo v8 chart REST (US ~real-time, B3 ~15m); see reference-env-external-sources
   qh-3-readonly-db-role: done
   qh-4-operate-sse-progress: done
   qh-5-migration-finish-off: done
   qh-6-generic-module-framework-palette: done
-  epic-qh-retrospective: optional
+  epic-qh-retrospective: done

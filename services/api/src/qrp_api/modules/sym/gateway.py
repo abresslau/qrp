@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import psycopg
 
+from qrp_api.modules.sym import quotes as quotes_mod
 from qrp_api.modules.sym.freshness import AreaFreshness, classify
+from qrp_api.modules.sym.quotes import QuoteSourceUnreachable
 
 
 def _as_text(v) -> str | None:
@@ -294,6 +296,69 @@ class DbSymGateway:
                 for figi, ticker, name, mic, currency, status in rows
             ],
         }
+
+    def quotes(self, figis: list[str], *, now: float | None = None) -> list[dict]:
+        """Live/delayed quotes for ``figis`` — fetched externally, NEVER persisted.
+
+        Resolves each figi to (ticker, mic) -> Yahoo symbol, fetches a snapshot, and computes a
+        live return vs the quote's OWN previous close (no sym price read needed). A figi with no
+        Yahoo mapping, or one the source has no data for, comes back ``freshness='unavailable'``
+        (price null) — a per-symbol miss is not a request failure. If EVERY attempted symbol
+        fails with a network error the whole source is unreachable -> raise
+        ``QuoteSourceUnreachable`` (the router maps it to the honest 503 envelope). Writes nothing.
+        """
+        now = quotes_mod.now_epoch() if now is None else now
+        rows = self._conn.execute(
+            """
+            SELECT s.composite_figi, tk.symbol_value, s.mic
+              FROM securities s
+              LEFT JOIN LATERAL (
+                  SELECT symbol_value FROM security_symbology y
+                   WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
+                   ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+              ) tk ON TRUE
+             WHERE s.composite_figi = ANY(%s)
+            """,
+            (list(figis),),
+        ).fetchall()
+        meta = {figi: (ticker, mic) for figi, ticker, mic in rows}
+
+        out: list[dict] = []
+        attempted = net_errors = 0
+        for figi in figis:
+            ticker, mic = meta.get(figi, (None, None))
+            ysym = quotes_mod.yahoo_symbol_for(ticker, mic)
+            row = {
+                "figi": figi, "ticker": ticker, "yahoo_symbol": ysym,
+                "price": None, "prev_close": None, "live_return": None,
+                "currency": None, "quote_time": None,
+                "freshness": "unavailable", "age_seconds": None,
+            }
+            if ysym is not None:
+                attempted += 1
+                try:
+                    q = quotes_mod.fetch_raw_quote(ysym)
+                except QuoteSourceUnreachable:
+                    net_errors += 1
+                    q = None
+                if q is not None:
+                    fresh, age = quotes_mod.classify_freshness(q.quote_epoch, now)
+                    row.update(
+                        price=q.price, prev_close=q.prev_close,
+                        live_return=quotes_mod.live_return(q.price, q.prev_close),
+                        currency=q.currency,
+                        quote_time=(
+                            datetime.fromtimestamp(q.quote_epoch, tz=timezone.utc).isoformat()
+                            if q.quote_epoch is not None else None
+                        ),
+                        freshness=fresh, age_seconds=age,
+                    )
+            out.append(row)
+        if attempted and net_errors == attempted:
+            raise QuoteSourceUnreachable(
+                f"quote provider unreachable ({net_errors}/{attempted} symbols)"
+            )
+        return out
 
     def security_detail(self, figi: str) -> dict | None:
         """One security: master + latest price + fundamentals + returns across windows."""
