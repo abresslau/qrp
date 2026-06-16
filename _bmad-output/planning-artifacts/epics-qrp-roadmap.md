@@ -386,6 +386,17 @@ tsc + eslint + `next build` (18/18 routes) all green. Deferred (ledgered): palet
 write-op actuation in the palette, console UI test infra. **(NFR-10 just-in-time framework + FR-2,
 now built.)**
 
+### Story QH.7 — Console test harness (vitest + @testing-library)  `[READY-FOR-DEV 2026-06-16]`
+**AC:** stand up `vitest` + `@testing-library/react` + `jsdom` in `apps/web` (`npm test`), and
+backfill the highest-logic frontend surfaces that three QH stories shipped untested (verified only
+by `tsc`/`eslint`/`next build`/manual): the ⌘K command palette (filter, ↑/↓ select, read-only-launch
+vs writer-route, result/`msg` surfacing), the `SUBNAV_PROVIDERS` registry fail-safe + retry latch,
+and the QH.2 live-PnL badge (`freshness`→`FRESH_STYLE` mapping, `n_priced` gating, `as_of` null-guard).
+Also clear the RED lint baseline (the `react-hooks/set-state-in-effect` errors, incl. the
+analytics-panel one) via derive-don't-sync, so `eslint apps/web` → 0 errors. Out of scope:
+Playwright/e2e, visual regression. **(Promoted from the Epic QH retrospective — Action #1, implicated
+in QH.4/QH.6/QH.2; the console is the only QRP surface with no automated test layer.)**
+
 ## FR Coverage Map
 - FR-13 → Q4.3 **(Client entity `[BUILT]` — model + API + UI)** + Q4.1/Q4.4 (portfolio CRUD `[BUILT]`) ✅ complete
 - FR-14 → Q4.1, Q4.2 `[BUILT]`, Q4.5 `[BUILT 2026-06-11]` (multi-date history + as-of picker) ✅ complete

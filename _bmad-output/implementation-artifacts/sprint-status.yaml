@@ -228,11 +228,12 @@ development_status:
   epic-q9-retrospective: optional
 
   # ===== QRP Epic QH: Production Hardening (cross-cutting) =====
-  epic-qh: done  # all stories done; QH.2 reviewed + patched 2026-06-16 (live quotes via Yahoo v8 chart REST). Retro held 2026-06-15.
+  epic-qh: in-progress  # REOPENED 2026-06-16: QH.7 console test harness promoted from the QH retro (Action #1, thrice-implicated). QH.1-6 all done; QH.2 merged 889141a.
   qh-1-close-brazil-gics-gap: done
   qh-2-live-quote-source: done  # reviewed 2026-06-16: 2 honesty-bug patches applied (freshness rollup, malformed-numeric degradation), 78 tests green; live quotes via Yahoo v8 chart REST (US ~real-time, B3 ~15m); see reference-env-external-sources
   qh-3-readonly-db-role: done
   qh-4-operate-sse-progress: done
   qh-5-migration-finish-off: done
   qh-6-generic-module-framework-palette: done
-  epic-qh-retrospective: done
+  qh-7-console-test-harness: ready-for-dev  # promoted from the 2026-06-16 QH retro: vitest + @testing-library, backfill palette/registry/live-badge, clear RED lint baseline
+  epic-qh-retrospective: done  # held 2026-06-15; augmented 2026-06-16 (epic-qh-retro-2026-06-16.md) after QH.2 actually landed
