@@ -1,4 +1,21 @@
 
+## Deferred from: code review of qh-2-live-quote-source (2026-06-16)
+
+- **Future-dated / clock-skewed quote always reads "live" (Edge, Low):** `classify_freshness` does `age = max(0, int(now - quote_epoch))`, so a `quote_epoch` in the future clamps to age 0 and classifies `live` regardless of how far ahead. Fine for small skew; reject far-future stamps (e.g. `> now + SKEW → delayed`) if bad payloads appear.
+- **Yahoo symbol not URL-encoded into the request path (Edge, Low):** `_CHART_URL.format(sym=yahoo_symbol)` interpolates the symbol raw. Ticker is first-party DB data so SSRF/param-injection risk is low, but `urllib.parse.quote(sym, safe='')` would harden the external fetch.
+- **Duplicate FIGIs fetch twice + double-count (Edge, Low):** `DbSymGateway.quotes()` doesn't dedupe `figis`, so a repeated FIGI triggers a second network call and inflates the `attempted`/`net_errors` outage tally. Dedupe preserving order (`dict.fromkeys`).
+- **No max-size cap on the HTTP response body (Edge, Low):** `_http_get` does `r.read()` unbounded; a pathological response is fully buffered. Cap with `r.read(MAX_BYTES)`.
+- **No shared parity test for the two fetcher twins (Edge, Low):** `modules/sym/quotes.py` and `analytics/quotes.py` are intentionally duplicated; a parametrized test asserting identical `yahoo_symbol_for` output across both would catch silent drift.
+
+## Deferred from: Story QH.2 live quote source + live-PnL (2026-06-15)
+
+- **Quote-fetcher duplication across packages:** `qrp_api.modules.sym.quotes` and `analytics.quotes` are near-identical (symbol map + fetch/parse). Deliberate (standalone packages can't share without coupling; the no-sym-imports gate + the project's per-package `db.py` precedent) — extract a shared package only when a THIRD consumer of live quotes appears.
+- **In-memory TTL cache not implemented:** the 2026-06-15 decision allows a small process-local TTL cache to rate-limit Yahoo, but the current sequential on-demand fetch is fine at owner-operated scale. Add the cache (never a DB table) if request volume on the same symbols grows.
+- **No fan-out / streaming / history:** the chart endpoint is one-symbol-per-call and fetched sequentially; a bounded `ThreadPoolExecutor` would speed large baskets. SSE/streaming live quotes, intraday persistence (a separate timestamped `quote_snapshot` table, never `prices_raw`), a live heatmap, and a multi-provider fallback are all out of scope — separate stories if wanted.
+- **Freshness threshold is a flat 120s + no market-calendar awareness:** `marketState` came back null in-env, so "live vs delayed" is purely quote-age. A name quoting during its session but >120s stale reads `delayed` (honest, but conservative for thin names). A session-aware label would need exchange-hours data.
+- **`previousClose` is the live-return base, not the sym EOD close:** the live return uses Yahoo's own previous close, which can differ slightly from sym's adjusted close (corporate-action timing, vendor differences). Acceptable for an intraday directional mark; a sym-close-based base would re-introduce the read-surface/price-access question deliberately avoided here.
+- **Pre-existing analytics-panel `set-state-in-effect` lint error remains** (the `setLoading(true)` at the benchmark/window effect, C.1 baseline) — QH.2 added the live block without adding to the baseline; the derive-don't-sync cleanup is still outstanding.
+
 ## Deferred from: code review of qh-6-generic-module-framework-palette (2026-06-15)
 
 - **Command-palette accessibility pass (Blind+Edge, Med):** the palette is a modal presented without a focus trap, without `aria`-driven focus restoration on close (focus is orphaned to `<body>` when it unmounts), and without body scroll-lock (the page scrolls behind the backdrop). Keyboard selection also doesn't `scrollIntoView`, so navigating past the `max-h-80` fold moves the selection out of view. `role="dialog"`/`aria-modal`/`aria-label` were added; the trap/restore/scroll-lock/auto-scroll are deferred — real but no AC requires a11y and this is an owner-operated console. A focused a11y follow-up (trap + restore + scroll-lock + selected-item auto-scroll) is the clean fix.

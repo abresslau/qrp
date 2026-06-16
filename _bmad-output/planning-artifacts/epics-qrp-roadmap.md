@@ -318,10 +318,19 @@ always wins). Live: all 49 unclassified BVMF names classified, 0 unmapped; ibov/
 sectored). Remaining gics FAILs are non-Brazil (ftse100 69, US 34, others) — ledgered with
 the SEC SIC fallback lead.
 
-### Story QH.2 — Live quote source (live-PnL)  `[NEW, deferred]`
-**AC:** a real-time quote source (none in-env) feeds a `GET /api/sym/quotes`; live-PnL reuses the
-EOD engine with the price source swapped; labelled live/delayed, not persisted. **(Engine ready;
-deferred until a source exists on deploy.)**
+### Story QH.2 — Live quote source (live-PnL)  `[BUILT 2026-06-15]`
+**AC (met):** a real-time quote source — UNBLOCKED: the Yahoo v8 chart endpoint
+(`query1.finance.yahoo.com/v8/finance/chart/{sym}`, no auth) was re-probed reachable 2026-06-15,
+superseding the "none in-env" premise — feeds `GET /api/sym/quotes` (stdlib `urllib`, browser UA;
+per-symbol live/delayed/unavailable from `regularMarketTime`; two-tier degradation: per-symbol
+miss = `unavailable` row, whole-source-down = 503). Live-PnL (`GET /api/analytics/portfolios/{pid}/live`)
+reuses the EOD weight×return engine with the price source swapped — per-name live return =
+`price / previousClose − 1` (from the quote's own previous close, so no sym price read), summed
+coverage-honestly; portfolio freshness = worst priced constituent, `as_of` = oldest priced quote.
+**Labelled live/delayed, NOT persisted** (no `prices_raw` write, no new table — quotes ephemeral;
+caching is in-memory-TTL-only by decision). Console analytics panel shows a live badge. No new
+dependency. 76 tests green; verified live end-to-end (KR/HK/TW quotes + portfolio 5 at +0.49%).
+**(Engine was ready; the source materialised in-env.)**
 
 ### Story QH.3 — Read-only DB role for sym reads  `[BUILT 2026-06-14]`
 **AC (met):** consumer reads of the sym package go through a least-privilege **`qrp_readonly`**

@@ -157,6 +157,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sym/quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quotes
+         * @description Live/delayed quotes (Story QH.2). External fetch at serve time — degrades to the honest
+         *     503 envelope if the provider is wholly unreachable; a per-symbol miss is an `unavailable`
+         *     row, never a request failure. Nothing is persisted.
+         */
+        get: operations["quotes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sym/attention": {
         parameters: {
             query?: never;
@@ -296,6 +318,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analytics/portfolios/{pid}/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Live
+         * @description Live PnL from a swapped (live-quote) price source — fetched at serve time, not persisted.
+         *     Degrades to the honest 503 envelope when the quote provider is wholly unreachable.
+         */
+        get: operations["portfolio_live"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analytics/portfolios/{pid}": {
         parameters: {
             query?: never;
@@ -339,6 +382,34 @@ export interface paths {
         };
         /** List Jobs */
         get: operations["list_jobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/operate/jobs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Jobs
+         * @description SSE stream of the jobs list (Story QH.4) — replaces the console's 2s polling.
+         *
+         *     Declared BEFORE ``/jobs/{job_id}`` so the literal ``stream`` segment isn't captured by
+         *     the int path param (which would 422). A pre-flight reachability check degrades an
+         *     unreachable ledger to the honest 503 envelope BEFORE streaming begins (never a silently
+         *     empty stream); the stream's OWN connection is opened inside the generator so its lifetime
+         *     is bound to that generator's ``try/finally`` and can't leak across the route boundary if
+         *     the response is never iterated. ``X-Accel-Buffering`` + ``Cache-Control: no-cache`` keep
+         *     the event-stream flushing incrementally through the Next.js ``/api`` rewrite proxy.
+         */
+        get: operations["stream_jobs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1087,6 +1158,57 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** LiveConstituent */
+        LiveConstituent: {
+            /** Figi */
+            figi: string;
+            /** Ticker */
+            ticker: string | null;
+            /** Weight */
+            weight: number;
+            /** Live Return */
+            live_return: number | null;
+            /** Contribution */
+            contribution: number | null;
+            /** Freshness */
+            freshness: string;
+        };
+        /**
+         * LivePnl
+         * @description Live portfolio PnL (Story QH.2) — the EOD weight×return engine with the price source
+         *     swapped to live quotes (per-name return vs its own previous close). NOT persisted.
+         *     `freshness` is the worst across priced constituents; `as_of` is the oldest priced quote.
+         */
+        LivePnl: {
+            /** Portfolio Id */
+            portfolio_id: number;
+            /** Weights As Of */
+            weights_as_of: string | null;
+            /** As Of */
+            as_of: string | null;
+            /** Freshness */
+            freshness: string;
+            /** N Constituents */
+            n_constituents: number;
+            /** N Priced */
+            n_priced: number;
+            /** Total Weight */
+            total_weight: number;
+            /** Covered Weight */
+            covered_weight: number;
+            /** Live Return */
+            live_return: number | null;
+            /** Live Return Normalized */
+            live_return_normalized: number | null;
+            /** Notional */
+            notional: number | null;
+            /** Base Currency */
+            base_currency: string | null;
+            /** Pnl */
+            pnl: number | null;
+            /** Constituents */
+            constituents: components["schemas"]["LiveConstituent"][];
+        };
         /** MembershipProposal */
         MembershipProposal: {
             /** Proposal Id */
@@ -1404,6 +1526,33 @@ export interface components {
             close: number | null;
             /** Session Date */
             session_date: string | null;
+        };
+        /**
+         * Quote
+         * @description A live/delayed quote — best-effort, NOT persisted (Story QH.2). `live_return` is the
+         *     price return vs the quote's own previous close; `freshness` ∈ live|delayed|unavailable.
+         */
+        Quote: {
+            /** Figi */
+            figi: string;
+            /** Ticker */
+            ticker: string | null;
+            /** Yahoo Symbol */
+            yahoo_symbol: string | null;
+            /** Price */
+            price: number | null;
+            /** Prev Close */
+            prev_close: number | null;
+            /** Live Return */
+            live_return: number | null;
+            /** Currency */
+            currency: string | null;
+            /** Quote Time */
+            quote_time: string | null;
+            /** Freshness */
+            freshness: string;
+            /** Age Seconds */
+            age_seconds: number | null;
         };
         /** RetConstituent */
         RetConstituent: {
@@ -2111,6 +2260,38 @@ export interface operations {
             };
         };
     };
+    quotes: {
+        parameters: {
+            query: {
+                /** @description comma-separated composite FIGIs (1..50) */
+                figis: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Quote"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     attention: {
         parameters: {
             query?: never;
@@ -2414,6 +2595,37 @@ export interface operations {
             };
         };
     };
+    portfolio_live: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LivePnl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     portfolio_analytics: {
         parameters: {
             query: {
@@ -2488,6 +2700,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Job"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_jobs: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

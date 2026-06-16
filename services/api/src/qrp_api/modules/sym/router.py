@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from qrp_api.db import connect
 from qrp_api.modules.sym.gateway import DEFAULT_HEATMAP_WINDOW, DbSymGateway
+from qrp_api.modules.sym.quotes import QuoteSourceUnreachable
 
 router = APIRouter(prefix="/api/sym", tags=["sym"])
 
@@ -175,6 +176,22 @@ class Attention(BaseModel):
     membership_proposals: list[MembershipProposal]
 
 
+class Quote(BaseModel):
+    """A live/delayed quote — best-effort, NOT persisted (Story QH.2). `live_return` is the
+    price return vs the quote's own previous close; `freshness` ∈ live|delayed|unavailable."""
+
+    figi: str
+    ticker: str | None
+    yahoo_symbol: str | None
+    price: float | None
+    prev_close: float | None
+    live_return: float | None
+    currency: str | None
+    quote_time: str | None
+    freshness: str
+    age_seconds: int | None
+
+
 class ValidationRun(BaseModel):
     run_id: str
     run_at: str | None
@@ -268,6 +285,23 @@ def security_detail(figi: str, gw: DbSymGateway = Depends(_gateway)) -> dict:
     if detail is None:
         raise HTTPException(status_code=404, detail="security not found")
     return detail
+
+
+@router.get("/quotes", response_model=list[Quote])
+def quotes(
+    figis: str = Query(..., description="comma-separated composite FIGIs (1..50)"),
+    gw: DbSymGateway = Depends(_gateway),
+) -> list[dict]:
+    """Live/delayed quotes (Story QH.2). External fetch at serve time — degrades to the honest
+    503 envelope if the provider is wholly unreachable; a per-symbol miss is an `unavailable`
+    row, never a request failure. Nothing is persisted."""
+    ids = [f.strip() for f in figis.split(",") if f.strip()]
+    if not ids or len(ids) > 50:
+        raise HTTPException(status_code=422, detail="figis must be 1..50 comma-separated FIGIs")
+    try:
+        return gw.quotes(ids)
+    except QuoteSourceUnreachable as exc:
+        raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
 @router.get("/attention", response_model=Attention)

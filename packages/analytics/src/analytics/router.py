@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from analytics.db import connect
 from analytics.gateway import DbAnalyticsGateway
+from analytics.quotes import QuoteSourceUnreachable
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
@@ -82,9 +83,51 @@ class Analytics(BaseModel):
     warning: str | None
 
 
+class LiveConstituent(BaseModel):
+    figi: str
+    ticker: str | None
+    weight: float
+    live_return: float | None
+    contribution: float | None
+    freshness: str
+
+
+class LivePnl(BaseModel):
+    """Live portfolio PnL (Story QH.2) — the EOD weight×return engine with the price source
+    swapped to live quotes (per-name return vs its own previous close). NOT persisted.
+    `freshness` is the worst across priced constituents; `as_of` is the oldest priced quote."""
+
+    portfolio_id: int
+    weights_as_of: str | None
+    as_of: str | None
+    freshness: str
+    n_constituents: int
+    n_priced: int
+    total_weight: float
+    covered_weight: float
+    live_return: float | None
+    live_return_normalized: float | None
+    notional: float | None
+    base_currency: str | None
+    pnl: float | None
+    constituents: list[LiveConstituent]
+
+
 @router.get("/benchmarks", response_model=list[Benchmark])
 def list_benchmarks(gw: DbAnalyticsGateway = Depends(_gateway)) -> list[dict]:
     return gw.benchmarks()
+
+
+@router.get("/portfolios/{pid}/live", response_model=LivePnl)
+def portfolio_live(pid: int, gw: DbAnalyticsGateway = Depends(_gateway)) -> dict:
+    """Live PnL from a swapped (live-quote) price source — fetched at serve time, not persisted.
+    Degrades to the honest 503 envelope when the quote provider is wholly unreachable."""
+    try:
+        return gw.live_pnl(pid)
+    except LookupError as exc:  # nonexistent portfolio
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except QuoteSourceUnreachable as exc:
+        raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
 @router.get("/portfolios/{pid}", response_model=Analytics)
