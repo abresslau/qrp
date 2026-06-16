@@ -116,6 +116,8 @@ export function HeatmapView({
   const [uni, setUni] = useState(defaultUniverse);
   const [win, setWin] = useState(defaultWindow);
   const [nonce, setNonce] = useState(0); // bump to re-fetch without changing uni/win (LIVE refresh)
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null); // local clock of the last LIVE pull
+  const [autoSec, setAutoSec] = useState(0); // LIVE auto-refresh interval in seconds; 0 = off
   const [data, setData] = useState<Heatmap | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,11 +143,19 @@ export function HeatmapView({
             ? `/api/sym/universes/${uni}/heatmap/live`
             : `/api/sym/universes/${uni}/heatmap?window=${win}`;
         const r = await fetch(url, { cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        if (!r.ok) {
+          // Surface the server's honest message (e.g. "universe too large for a live heatmap…")
+          // instead of a bare HTTP code.
+          const body = await r.json().catch(() => null);
+          throw new Error(body?.error?.message ?? body?.detail ?? `HTTP ${r.status}`);
+        }
         const d: Heatmap = await r.json();
         if (alive) {
           setData(d);
           setLoading(false);
+          // Stamp the LOCAL clock each LIVE pull, so a refresh always shows visible confirmation
+          // even when the data's own `as_of` (the oldest mark) and coverage don't move.
+          if (win === LIVE) setRefreshedAt(new Date().toLocaleTimeString(undefined, { timeZoneName: "short" }));
         }
       } catch (e) {
         if (alive) {
@@ -158,6 +168,15 @@ export function HeatmapView({
       alive = false;
     };
   }, [uni, win, nonce]);
+
+  // LIVE auto-refresh: while a positive interval is set and LIVE is selected, bump the refresh
+  // nonce on a timer (re-pulls via the effect above). setState lives in the timer callback, not the
+  // effect body, so it's clear of react-hooks/set-state-in-effect. Floored at 3s to stay polite.
+  useEffect(() => {
+    if (win !== LIVE || autoSec <= 0) return;
+    const id = setInterval(() => setNonce((n) => n + 1), Math.max(3, autoSec) * 1000);
+    return () => clearInterval(id);
+  }, [win, autoSec]);
 
   const root = useMemo<Node>(() => {
     if (!data || data.cells.length === 0) return null;
@@ -234,17 +253,40 @@ export function HeatmapView({
             {loading
               ? "fetching live quotes…"
               : `${data.priced ?? 0}/${data.total ?? 0} priced${
-                  data.as_of ? ` · as of ${new Date(data.as_of).toLocaleTimeString()}` : ""
-                } · not stored`}
+                  data.as_of
+                    ? ` · as of ${new Date(data.as_of).toLocaleTimeString(undefined, { timeZoneName: "short" })}`
+                    : ""
+                }${refreshedAt ? ` · refreshed ${refreshedAt}` : ""} · not stored`}
           </span>
+          <label className="ml-auto flex items-center gap-1 text-muted" title="Auto-refresh interval (seconds); blank or 0 = off. Floored at 3s.">
+            auto
+            <input
+              type="number"
+              min={0}
+              value={autoSec || ""}
+              onChange={(e) => setAutoSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+              placeholder="off"
+              className="w-14 rounded border border-border bg-bg px-1 py-0.5 text-fg outline-none focus:border-fg/40"
+            />
+            s{autoSec > 0 ? ` (every ${Math.max(3, autoSec)}s)` : ""}
+          </label>
           <button
             type="button"
             onClick={() => setNonce((n) => n + 1)}
             disabled={loading}
-            className="ml-auto rounded-md border border-border px-2 py-0.5 text-muted hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-md border border-border px-2 py-0.5 text-muted hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {loading ? "↻ refreshing…" : "↻ refresh"}
+            {/* Fixed label — only the icon spins while loading, so the button never changes width. */}
+            <span className={`inline-block${loading ? " animate-spin" : ""}`}>↻</span> refresh
           </button>
+        </div>
+      )}
+
+      {/* Errors render as a banner ABOVE the map, not inside the treemap box — a failed/over-cap
+          load (e.g. switching to a too-large universe) leaves the last good heat map in place. */}
+      {error && (
+        <div className="mb-3 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+          Couldn&apos;t load the heat map: {error}
         </div>
       )}
 
@@ -257,9 +299,6 @@ export function HeatmapView({
         }}
         onMouseLeave={() => setHover(null)}
       >
-        {error && (
-          <div className="p-6 text-sm text-red-400">Failed to load heat map: {error}</div>
-        )}
         {loading && !data && <div className="p-6 text-sm text-muted">Loading…</div>}
         {root && (
           <svg

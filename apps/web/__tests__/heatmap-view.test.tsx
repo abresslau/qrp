@@ -72,7 +72,7 @@ describe("HeatmapView LIVE mode (QH.9)", () => {
 
     fireEvent.change(windowSelect(), { target: { value: "LIVE" } });
 
-    expect(await screen.findByText(/Failed to load heat map/)).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn.t load the heat map/)).toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(2); // selectors still present -> recoverable
   });
 });
