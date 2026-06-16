@@ -214,28 +214,36 @@ export function HeatmapView({
                 {w.label}
               </option>
             ))}
-            <option value={LIVE}>● LIVE</option>
+            <option value={LIVE}>LIVE</option>
           </select>
         </div>
       </div>
 
-      {win === LIVE && !loading && data?.freshness && (
+      {win === LIVE && data?.freshness && (
         <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          {/* During a refetch show a 'refreshing' state rather than the prior pull's stale numbers,
+              and keep the (disabled) button visible so the click has clear feedback. */}
           <span
-            className={`rounded px-1.5 py-0.5 font-medium uppercase ${LIVE_STYLE[data.freshness] ?? LIVE_STYLE.unavailable}`}
+            className={`rounded px-1.5 py-0.5 font-medium uppercase ${
+              loading ? LIVE_STYLE.unavailable : (LIVE_STYLE[data.freshness] ?? LIVE_STYLE.unavailable)
+            }`}
           >
-            {data.freshness}
+            {loading ? "refreshing" : data.freshness}
           </span>
           <span className="text-muted">
-            {data.priced ?? 0}/{data.total ?? 0} priced
-            {data.as_of ? ` · as of ${new Date(data.as_of).toLocaleTimeString()}` : ""} · not stored
+            {loading
+              ? "fetching live quotes…"
+              : `${data.priced ?? 0}/${data.total ?? 0} priced${
+                  data.as_of ? ` · as of ${new Date(data.as_of).toLocaleTimeString()}` : ""
+                } · not stored`}
           </span>
           <button
             type="button"
             onClick={() => setNonce((n) => n + 1)}
-            className="ml-auto rounded-md border border-border px-2 py-0.5 text-muted hover:bg-fg/5 hover:text-fg"
+            disabled={loading}
+            className="ml-auto rounded-md border border-border px-2 py-0.5 text-muted hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
           >
-            ↻ refresh
+            {loading ? "↻ refreshing…" : "↻ refresh"}
           </button>
         </div>
       )}

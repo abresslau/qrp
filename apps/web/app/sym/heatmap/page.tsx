@@ -32,7 +32,7 @@ export default async function HeatmapPage({
       universes={universes}
       windows={windows}
       defaultUniverse={defaultUniverse}
-      defaultWindow="YTD"
+      defaultWindow="1D"
     />
   );
 }
