@@ -1,4 +1,15 @@
 
+## Deferred from: code review of qh-9-live-heatmap (2026-06-16)
+
+- **Heatmap live fetch has no AbortController** — the per-run `alive` guard prevents the stale-state overwrite (newest-wins holds), so this is an efficiency nicety (cancel the in-flight network on uni/win change), not a correctness gap.
+- **`new Date(as_of)` invalid-date guard** on the live badge (backend emits ISO-8601; defensive only).
+- **EOD footer momentarily reads "colored by LIVE return"** during a LIVE→EOD toggle (stale `data.window`); cosmetic.
+- **`id(rep)` keying** of the symbol map in `live_heatmap` — works (reps held live) but an index/inline key is cleaner.
+- **↻ refresh not disabled while loading** — overlapping fetches are state-safe; UX nicety.
+- **`lib/api-types.ts` regen for `LiveHeatmap`** — needs the running API; `heatmap-view.tsx` uses local types so nothing consumes it. Pre-deploy step.
+- **In-memory TTL cache for live quotes** (QH.2-deferred, re-confirmed) — bounded concurrency + `LIVE_HEATMAP_MAX` suffice at owner scale; add if request volume on repeated symbols grows.
+- **SSE/auto-refresh of the live heatmap** — it's pull-mark-discard (not streamed); an auto-ticking heatmap would poll/stream the live endpoint.
+
 ## Deferred from: code review of qh-8-console-fetch-hardening (2026-06-16)
 
 Beyond QH.8's ACs or no React-19 impact — candidates for a follow-up console pass:

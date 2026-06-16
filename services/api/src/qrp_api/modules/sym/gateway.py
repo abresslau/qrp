@@ -26,6 +26,10 @@ def _as_text(v) -> str | None:
 # Curated short/medium windows for the heat-map selector (subset of return_window codes).
 HEATMAP_WINDOWS = ["1D", "WTD", "MTD", "QTD", "YTD", "1M", "3M", "6M", "1Y"]
 DEFAULT_HEATMAP_WINDOW = "YTD"
+# Bound the LIVE heatmap fan-out (Story QH.9): one external quote per representative issuer, so a
+# huge universe could fire hundreds of requests at Yahoo (rate-limit risk). S&P 500 fits under this;
+# over-cap is a 422 (use a smaller universe or an EOD window), never an unbounded fan-out.
+LIVE_HEATMAP_MAX = 600
 
 
 @dataclass(frozen=True)
@@ -233,6 +237,138 @@ class DbSymGateway:
             "shown": len(cells),
             "missing_mcap": missing_mcap,
             "merged_share_classes": with_mcap - len(cells),
+            "cells": cells,
+        }
+
+    def live_heatmap(self, universe_id: str, *, now: float | None = None) -> dict:
+        """LIVE recolor of the universe treemap (Story QH.9): the SAME constituents / market-cap
+        sizing / share-class collapse as ``heatmap``, but each cell's return is a LIVE return
+        (``live_price / previousClose - 1``) from the QH.2 quote source, fanned out concurrently.
+        Per-cell ``freshness``; map-level ``as_of`` (oldest priced), worst ``freshness``, and
+        ``priced``/``total`` coverage. Quotes are fetched externally and NEVER persisted.
+        Raises LookupError (404), ValueError (422 over-cap), QuoteSourceUnreachable (503 when the
+        provider is wholly unreachable). Uncovered issuers render neutral (``ret`` = None)."""
+        c = self._conn
+        uname = _scalar(c, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,))
+        if uname is None:
+            raise LookupError(f"universe {universe_id!r} not found")
+
+        rows = c.execute(
+            """
+            SELECT r.composite_figi AS figi,
+                   coalesce(tk.symbol_value, s.composite_figi) AS ticker,
+                   s.mic AS mic,
+                   coalesce(sn.name, s.composite_figi) AS name,
+                   coalesce(g.sector_name, 'Unclassified') AS sector,
+                   g.industry_name AS industry,
+                   f.market_cap_usd,
+                   f.market_cap_lcy,
+                   f.currency_code,
+                   isin.symbol_value AS isin
+              FROM universe_member_resolution r
+              JOIN securities s ON s.composite_figi = r.composite_figi
+              LEFT JOIN LATERAL (
+                  SELECT market_cap_usd, market_cap_lcy, currency_code FROM fundamentals f2
+                   WHERE f2.composite_figi = r.composite_figi AND f2.market_cap_usd IS NOT NULL
+                   ORDER BY as_of_date DESC LIMIT 1
+              ) f ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT sector_name, industry_name FROM gics_scd g2
+                   WHERE g2.composite_figi = r.composite_figi
+                   ORDER BY (g2.valid_to IS NULL) DESC, g2.valid_from DESC LIMIT 1
+              ) g ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT name FROM security_names z
+                   WHERE z.composite_figi = r.composite_figi
+                   ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
+              ) sn ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT symbol_value FROM security_symbology y
+                   WHERE y.composite_figi = r.composite_figi AND y.symbol_type = 'ticker'
+                   ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+              ) tk ON TRUE
+              LEFT JOIN LATERAL (
+                  SELECT symbol_value FROM security_symbology yi
+                   WHERE yi.composite_figi = r.composite_figi AND yi.symbol_type = 'isin'
+                   ORDER BY (yi.valid_to IS NULL) DESC, yi.valid_from DESC LIMIT 1
+              ) isin ON TRUE
+             WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
+            """,
+            (universe_id,),
+        ).fetchall()
+
+        # Same issuer-collapse as the EOD heatmap (one tile per issuer, largest-cap class), but
+        # carry the representative's figi/mic/ticker so we can build its Yahoo symbol.
+        groups: dict[str, dict] = {}
+        missing_mcap = 0
+        with_mcap = 0
+        for figi, ticker, mic, name, sector, industry, mcap, mcap_lcy, currency, isin in rows:
+            if mcap is None:
+                missing_mcap += 1
+                continue
+            with_mcap += 1
+            issuer = isin[2:8] if isin and len(isin) >= 8 else f"figi:{figi}"
+            rep = {
+                "ticker": ticker, "name": name, "sector": sector, "industry": industry,
+                "market_cap_usd": float(mcap),
+                "market_cap_lcy": float(mcap_lcy) if mcap_lcy is not None else None,
+                "currency": currency, "price": None, "ret": None, "freshness": "unavailable",
+                "_mic": mic,
+            }
+            cur = groups.get(issuer)
+            if cur is None or rep["market_cap_usd"] > cur["market_cap_usd"]:
+                groups[issuer] = rep
+        reps = sorted(groups.values(), key=lambda x: x["market_cap_usd"], reverse=True)
+
+        if len(reps) > LIVE_HEATMAP_MAX:
+            raise ValueError(
+                f"universe too large for a live heatmap ({len(reps)} issuers > {LIVE_HEATMAP_MAX}); "
+                "use a smaller universe or an EOD window"
+            )
+
+        now = quotes_mod.now_epoch() if now is None else now
+        sym_by_id = {id(rep): quotes_mod.yahoo_symbol_for(rep["ticker"], rep["_mic"]) for rep in reps}
+        symbols = [s for s in sym_by_id.values() if s]
+        batch = quotes_mod.fetch_quotes_batch(symbols) if symbols else {}
+
+        priced = 0
+        any_delayed = False
+        oldest_epoch: int | None = None
+        cells: list[dict] = []
+        for rep in reps:
+            ysym = sym_by_id[id(rep)]
+            q = batch.get(ysym) if ysym else None
+            if q is not None:
+                lr = quotes_mod.live_return(q.price, q.prev_close)
+                if lr is not None:
+                    fresh, _ = quotes_mod.classify_freshness(q.quote_epoch, now)
+                    rep["price"] = q.price
+                    rep["ret"] = lr
+                    rep["freshness"] = fresh
+                    priced += 1
+                    any_delayed = any_delayed or fresh == "delayed"
+                    if q.quote_epoch is not None:
+                        oldest_epoch = (
+                            q.quote_epoch if oldest_epoch is None else min(oldest_epoch, q.quote_epoch)
+                        )
+            rep.pop("_mic", None)
+            cells.append(rep)
+
+        return {
+            "universe_id": universe_id,
+            "universe_name": uname,
+            "window": "LIVE",
+            "members_resolved": len(rows),
+            "shown": len(cells),
+            "missing_mcap": missing_mcap,
+            "merged_share_classes": with_mcap - len(cells),
+            "as_of": (
+                datetime.fromtimestamp(oldest_epoch, tz=timezone.utc).isoformat()
+                if oldest_epoch is not None else None
+            ),
+            "freshness": ("unavailable" if priced == 0 else "delayed" if any_delayed else "live"),
+            "priced": priced,
+            "total": len(cells),
             "cells": cells,
         }
 
