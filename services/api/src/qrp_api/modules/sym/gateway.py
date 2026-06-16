@@ -25,7 +25,7 @@ def _as_text(v) -> str | None:
 
 # Curated short/medium windows for the heat-map selector (subset of return_window codes).
 HEATMAP_WINDOWS = ["1D", "WTD", "MTD", "QTD", "YTD", "1M", "3M", "6M", "1Y"]
-DEFAULT_HEATMAP_WINDOW = "YTD"
+DEFAULT_HEATMAP_WINDOW = "1D"
 # Bound the LIVE heatmap fan-out (Story QH.9): one external quote per representative issuer, so a
 # huge universe could fire hundreds of requests at Yahoo (rate-limit risk). S&P 500 fits under this;
 # over-cap is a 422 (use a smaller universe or an EOD window), never an unbounded fan-out.
