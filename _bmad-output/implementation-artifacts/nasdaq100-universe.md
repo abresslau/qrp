@@ -26,15 +26,33 @@ Status: in-progress (2026-06-16, autonomous)
   (metadata for newly-resolved members), 2 missing GICS.** Minor (heatmap falls back to ticker /
   "Unclassified"); not corruption.
 
-### Follow-ups (finisher metadata — for operator review, not blocking the heatmap)
+### Resolution (2026-06-16) — Andre's call: **accept + document**
 
-- Backfill `security_names` for the 11 newly-resolved members missing a name (e.g. BBG000GQPB11,
-  BBG01H7CZ9S9, …) — name source/step to confirm.
-- The 2 missing-GICS members are the **known non-Brazil-GICS gap** (classify is ~90%, b3 fill is
-  Brazil-only; SEC SIC→GICS fallback is the ledgered fix) — affects all non-Brazil universes, not
-  just nasdaq100.
-- (Optional) price the still-listed historical leavers to reduce the global `unpriced_securities`
-  count — pre-existing, per the "reload covers leavers" convention.
+- ✅ **Names backfilled:** `sym names` named **41/41** unnamed securities → the 11 nasdaq100
+  members got names AND the global `identity_completeness` check now **PASSES** (the 41 identity-
+  incomplete were exactly the unnamed set). nasdaq100 completeness went **13 → 2 incomplete**.
+- **Remaining 2 nasdaq100 incompletes (ACCEPTED, documented, not blocking the heatmap):**
+  - **HON / Honeywell** — legit member, missing **GICS**. The **known deferred non-Brazil-GICS gap**
+    (classify ~90%; b3 fill is Brazil-only; SEC SIC→GICS fallback is the ledgered fix). Affects all
+    non-Brazil universes, not just nasdaq100.
+  - **PCLN / "Pictet Cleaner Planet"** — a **spurious member**: `PCLN` (old Priceline ticker — now
+    BKNG) parsed off the wiki page and mis-resolved to a Pictet fund, not a Nasdaq-100 equity.
+    Missing GICS because it isn't a classifiable equity. **Follow-up:** a membership `correct` event
+    to drop it (→ 102 clean members). Minor (one tiny tile); logged, not actioned per accept-call.
+- **`unpriced_securities` (41) — PRE-EXISTING global, NOT this add.** Confirmed 0 current nasdaq100
+  members unpriced; flagged names are non-Nasdaq (e.g. CMA / Comerica). Pre-dates nasdaq100.
+
+**Net:** the universe is functionally complete and renders in the heatmap; `validate` does not reach
+overall-PASS due to (a) the deferred non-Brazil-GICS story (HON), (b) the spurious PCLN row, and
+(c) pre-existing global unpriced — none newly introduced by this add (except the names, now fixed).
+Accepted as-is per Andre 2026-06-16.
+
+### Live-data note (operator asked "live data is stale")
+
+Not stale — verified: two CAC 40 live pulls ~3s apart advanced `as_of` (+5s) with 4 price changes.
+The **`delayed` badge is a sim-environment artifact**: freshness = sim-2026 "now" − Yahoo's
+real-world quote timestamp, an enormous gap, so it **always reads `delayed` here** regardless of how
+fresh the quote is. In production (real clock) the same code shows `live`. The data updates each pull.
 
 **Code committed:** `wikipedia.py` spec + this doc + the `universe-maintenance.md` section. The data
 (membership/prices/fundamentals/returns) lives in the DB. ruff + 13 provider tests green.
