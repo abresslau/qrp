@@ -24,7 +24,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const themeScript = `(function(){try{var t=localStorage.getItem('qrp-theme')||'${defaultTheme}';var d=t==='dark'||(t==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);if(d){document.documentElement.classList.add('dark');}}catch(e){if('${defaultTheme}'==='dark'){document.documentElement.classList.add('dark');}}})();`;
 
   return (
-    <html lang="en">
+    // suppressHydrationWarning: the no-flash script below sets `class="dark"` on <html> before
+    // React hydrates, so the server markup (no class) intentionally differs from the live DOM.
+    // This scopes the suppression to <html>'s own attributes only (not its subtree).
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
       </head>

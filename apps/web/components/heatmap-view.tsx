@@ -3,6 +3,8 @@
 import { hierarchy, treemap, treemapSquarify } from "d3-hierarchy";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useOnline } from "@/lib/connection";
+
 type Cell = {
   ticker: string;
   name: string;
@@ -128,6 +130,7 @@ export function HeatmapView({
   // in render (react-hooks/refs).
   const [pos, setPos] = useState<{ x: number; y: number; w: number }>({ x: 0, y: 0, w: 0 });
   const isDark = useIsDark();
+  const online = useOnline(); // sidebar offline toggle pauses LIVE auto-refresh
 
   useEffect(() => {
     let alive = true;
@@ -169,14 +172,15 @@ export function HeatmapView({
     };
   }, [uni, win, nonce]);
 
-  // LIVE auto-refresh: while a positive interval is set and LIVE is selected, bump the refresh
-  // nonce on a timer (re-pulls via the effect above). setState lives in the timer callback, not the
-  // effect body, so it's clear of react-hooks/set-state-in-effect. Floored at 3s to stay polite.
+  // LIVE auto-refresh: while a positive interval is set, LIVE is selected, AND the app is online
+  // (sidebar toggle), bump the refresh nonce on a timer (re-pulls via the effect above). setState
+  // lives in the timer callback, not the effect body, so it's clear of react-hooks/set-state-in-effect.
+  // Floored at 3s to stay polite. Going offline clears the timer (deps include `online`).
   useEffect(() => {
-    if (win !== LIVE || autoSec <= 0) return;
+    if (win !== LIVE || autoSec <= 0 || !online) return;
     const id = setInterval(() => setNonce((n) => n + 1), Math.max(3, autoSec) * 1000);
     return () => clearInterval(id);
-  }, [win, autoSec]);
+  }, [win, autoSec, online]);
 
   const root = useMemo<Node>(() => {
     if (!data || data.cells.length === 0) return null;
@@ -228,12 +232,12 @@ export function HeatmapView({
             ))}
           </select>
           <select value={win} onChange={(e) => setWin(e.target.value)} className={selectCls}>
+            <option value={LIVE}>LIVE</option>
             {windows.map((w) => (
               <option key={w.code} value={w.code}>
                 {w.label}
               </option>
             ))}
-            <option value={LIVE}>LIVE</option>
           </select>
         </div>
       </div>

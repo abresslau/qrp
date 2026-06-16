@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { SUBNAV_PROVIDERS, type SubItem } from "@/lib/nav";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { ApiStatus } from "@/components/api-status";
 
 type Module = { key: string; name: string; description: string; enabled: boolean };
 
@@ -88,7 +89,10 @@ export function Sidebar({
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface px-4 py-6">
       <div className="mb-8 px-2">
-        <div className="text-lg font-semibold tracking-tight text-fg">{name}</div>
+        <div className="flex items-center gap-2">
+          <div className="text-lg font-semibold tracking-tight text-fg">{name}</div>
+          <ApiStatus />
+        </div>
         {tagline && <div className="text-xs text-muted">{tagline}</div>}
       </div>
       <nav className="flex-1 space-y-1 text-sm">
