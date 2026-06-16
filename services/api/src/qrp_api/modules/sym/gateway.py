@@ -27,9 +27,11 @@ def _as_text(v) -> str | None:
 HEATMAP_WINDOWS = ["1D", "WTD", "MTD", "QTD", "YTD", "1M", "3M", "6M", "1Y"]
 DEFAULT_HEATMAP_WINDOW = "1D"
 # Bound the LIVE heatmap fan-out (Story QH.9): one external quote per representative issuer, so a
-# huge universe could fire hundreds of requests at Yahoo (rate-limit risk). S&P 500 fits under this;
-# over-cap is a 422 (use a smaller universe or an EOD window), never an unbounded fan-out.
-LIVE_HEATMAP_MAX = 600
+# huge universe could fire hundreds of requests at Yahoo (rate-limit risk). Sized so the flagship
+# S&P 500 (~633 issuers after share-class collapse) AND the S&P 400 fit; only the largest (S&P 600,
+# ~838) is over — those use an EOD window. Over-cap is a 422 (with a clear message), never an
+# unbounded fan-out.
+LIVE_HEATMAP_MAX = 700
 
 
 @dataclass(frozen=True)
@@ -244,7 +246,7 @@ class DbSymGateway:
         """LIVE recolor of the universe treemap (Story QH.9): the SAME constituents / market-cap
         sizing / share-class collapse as ``heatmap``, but each cell's return is a LIVE return
         (``live_price / previousClose - 1``) from the QH.2 quote source, fanned out concurrently.
-        Per-cell ``freshness``; map-level ``as_of`` (oldest priced), worst ``freshness``, and
+        Per-cell ``freshness``; map-level ``as_of`` (most-recent priced), worst ``freshness``, and
         ``priced``/``total`` coverage. Quotes are fetched externally and NEVER persisted.
         Raises LookupError (404), ValueError (422 over-cap), QuoteSourceUnreachable (503 when the
         provider is wholly unreachable). Uncovered issuers render neutral (``ret`` = None)."""
@@ -333,8 +335,8 @@ class DbSymGateway:
 
         priced = 0
         any_delayed = False
-        oldest_epoch: int | None = None
-        cells: list[dict] = []
+        newest_epoch: int | None = None  # the most-recent priced mark (QH.9): `as_of` should track
+        cells: list[dict] = []           # the freshest data point, not be pinned by one stale name
         for rep in reps:
             ysym = sym_by_id[id(rep)]
             q = batch.get(ysym) if ysym else None
@@ -348,8 +350,8 @@ class DbSymGateway:
                     priced += 1
                     any_delayed = any_delayed or fresh == "delayed"
                     if q.quote_epoch is not None:
-                        oldest_epoch = (
-                            q.quote_epoch if oldest_epoch is None else min(oldest_epoch, q.quote_epoch)
+                        newest_epoch = (
+                            q.quote_epoch if newest_epoch is None else max(newest_epoch, q.quote_epoch)
                         )
             rep.pop("_mic", None)
             cells.append(rep)
@@ -363,8 +365,8 @@ class DbSymGateway:
             "missing_mcap": missing_mcap,
             "merged_share_classes": with_mcap - len(cells),
             "as_of": (
-                datetime.fromtimestamp(oldest_epoch, tz=timezone.utc).isoformat()
-                if oldest_epoch is not None else None
+                datetime.fromtimestamp(newest_epoch, tz=timezone.utc).isoformat()
+                if newest_epoch is not None else None
             ),
             "freshness": ("unavailable" if priced == 0 else "delayed" if any_delayed else "live"),
             "priced": priced,

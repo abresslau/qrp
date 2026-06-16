@@ -37,7 +37,7 @@ YAHOO_SUFFIX = {
 _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1m&range=1d"
 _LIVE_THRESHOLD_S = 120  # a quote no older than this reads as 'live', else 'delayed'
 _TIMEOUT_S = 8.0
-_BATCH_WORKERS = 16  # bounded concurrency for universe-scale fan-out (Story QH.9)
+_BATCH_WORKERS = 24  # bounded concurrency for universe-scale fan-out (Story QH.9); headroom for ~700
 _BATCH_BUDGET_S = 20.0  # overall wall-clock budget; symbols not done by then read as unavailable
 
 

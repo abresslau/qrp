@@ -5,6 +5,8 @@ the over-cap 422, and the whole-source 503 mapping."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import HTTPException
 
@@ -74,9 +76,10 @@ def test_live_heatmap_recolors_with_freshness_and_collapses_share_classes(monkey
     assert by["AAPL"]["ret"] == pytest.approx(0.10) and by["AAPL"]["freshness"] == "live"
     assert by["BRK.B"]["ret"] == pytest.approx(0.10) and by["BRK.B"]["freshness"] == "delayed"
     assert by["XYZ"]["ret"] is None and by["XYZ"]["freshness"] == "unavailable"  # unmapped MIC -> neutral cell
-    # rollup: worst priced = delayed, coverage 2/3, as_of = oldest priced quote
+    # rollup: worst priced = delayed, coverage 2/3, as_of = MOST-RECENT priced quote (QH.9: the
+    # freshest mark, not pinned by the older BRK-B at _EPOCH-600 — so AAPL's _EPOCH wins).
     assert out["priced"] == 2 and out["total"] == 3 and out["freshness"] == "delayed"
-    assert out["as_of"].startswith("2026-")  # oldest priced epoch, ISO-8601 UTC
+    assert out["as_of"] == datetime.fromtimestamp(_EPOCH, tz=timezone.utc).isoformat()
     # no internal mic leaked into the response cells
     assert all("_mic" not in c and "mic" not in c for c in out["cells"])
 
