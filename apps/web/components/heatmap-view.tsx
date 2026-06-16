@@ -13,6 +13,7 @@ type Cell = {
   currency: string | null;
   price: number | null;
   ret: number | null;
+  freshness?: string; // LIVE mode only (QH.9): live | delayed | unavailable
 };
 type Heatmap = {
   universe_id: string;
@@ -23,6 +24,20 @@ type Heatmap = {
   missing_mcap: number;
   merged_share_classes: number;
   cells: Cell[];
+  // LIVE mode only (QH.9):
+  as_of?: string | null;
+  freshness?: string;
+  priced?: number;
+  total?: number;
+};
+
+// LIVE (QH.9) sentinel for the window selector + the freshness badge styles (mirrors the
+// analytics-panel FRESH_STYLE). EOD windows are unaffected.
+const LIVE = "LIVE";
+const LIVE_STYLE: Record<string, string> = {
+  live: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+  delayed: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+  unavailable: "border-border bg-fg/5 text-muted",
 };
 type UniverseRef = { universe_id: string; name: string; members_resolved: number };
 type WindowOpt = { code: string; label: string };
@@ -100,6 +115,7 @@ export function HeatmapView({
 }) {
   const [uni, setUni] = useState(defaultUniverse);
   const [win, setWin] = useState(defaultWindow);
+  const [nonce, setNonce] = useState(0); // bump to re-fetch without changing uni/win (LIVE refresh)
   const [data, setData] = useState<Heatmap | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -119,7 +135,12 @@ export function HeatmapView({
       setLoading(true);
       setError(null);
       try {
-        const r = await fetch(`/api/sym/universes/${uni}/heatmap?window=${win}`, { cache: "no-store" });
+        // LIVE mode (QH.9) hits the live-recolor endpoint; an EOD window hits the window endpoint.
+        const url =
+          win === LIVE
+            ? `/api/sym/universes/${uni}/heatmap/live`
+            : `/api/sym/universes/${uni}/heatmap?window=${win}`;
+        const r = await fetch(url, { cache: "no-store" });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const d: Heatmap = await r.json();
         if (alive) {
@@ -136,7 +157,7 @@ export function HeatmapView({
     return () => {
       alive = false;
     };
-  }, [uni, win]);
+  }, [uni, win, nonce]);
 
   const root = useMemo<Node>(() => {
     if (!data || data.cells.length === 0) return null;
@@ -193,9 +214,31 @@ export function HeatmapView({
                 {w.label}
               </option>
             ))}
+            <option value={LIVE}>● LIVE</option>
           </select>
         </div>
       </div>
+
+      {win === LIVE && !loading && data?.freshness && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+          <span
+            className={`rounded px-1.5 py-0.5 font-medium uppercase ${LIVE_STYLE[data.freshness] ?? LIVE_STYLE.unavailable}`}
+          >
+            {data.freshness}
+          </span>
+          <span className="text-muted">
+            {data.priced ?? 0}/{data.total ?? 0} priced
+            {data.as_of ? ` · as of ${new Date(data.as_of).toLocaleTimeString()}` : ""} · not stored
+          </span>
+          <button
+            type="button"
+            onClick={() => setNonce((n) => n + 1)}
+            className="ml-auto rounded-md border border-border px-2 py-0.5 text-muted hover:bg-fg/5 hover:text-fg"
+          >
+            ↻ refresh
+          </button>
+        </div>
+      )}
 
       <div
         ref={containerRef}

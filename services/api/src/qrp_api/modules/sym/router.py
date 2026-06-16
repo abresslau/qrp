@@ -87,6 +87,31 @@ class Heatmap(BaseModel):
     cells: list[HeatmapCell]
 
 
+class LiveHeatmapCell(HeatmapCell):
+    """An EOD heatmap cell whose `ret`/`price` are LIVE (Story QH.9), plus per-cell freshness."""
+
+    freshness: str  # live | delayed | unavailable
+
+
+class LiveHeatmap(BaseModel):
+    """The heatmap recolored by live returns (Story QH.9). Same shape as `Heatmap` plus honest
+    live labelling: `freshness` is the worst priced cell, `as_of` the oldest priced quote (ISO-8601
+    UTC), and `priced`/`total` the coverage. Quotes are best-effort and NOT persisted."""
+
+    universe_id: str
+    universe_name: str | None
+    window: str
+    members_resolved: int
+    shown: int
+    missing_mcap: int
+    merged_share_classes: int
+    as_of: str | None
+    freshness: str
+    priced: int
+    total: int
+    cells: list[LiveHeatmapCell]
+
+
 class SecurityRow(BaseModel):
     figi: str
     ticker: str
@@ -267,6 +292,21 @@ def heatmap(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:  # unknown return window
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/universes/{universe_id}/heatmap/live", response_model=LiveHeatmap)
+def heatmap_live(universe_id: str, gw: DbSymGateway = Depends(_gateway)) -> dict:
+    """The heatmap recolored by LIVE returns (Story QH.9). External fan-out at serve time —
+    degrades to the honest 503 envelope if the provider is wholly unreachable; a per-issuer miss
+    is an `unavailable` (neutral) cell, never a request failure. Nothing is persisted."""
+    try:
+        return gw.live_heatmap(universe_id)
+    except LookupError as exc:  # unknown universe
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:  # universe too large for a live fan-out
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except QuoteSourceUnreachable as exc:
+        raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
 @router.get("/securities", response_model=SecuritiesPage)

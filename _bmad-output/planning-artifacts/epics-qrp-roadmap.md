@@ -408,6 +408,20 @@ swallowing it into an empty list. Out of scope (deliberate): the heatmap tooltip
 (cosmetic) and the sidebar empty-success latch (intentional). Pure frontend; no API/DB/dep change.
 **(Promoted from the QH.7 code-review deferrals — uses the harness QH.7 built.)**
 
+### Story QH.9 — Live heatmap (live/delayed recolor over the EOD treemap)  `[READY-FOR-DEV 2026-06-16]`
+**AC:** add a **LIVE mode** to the heat map that recolors the SAME treemap (same mcap sizing, sector
+grouping, ±3% diverging scale) by each issuer's **live return = `live_price / previousClose − 1`**
+instead of the EOD window return — the third live SURFACE after QH.2's `/quotes` + live-PnL (a feature,
+not lifecycle-loop churn, so it clears the QH.8 retro stop rule). `GET /api/sym/universes/{uid}/heatmap/live`
+reuses the EOD constituent assembly (sector / mcap / share-class collapse) + the QH.2 quote fetcher,
+adds per-cell `freshness` + top-level `as_of`/worst-freshness/coverage. The genuinely new infra is a
+**bounded `ThreadPoolExecutor` fan-out** (QH.2 deferred it; a universe can be ~500 issuers) with a
+`LIVE_HEATMAP_MAX` guardrail (Yahoo rate-limit risk is the headline caveat; optional in-memory TTL cache).
+Honest degradation reuses QH.2's two-tier pattern: per-issuer miss → `unavailable`/neutral cell;
+whole-source-down → 503 envelope → console badge, not a blank map. Console shows a live/delayed badge +
+as_of + priced/total coverage + refresh + "not stored". **Not persisted; EOD heat map path unchanged;
+topology-clean (reuse `quotes.py`, no sym import); tested on the QH.7 harness.**
+
 ## FR Coverage Map
 - FR-13 → Q4.3 **(Client entity `[BUILT]` — model + API + UI)** + Q4.1/Q4.4 (portfolio CRUD `[BUILT]`) ✅ complete
 - FR-14 → Q4.1, Q4.2 `[BUILT]`, Q4.5 `[BUILT 2026-06-11]` (multi-date history + as-of picker) ✅ complete

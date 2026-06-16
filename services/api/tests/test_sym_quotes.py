@@ -6,6 +6,8 @@ per-symbol-unavailable vs whole-source-503 split, and the route's bounds + 503 m
 
 from __future__ import annotations
 
+import threading
+import time
 import urllib.error
 
 import pytest
@@ -85,6 +87,58 @@ def test_live_return_ratio_and_null_rule():
     assert quotes.live_return(110.0, 100.0) == pytest.approx(0.10)
     assert quotes.live_return(100.0, 0.0) is None
     assert quotes.live_return(None, 100.0) is None
+
+
+# --- batched fan-out (Story QH.9) ------------------------------------------------
+
+def test_fetch_quotes_batch_partial_and_dedup(monkeypatch):
+    def fake(sym, **kw):
+        if sym == "AAA":
+            return RawQuote(10.0, 9.0, "USD", 1)
+        if sym == "BBB":
+            return None  # reachable, no data -> per-symbol miss
+        raise QuoteSourceUnreachable("net")  # CCC network-errors
+
+    monkeypatch.setattr(quotes, "fetch_raw_quote", fake)
+    out = quotes.fetch_quotes_batch(["AAA", "BBB", "CCC", "AAA"])  # duplicate AAA de-duped
+    assert set(out) == {"AAA", "BBB", "CCC"}
+    assert out["AAA"] == RawQuote(10.0, 9.0, "USD", 1)
+    assert out["BBB"] is None and out["CCC"] is None  # a mix is honest partial coverage
+
+
+def test_fetch_quotes_batch_all_network_error_raises(monkeypatch):
+    def boom(sym, **kw):
+        raise QuoteSourceUnreachable("down")
+
+    monkeypatch.setattr(quotes, "fetch_raw_quote", boom)
+    with pytest.raises(QuoteSourceUnreachable):
+        quotes.fetch_quotes_batch(["AAA", "BBB"])
+
+
+def test_fetch_quotes_batch_empty_is_empty():
+    assert quotes.fetch_quotes_batch([]) == {}
+
+
+def test_fetch_quotes_batch_honors_budget(monkeypatch):
+    # A hung symbol must NOT make the call block past the budget (pre-fix the executor's
+    # context-manager exit did shutdown(wait=True) and blocked on the slow future).
+    release = threading.Event()
+
+    def fake(sym, **kw):
+        if sym == "SLOW":
+            release.wait(timeout=5)  # simulate a provider that hangs
+            return None
+        return RawQuote(10.0, 9.0, "USD", 1)
+
+    monkeypatch.setattr(quotes, "fetch_raw_quote", fake)
+    t0 = time.monotonic()
+    out = quotes.fetch_quotes_batch(["FAST", "SLOW"], budget=0.3)
+    elapsed = time.monotonic() - t0
+    release.set()  # let the lingering worker finish
+
+    assert elapsed < 2.0  # returned at ~budget, did not block ~5s on the hung future
+    assert out["FAST"] == RawQuote(10.0, 9.0, "USD", 1)
+    assert out["SLOW"] is None  # not finished within budget -> unavailable
 
 
 # --- gateway assembly -------------------------------------------------------------
