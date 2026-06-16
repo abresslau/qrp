@@ -35,10 +35,13 @@ Status: in-progress (2026-06-16, autonomous)
   - **HON / Honeywell** — legit member, missing **GICS**. The **known deferred non-Brazil-GICS gap**
     (classify ~90%; b3 fill is Brazil-only; SEC SIC→GICS fallback is the ledgered fix). Affects all
     non-Brazil universes, not just nasdaq100.
-  - **PCLN / "Pictet Cleaner Planet"** — a **spurious member**: `PCLN` (old Priceline ticker — now
-    BKNG) parsed off the wiki page and mis-resolved to a Pictet fund, not a Nasdaq-100 equity.
-    Missing GICS because it isn't a classifiable equity. **Follow-up:** a membership `correct` event
-    to drop it (→ 102 clean members). Minor (one tiny tile); logged, not actioned per accept-call.
+  - **PCLN / "Pictet Cleaner Planet"** — was a **spurious member**: `PCLN` (old Priceline ticker —
+    now BKNG) had a 2009-10-29 JOIN with no LEAVE (the rename wasn't captured), so it stayed
+    "current" and resolved to a Pictet fund. ✅ **FIXED 2026-06-16:** `gating.reverse_change` appended
+    a `correct` tombstone reversing that JOIN (`paired_corrections=1`, no toggle/dangling), then
+    `rebuild_projection` → **102 clean members**, PCLN dropped, **BKNG retained** (Booking is the real
+    current member). A reversible, audited membership correction — no destructive edit. nasdaq100
+    completeness: 2 → **1 incomplete** (HON only).
 - **`unpriced_securities` (41) — PRE-EXISTING global, NOT this add.** Confirmed 0 current nasdaq100
   members unpriced; flagged names are non-Nasdaq (e.g. CMA / Comerica). Pre-dates nasdaq100.
 
