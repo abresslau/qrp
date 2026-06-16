@@ -397,6 +397,17 @@ analytics-panel one) via derive-don't-sync, so `eslint apps/web` → 0 errors. O
 Playwright/e2e, visual regression. **(Promoted from the Epic QH retrospective — Action #1, implicated
 in QH.4/QH.6/QH.2; the console is the only QRP surface with no automated test layer.)**
 
+### Story QH.8 — Console fetch-hardening (stale-response / lifecycle safety)  `[READY-FOR-DEV 2026-06-16]`
+**AC:** harden the console's client-side `fetch` effects against the robustness gaps the QH.7 review
+surfaced (pre-existing, not introduced by QH.7), each locked with a test on the QH.7 vitest harness:
+(A) newest-request-wins + unmount-safety on `analytics-panel` `loadLive` + benchmarks (a slow `/live`
+for portfolio A must not overwrite B); (B) palette op-run is close-safe (a `/run` resolving after Esc
+must not `router.push`/`setMsg`); (C) palette retries a FAILED async submenu on reopen (symmetry with
+the sidebar's retry-on-route-change); (D) `portfolios` surfaces a load failure with retry instead of
+swallowing it into an empty list. Out of scope (deliberate): the heatmap tooltip resize-staleness
+(cosmetic) and the sidebar empty-success latch (intentional). Pure frontend; no API/DB/dep change.
+**(Promoted from the QH.7 code-review deferrals — uses the harness QH.7 built.)**
+
 ## FR Coverage Map
 - FR-13 → Q4.3 **(Client entity `[BUILT]` — model + API + UI)** + Q4.1/Q4.4 (portfolio CRUD `[BUILT]`) ✅ complete
 - FR-14 → Q4.1, Q4.2 `[BUILT]`, Q4.5 `[BUILT 2026-06-11]` (multi-date history + as-of picker) ✅ complete

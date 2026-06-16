@@ -13,7 +13,9 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: nav.push }) }));
 
 // Mock the registry with a SMALL controlled fixture so the filter/selection tests don't couple
 // to the live SUBNAV_PROVIDERS contents/ordering (AC2: "mocked registry"). Screen order here is
-// the fixture order: Overview, Explorer, Universes.
+// the fixture order: Overview, Explorer, Universes. `macro` is a fetch-kind provider whose load
+// is a vi.fn the QH.8 submenu-retry test drives (rejected-then-resolved).
+const reg = vi.hoisted(() => ({ macroLoad: vi.fn() }));
 vi.mock("@/lib/nav", () => ({
   SUBNAV_PROVIDERS: {
     sym: {
@@ -24,6 +26,7 @@ vi.mock("@/lib/nav", () => ({
         { href: "/sym/universes", label: "Universes" },
       ],
     },
+    macro: { kind: "fetch", load: reg.macroLoad },
   },
 }));
 
@@ -31,6 +34,7 @@ const MODULES = [
   { key: "sym", name: "Sym", description: "", enabled: true }, // has the (mocked) static submenu
   { key: "signal", name: "Signal", description: "", enabled: true }, // no submenu provider
 ];
+const MODULES_WITH_MACRO = [...MODULES, { key: "macro", name: "Macro", description: "", enabled: true }];
 
 function op(over: Partial<OpDef> = {}): OpDef {
   return { key: "map", label: "Map", writes: false, takes_universe: false, takes_scope: false, ...over } as OpDef;
@@ -145,5 +149,76 @@ describe("CommandPalette (QH.7 / AC2)", () => {
     await waitFor(() => expect(nav.push).toHaveBeenCalledWith("/sym/operate"));
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
     expect(calls.some((u) => u.includes("/operate/run"))).toBe(false);
+  });
+
+  // ---- QH.8 hardening ----
+
+  it("does NOT navigate if the palette is closed before a read-only op's run resolves (AC3)", async () => {
+    let resolveRun: (r: unknown) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/operate/ops"))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([op({ key: "map", label: "Map", writes: false })]) });
+        if (url.includes("/operate/run")) return new Promise((res) => { resolveRun = res; }); // pending
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }),
+    );
+    render(<CommandPalette modules={MODULES} />);
+    openPalette();
+    await userEvent.click(await screen.findByText("Run: Map")); // starts /run (pending)
+    fireEvent.keyDown(window, { key: "Escape" }); // close mid-run
+    resolveRun({ ok: true, json: () => Promise.resolve({ ok: true, job_id: 1 }) });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does not latch ops on a malformed-but-200 body — retries on reopen", async () => {
+    let opsCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/operate/ops")) {
+          opsCalls += 1;
+          // first open: a 200 with a non-array body (e.g. an error envelope); reopen: a real list
+          return Promise.resolve({ ok: true, json: () => Promise.resolve(opsCalls === 1 ? { error: "x" } : [op({ key: "map", label: "Map" })]) });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }),
+    );
+    render(<CommandPalette modules={MODULES} />);
+    openPalette();
+    await waitFor(() => expect(opsCalls).toBe(1));
+    expect(screen.queryByText("Run: Map")).not.toBeInTheDocument(); // garbage body → no ops, not latched
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    openPalette(); // reopen → ops retried (not latched on the bad body)
+    expect(await screen.findByText("Run: Map")).toBeInTheDocument();
+    expect(opsCalls).toBe(2);
+  });
+
+  it("retries a FAILED async submenu on reopen; a successful one is not re-fetched (AC4)", async () => {
+    reg.macroLoad.mockReset();
+    reg.macroLoad
+      .mockRejectedValueOnce(new Error("down")) // first open: fails
+      .mockResolvedValue([{ href: "/macro/rates", label: "Rates" }]); // reopen: succeeds
+    render(<CommandPalette modules={MODULES_WITH_MACRO} />);
+
+    openPalette();
+    await waitFor(() => expect(reg.macroLoad).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText("Macro: Rates")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" }); // close
+    openPalette(); // reopen -> failed submenu retries
+    expect(await screen.findByText("Macro: Rates")).toBeInTheDocument();
+    expect(reg.macroLoad).toHaveBeenCalledTimes(2);
+
+    // reopen once more: the now-successful submenu is latched (no third fetch)
+    fireEvent.keyDown(window, { key: "Escape" });
+    openPalette();
+    await Promise.resolve();
+    expect(reg.macroLoad).toHaveBeenCalledTimes(2);
   });
 });

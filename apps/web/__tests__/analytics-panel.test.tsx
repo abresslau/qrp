@@ -90,3 +90,50 @@ describe("AnalyticsPanel live-PnL badge (QH.7 / AC4)", () => {
     expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument();
   });
 });
+
+describe("AnalyticsPanel fetch hardening (QH.8)", () => {
+  it("newest-request-wins: a slow /live for a prior pid does not overwrite the current one (AC1)", async () => {
+    let resolve5: (r: unknown) => void = () => {};
+    const live6 = livePnl({ portfolio_id: 6, live_return_normalized: 0.02 }); // +2.00%
+    const live5 = livePnl({ portfolio_id: 5, live_return_normalized: 0.05 }); // +5.00% (stale)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const ok = (body: unknown) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+        if (url.includes("/benchmarks")) return ok([]);
+        if (url.includes("/portfolios/5/live")) return new Promise((res) => { resolve5 = res; }); // pending
+        if (url.includes("/portfolios/6/live")) return ok(live6);
+        return ok({});
+      }),
+    );
+    const { rerender } = render(<AnalyticsPanel pid="5" />);
+    rerender(<AnalyticsPanel pid="6" />); // switch before pid 5 resolves
+    expect(await screen.findByText("+2.00%")).toBeInTheDocument(); // pid 6 wins
+
+    resolve5({ ok: true, json: () => Promise.resolve(live5) }); // late stale resolution
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByText("+5.00%")).not.toBeInTheDocument(); // stale pid 5 did NOT overwrite
+    expect(screen.getByText("+2.00%")).toBeInTheDocument();
+  });
+
+  it("benchmarks resolving after unmount does not throw (AC2 unmount-safety)", async () => {
+    let resolveBench: (r: unknown) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/benchmarks")) return new Promise((res) => { resolveBench = res; });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(livePnl()) });
+      }),
+    );
+    const errs: unknown[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((e) => errs.push(e));
+    const { unmount } = render(<AnalyticsPanel pid="5" />);
+    unmount();
+    resolveBench({ ok: true, json: () => Promise.resolve([{ id: 1, name: "S&P 500" }]) });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(errs).toHaveLength(0); // alive-guard: no setState-after-unmount fallout
+    spy.mockRestore();
+  });
+});
