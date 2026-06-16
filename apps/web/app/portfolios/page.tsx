@@ -17,8 +17,9 @@ export default function PortfoliosPage() {
   const [newClient, setNewClient] = useState("");
   const [filter, setFilter] = useState(""); // "" = all clients (context selection)
 
-  function load() {
-    setLoading(true);
+  // Pure fetch: state is only set in the async callbacks, never synchronously — so the mount
+  // effect can call it without tripping react-hooks/set-state-in-effect (loading starts true).
+  function fetchData() {
     Promise.all([
       fetch("/api/portfolios", { cache: "no-store" }).then((r) => r.json()),
       fetch("/api/portfolios/clients", { cache: "no-store" }).then((r) => r.json()),
@@ -30,8 +31,13 @@ export default function PortfoliosPage() {
       })
       .catch(() => setLoading(false));
   }
+  // For event-handler refreshes (e.g. after create) we DO want the immediate loading flip.
+  function load() {
+    setLoading(true);
+    fetchData();
+  }
   useEffect(() => {
-    load();
+    fetchData();
   }, []);
 
   async function createPortfolio(e: React.FormEvent) {

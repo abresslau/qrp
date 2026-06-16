@@ -260,7 +260,7 @@ export default function PortfolioDetail() {
       </form>
 
       <p className="mt-6 text-xs text-muted">
-        Weights stored in QRP's own schema; returns weight sym's EOD returns. Swap in a live
+        Weights stored in QRP&apos;s own schema; returns weight sym&apos;s EOD returns. Swap in a live
         quote source later for intraday PnL — same engine.
       </p>
     </div>

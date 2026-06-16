@@ -79,7 +79,7 @@ export default async function ValidationPage() {
           </tbody>
         </table>
       </div>
-      <p className="mt-4 text-xs text-muted">Live from sym's validation log.</p>
+      <p className="mt-4 text-xs text-muted">Live from sym&apos;s validation log.</p>
     </div>
   );
 }

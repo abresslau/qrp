@@ -58,7 +58,7 @@ export default async function AttentionPage() {
     <div className="mx-auto max-w-5xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">Attention</h1>
       <p className="mt-1 text-sm text-muted">
-        Items sym flagged for review. Read‑only — resolve via sym's own review/confirm
+        Items sym flagged for review. Read‑only — resolve via sym&apos;s own review/confirm
         operations (acting from QRP is post‑v1).
       </p>
 

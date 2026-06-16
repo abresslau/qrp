@@ -72,16 +72,28 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
 
   useEffect(() => {
     if (bench == null) return;
-    setLoading(true);
-    fetch(`/api/analytics/portfolios/${pid}?benchmark=${bench}&window=${win}`, { cache: "no-store" })
-      .then((r) => {
+    let alive = true;
+    // Fetch inside an async IIFE so the loading flip lives in the async flow rather than the
+    // synchronous effect body (react-hooks/set-state-in-effect).
+    void (async () => {
+      setLoading(true);
+      try {
+        const r = await fetch(`/api/analytics/portfolios/${pid}?benchmark=${bench}&window=${win}`, {
+          cache: "no-store",
+        });
         // an error envelope must never be stored as Analytics
         if (!r.ok) throw new Error(`analytics ${r.status}`);
-        return r.json();
-      })
-      .then((d: Analytics) => setA(d))
-      .catch(() => setA(null))
-      .finally(() => setLoading(false));
+        const d: Analytics = await r.json();
+        if (alive) setA(d);
+      } catch {
+        if (alive) setA(null);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, [pid, bench, win]);
 
   const m = a?.metrics;

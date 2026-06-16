@@ -105,30 +105,34 @@ export function HeatmapView({
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<Cell | null>(null);
-  const [pos, setPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  // Capture the container width alongside the cursor position when hovering, so the tooltip
+  // clamp reads a state value (not containerRef.current) during render — refs must not be read
+  // in render (react-hooks/refs).
+  const [pos, setPos] = useState<{ x: number; y: number; w: number }>({ x: 0, y: 0, w: 0 });
   const isDark = useIsDark();
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
-    fetch(`/api/sym/universes/${uni}/heatmap?window=${win}`, { cache: "no-store" })
-      .then((r) => {
+    // Reset + fetch inside an async IIFE: the setState calls live in the async flow, not the
+    // synchronous effect body (react-hooks/set-state-in-effect).
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const r = await fetch(`/api/sym/universes/${uni}/heatmap?window=${win}`, { cache: "no-store" });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((d: Heatmap) => {
+        const d: Heatmap = await r.json();
         if (alive) {
           setData(d);
           setLoading(false);
         }
-      })
-      .catch((e) => {
+      } catch (e) {
         if (alive) {
           setError(String(e));
           setLoading(false);
         }
-      });
+      }
+    })();
     return () => {
       alive = false;
     };
@@ -198,7 +202,7 @@ export function HeatmapView({
         className="relative rounded-xl border border-border bg-surface p-2"
         onMouseMove={(e) => {
           const r = containerRef.current?.getBoundingClientRect();
-          if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top });
+          if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top, w: r.width });
         }}
         onMouseLeave={() => setHover(null)}
       >
@@ -291,7 +295,7 @@ export function HeatmapView({
           <div
             className="pointer-events-none absolute z-10 w-72 rounded-lg border border-border bg-bg p-3 text-fg shadow-xl"
             style={{
-              left: Math.min(pos.x + 14, (containerRef.current?.clientWidth ?? 320) - 300),
+              left: Math.min(pos.x + 14, (pos.w || 320) - 300),
               top: pos.y + 14,
             }}
           >

@@ -1,4 +1,15 @@
 
+## Deferred from: code review of qh-7-console-test-harness (2026-06-16)
+
+Pre-existing component issues surfaced by the QH.7 review (NOT introduced by it — QH.7 only added tests + lint fixes). Candidates for a future console-hardening pass:
+- **`analytics-panel.loadLive` + benchmarks effects lack an `alive`/pid guard** — a stale-pid `/live` response can overwrite the current portfolio's data; setState-after-unmount. (QH.7 hardened the analytics-fetch effect but not these two.)
+- **`command-palette` `loadedRef` latches on ops-fetch success**, so a FAILED async submenu (macro categories) never retries for the session — asymmetric with the sidebar, which retries on route change.
+- **`command-palette` op-run resolution has no open/alive guard** — Esc-closing the palette while a read-only op's `/run` is in flight can still `router.push("/sym/operate")` when it resolves.
+- **`heatmap` tooltip clamp reads a captured `pos.w`** that goes stale on a window/container resize without an intervening mousemove (cosmetic; replaced a ref-read-during-render that the lint rule forbade).
+- **`sidebar` empty-but-successful async submenu is latched** — categories populated later in the same session don't appear without a reload (documented trade-off in the component).
+- **`sidebar.loadSub` doesn't catch a SYNCHRONOUS throw from `p.load()`** (only the returned promise's rejection) — theoretical; the sole fetch provider is `async`.
+- **`portfolios` mount-fetch `.catch` swallows errors silently** — an empty list is indistinguishable from a load failure; no error surfaced, no retry.
+
 ## Deferred from: code review of qh-2-live-quote-source (2026-06-16)
 
 - **Future-dated / clock-skewed quote always reads "live" (Edge, Low):** `classify_freshness` does `age = max(0, int(now - quote_epoch))`, so a `quote_epoch` in the future clamps to age 0 and classifies `live` regardless of how far ahead. Fine for small skew; reject far-future stamps (e.g. `> now + SKEW → delayed`) if bad payloads appear.
