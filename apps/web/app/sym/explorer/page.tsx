@@ -23,9 +23,11 @@ export default function ExplorerPage() {
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
     const t = setTimeout(
       () => {
+        // setLoading lives in the (deferred) timer callback, not the synchronous effect body
+        // (react-hooks/set-state-in-effect); loading shows as the debounced fetch starts.
+        setLoading(true);
         const url = `/api/sym/securities?limit=${LIMIT}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
         fetch(url, { cache: "no-store" })
           .then((r) => r.json())
@@ -56,6 +58,9 @@ export default function ExplorerPage() {
         <input
           value={q}
           onChange={(e) => {
+            // Immediate loading feedback on type (an event handler — lint-safe); the debounced
+            // effect re-affirms it for the offset path. Restores the pre-lint-fix UX.
+            setLoading(true);
             setQ(e.target.value);
             setOffset(0);
           }}

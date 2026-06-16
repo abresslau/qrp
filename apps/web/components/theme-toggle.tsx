@@ -1,8 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 type Mode = "light" | "dark" | "system";
+
+const KEY = "qrp-theme";
+const listeners = new Set<() => void>();
+
+// Theme is an EXTERNAL store (localStorage). Reading it via useSyncExternalStore — instead of a
+// useState + mount effect — removes the set-state-in-effect smell AND gives React a server
+// snapshot ("dark", matching the no-flash script) so there's no hydration mismatch.
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  window.addEventListener("storage", cb); // cross-tab changes
+  return () => {
+    listeners.delete(cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+function getSnapshot(): Mode {
+  // Called during render by useSyncExternalStore — a throwing localStorage (private mode,
+  // sandboxed iframe) must degrade to the default, never crash the render.
+  try {
+    return ((localStorage.getItem(KEY) as Mode) || "dark") as Mode;
+  } catch {
+    return "dark";
+  }
+}
+function getServerSnapshot(): Mode {
+  return "dark";
+}
 
 function prefersDark(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -13,12 +40,7 @@ function resolvedDark(m: Mode): boolean {
 }
 
 export function ThemeToggle() {
-  const [mode, setMode] = useState<Mode>("dark");
-
-  // Read the persisted choice on mount (the no-flash script already applied the class).
-  useEffect(() => {
-    setMode(((localStorage.getItem("qrp-theme") as Mode) || "dark") as Mode);
-  }, []);
+  const mode = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   // When in "system", follow OS changes live.
   useEffect(() => {
@@ -30,9 +52,9 @@ export function ThemeToggle() {
   }, [mode]);
 
   function change(m: Mode) {
-    setMode(m);
     try {
-      localStorage.setItem("qrp-theme", m);
+      localStorage.setItem(KEY, m);
+      listeners.forEach((l) => l()); // notify this tab (storage event only fires cross-tab)
     } catch {
       /* ignore */
     }
