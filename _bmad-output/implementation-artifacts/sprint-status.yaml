@@ -237,4 +237,4 @@ development_status:
   qh-6-generic-module-framework-palette: done
   qh-7-console-test-harness: done  # 2026-06-16: vitest harness + 17 tests (palette/registry/live-badge); 12-error lint baseline cleared; reviewed + 5 patches applied; npm test 17/17, eslint 0, tsc + next build green
   qh-8-console-fetch-hardening: done  # 2026-06-16: AbortController newest-wins + benchmarks alive guard, palette openRef close-safety + latch split, portfolios error+retry; reviewed + 2 patches (r.ok check, ops array-latch); 25 tests, eslint 0/0, tsc + build green
-  epic-qh-retrospective: done  # held 2026-06-15; augmented 2026-06-16 (epic-qh-retro-2026-06-16.md) after QH.2 actually landed
+  epic-qh-retrospective: done  # held 2026-06-15; augmented 2026-06-16 (after QH.2); 3rd pass 2026-06-16b (epic-qh-retro-2026-06-16b.md) covering the QH.7/QH.8 console-hardening arc + the stop rule
