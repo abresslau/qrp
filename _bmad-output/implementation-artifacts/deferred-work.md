@@ -39,7 +39,7 @@
 ## Deferred from: code review of qh-8-console-fetch-hardening (2026-06-16)
 
 Beyond QH.8's ACs or no React-19 impact — candidates for a follow-up console pass:
-- **Palette reopen-before-run-resolves still navigates:** `openRef` guards close→stay-closed (AC3, tested) but a read-only op that resolves after the palette is closed AND reopened still `router.push`es, yanking the user out of the new session. Needs a run-session/generation token, not just an open flag.
+- **~~Palette reopen-before-run-resolves still navigates~~ — ✅ DONE (2026-06-17, console hardening):** added a `genRef` run-session token bumped on every open; a read-only op captures its session at launch and acts only if `openRef.current && genRef.current === runGen` (a `live()` guard) — so a run resolving after close→reopen is recognized as stale and ignored, leaving the new session untouched. Tested (close+reopen → no navigate).
 - **`analytics-panel` manual-refresh controller not aborted on unmount:** the effect cleanup captures the mount controller; a refresh in flight at unmount isn't aborted. Nil React-19 impact (silent no-op); a clean fix without reintroducing the exhaustive-deps warning needs restructuring.
 - **`portfolios` retry/create double-fetch race:** no abort token, so a slow failed mount resolving after a fast successful retry can clobber rows with a stale error (the AC1 stale-overwrite class, unfixed on this page).
 - **`portfolios` create paths ignore `r.ok` / no try-catch:** a failed `createPortfolio`/`createClient` is silent or an unhandled rejection (pre-existing).
@@ -50,7 +50,7 @@ Beyond QH.8's ACs or no React-19 impact — candidates for a follow-up console p
 Pre-existing component issues surfaced by the QH.7 review (NOT introduced by it — QH.7 only added tests + lint fixes). Candidates for a future console-hardening pass:
 - **`analytics-panel.loadLive` + benchmarks effects lack an `alive`/pid guard** — a stale-pid `/live` response can overwrite the current portfolio's data; setState-after-unmount. (QH.7 hardened the analytics-fetch effect but not these two.)
 - **`command-palette` `loadedRef` latches on ops-fetch success**, so a FAILED async submenu (macro categories) never retries for the session — asymmetric with the sidebar, which retries on route change.
-- **`command-palette` op-run resolution has no open/alive guard** — Esc-closing the palette while a read-only op's `/run` is in flight can still `router.push("/sym/operate")` when it resolves.
+- **~~`command-palette` op-run resolution has no open/alive guard~~ — ✅ DONE:** the `openRef` close-guard (QH.8) + the run-session token (2026-06-17 console hardening) together make a `/run` resolving after close, or after close→reopen, a no-op.
 - **`heatmap` tooltip clamp reads a captured `pos.w`** that goes stale on a window/container resize without an intervening mousemove (cosmetic; replaced a ref-read-during-render that the lint rule forbade).
 - **`sidebar` empty-but-successful async submenu is latched** — categories populated later in the same session don't appear without a reload (documented trade-off in the component).
 - **`sidebar.loadSub` doesn't catch a SYNCHRONOUS throw from `p.load()`** (only the returned promise's rejection) — theoretical; the sole fetch provider is `async`.
@@ -75,7 +75,7 @@ Pre-existing component issues surfaced by the QH.7 review (NOT introduced by it 
 
 ## Deferred from: code review of qh-6-generic-module-framework-palette (2026-06-15)
 
-- **Command-palette accessibility pass (Blind+Edge, Med):** the palette is a modal presented without a focus trap, without `aria`-driven focus restoration on close (focus is orphaned to `<body>` when it unmounts), and without body scroll-lock (the page scrolls behind the backdrop). Keyboard selection also doesn't `scrollIntoView`, so navigating past the `max-h-80` fold moves the selection out of view. `role="dialog"`/`aria-modal`/`aria-label` were added; the trap/restore/scroll-lock/auto-scroll are deferred — real but no AC requires a11y and this is an owner-operated console. A focused a11y follow-up (trap + restore + scroll-lock + selected-item auto-scroll) is the clean fix.
+- **~~Command-palette accessibility pass (Blind+Edge, Med)~~ — ✅ DONE (2026-06-17, console hardening):** added the focus trap (Tab/Shift+Tab cycle within the dialog), focus restoration on close (capture `document.activeElement` on open, restore in the effect cleanup — no longer orphaned to `<body>`), body scroll-lock (`document.body.style.overflow='hidden'` while open, prior value restored on close), and selected-item `scrollIntoView({block:"nearest"})` so ↑/↓ past the `max-h-80` fold keeps the highlight visible (guarded for jsdom). `role="dialog"`/`aria-modal`/`aria-label` were already present. 4 new a11y/session tests; tsc + eslint + `next build` green.
 - **Async-provider screens still reload on each palette open until ops succeeds:** the palette's load-on-open is gated by a single `loadedRef` that now latches only after a successful `/api/operate/ops` fetch — so while ops is failing, each reopen re-runs the async submenu providers (e.g. macro categories) too. Harmless (cheap, idempotent) and only in the ops-down case; a per-source loaded sentinel would tidy it.
 
 ## Deferred from: Story QH.6 generic module framework + command palette (2026-06-15)
