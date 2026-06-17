@@ -112,7 +112,12 @@ The operator named Yahoo / Google / Perplexity; the honest findings:
   isolation). Reuses sym's own `YAHOO_SUFFIX` (no cross-package import). Built 2026-06-17 after a
   re-probe confirmed the crumb flow works in-env (AAPL→Technology, SHEL.L→Energy). DB-free tests with
   a fake client + fake opener. **Closed the non-US residual: coverage 94.4% → 98.8%.**
-- [ ] **Task 4 — LLM gap-fill source (opt-in, last resort)** (AC: 4) — **DEFERRED** per locked scope.
+- [x] **Task 4 — LLM gap-fill source (opt-in, last resort)** (AC: 4) — `sym/classification/llm.py` +
+  `llm_classifications.json` (the reviewable artifact). `LlmGicsSource` matches by ticker (MIC-guarded),
+  sector-only, `source='llm'`, validates sector ∈ 11 GICS at load (a typo never writes). Wired as the
+  OPT-IN 5th fill pass behind `sym classify --llm` (OFF by default). Human-in-the-loop: Claude classified
+  the residual's operating companies into the artifact; **funds/ETFs deliberately excluded** (no GICS
+  sector to invent). Built 2026-06-17 (chosen by Andre as the "do the LLM gap-fill" follow-up).
 - [x] **Task 5 — Whole-universe maintenance command** (AC: 1,5,6) — `_cmd_classify` extended with the
   `sec_sic` fill pass (same in-`with`-catch discipline as b3 so a SEC outage can't roll back earlier
   passes); coverage-by-source + per-pass attribution report; AC #2 threshold gate now measured on the
@@ -275,6 +280,30 @@ Focused code review of the crumb-session lifecycle (the only non-SEC-mirrored lo
 - 2026-06-17: SEC SIC→GICS MVP implemented (Tasks 1,2,5,6). AC3 (Yahoo crumb) + AC4 (LLM) deferred per locked scope. Status → review.
 - 2026-06-17: Applied 3-layer code-review fixes (per-CIK isolation [High], throttle [Med], provenance test [Med], int-guard [Low]); ledgered ticker-punctuation + literal-registry limitations.
 - 2026-06-17: Added Yahoo assetProfile source (AC3, Task 3) — 4th fill pass, coverage → 98.8%; fixed 2 High review findings (dead 401-retry, quoteSummary-null crash). AC4 (LLM) still deferred.
+- 2026-06-17: Added LLM gap-fill (AC4, Task 4) — opt-in `sym classify --llm` 5th pass, reviewable JSON
+  artifact, 7 operating companies classified (source='llm'), funds correctly left unclassified;
+  coverage → **99.1%**. ALL 8 ACs now landed (AC1–AC8). Only FMP profile source remains ledgered.
+
+### LLM gap-fill added (2026-06-17, AC4 — final source)
+
+Key reframing from the data: the 98.8% residual (26) was **mostly funds/ETFs that correctly have NO
+GICS sector** (JPMorgan/PGIM/PIMCO/Global X/ProShares ETFs, Scottish Mortgage / Polar Capital
+investment trusts, Pictet Cleaner Planet) — an LLM "filling" those would be a hallucination. Only ~7
+were real operating companies the deterministic sources missed (recent renames/spinoffs). So the LLM's
+real job was small + needed a "fund → no sector" guard.
+
+No Anthropic API key in-env (probed env + .env), and at a 26-name tail an API-calling source would be
+dormant + costly + lowest-trust. Andre chose the human-in-the-loop path: Claude (the agent) classified
+the operating companies directly into a **versioned, reviewable artifact** (`llm_classifications.json`),
+applied by `LlmGicsSource` as `source='llm'`. The artifact IS the review surface (rationale per row); a
+wrong call is a one-line edit + `sym classify --llm`. Sector validated ∈ 11 GICS at load (a typo refuses,
+never writes). MIC-guarded match (a foreign ticker-collision never inherits a US record's sector).
+
+Classified (7): CADE→Financials, CIVI→Energy, CMA→Financials, KLG→Consumer Staples, PCH→Real Estate
+(timber REIT), TGNA→Communication Services, ZEUS→Materials. Funds (19, incl. CSC "Collective Holdings"
+which I wasn't confident on) deliberately left unclassified. Live `sym classify --llm`: 7 inserted, 19
+unmatched, coverage 98.8% → **99.1%** (2168/2187). Default `sym classify` (no flag) unchanged — the LLM
+pass never runs unless asked. 11 DB-free tests (no network, no LLM call at runtime).
 
 ## Open questions (for review)
 1. **Precedence order** — is `B3(BR) → financedatabase → SEC SIC → Yahoo → LLM` right, or should a
