@@ -210,8 +210,10 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
         apply_classifications,
         classify_universe,
         plan_classifications,
+        read_active_coverage,
         read_unclassified_identities,
     )
+    from sym.classification.sec_sic import SecSicGicsSource
     from sym.config import load_dotenv
     from sym.db import connect
 
@@ -239,6 +241,29 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
                     b3_summary = apply_classifications(conn, b3_plans)
             except Exception as exc:  # noqa: BLE001 — any fill failure must not mask/destroy the primary pass
                 b3_error = f"{type(exc).__name__}: {exc}"
+
+            # SEC SIC→GICS fill pass (multi-source classification): sector-only
+            # classifications for US-listed actives still unclassified after
+            # financedatabase + b3 — the non-Brazil GICS gap (e.g. HON). Fill-only
+            # by construction (sees only the still-unclassified identities), so it
+            # can never overwrite financedatabase or b3. Same in-`with` catch
+            # discipline as b3: a SEC outage must not roll back the earlier passes.
+            sec_error: str | None = None
+            sec_summary = None
+            sec_unclassified: list = []
+            sec = SecSicGicsSource()
+            try:
+                sec_unclassified = read_unclassified_identities(conn)
+                if sec_unclassified:
+                    sec_plans = plan_classifications(sec_unclassified, sec)
+                    sec_summary = apply_classifications(conn, sec_plans)
+            except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
+                sec_error = f"{type(exc).__name__}: {exc}"
+
+            # Whole-universe coverage AFTER every source has written — the honest
+            # multi-source figure (primary `summary.coverage` only knows
+            # financedatabase). This is what the AC #2 threshold gate is measured on.
+            total_classified, total_active = read_active_coverage(conn)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -271,9 +296,34 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
             print(f"  no B3 classification for: {', '.join(b3.last_unmatched)}")
         for failure in b3_summary.failures:
             print(f"  b3 write failed: {failure}")
-    if not summary.meets_threshold():
+    if sec_error is not None:
+        print(f"sec_sic fill pass FAILED (earlier passes unaffected): {sec_error}", file=sys.stderr)
+    elif sec_summary is None:
+        print("sec_sic fill pass: nothing to fill (no unclassified actives) — SEC not queried")
+    else:
         print(
-            f"coverage {summary.coverage:.1%} is below the "
+            f"sec_sic fill pass: {len(sec_unclassified)} unclassified active; "
+            f"{sec_summary.rows_inserted} inserted, {sec_summary.unchanged} unchanged, "
+            f"{sec_summary.rows_closed} closed, {sec_summary.failed} failed; "
+            f"{len(sec.last_unmapped_sic)} unmapped SIC, "
+            f"{len(sec.last_unmatched)} no-CIK/no-SIC, "
+            f"{len(sec.last_skipped_non_us)} non-US skipped, "
+            f"{len(sec.last_errors)} lookup error(s)"
+        )
+        for ticker, (sic, desc) in sorted(sec.last_unmapped_sic.items()):
+            print(f"  unmapped SIC: {ticker}: {sic} ({desc})")
+        for ticker, msg in sorted(sec.last_errors.items()):
+            print(f"  sec_sic lookup error: {ticker}: {msg}")
+        for failure in sec_summary.failures:
+            print(f"  sec_sic write failed: {failure}")
+    total_coverage = total_classified / total_active if total_active else 0.0
+    print(
+        f"whole-universe coverage (all sources): {total_classified}/{total_active} "
+        f"= {total_coverage:.1%}"
+    )
+    if total_coverage < DEFAULT_COVERAGE_THRESHOLD:
+        print(
+            f"coverage {total_coverage:.1%} is below the "
             f"{DEFAULT_COVERAGE_THRESHOLD:.0%} threshold (AC #2)",
             file=sys.stderr,
         )

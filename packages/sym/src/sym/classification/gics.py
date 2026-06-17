@@ -224,6 +224,29 @@ def read_active_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
     return [SecurityIdentity(figi, isin, ticker) for figi, isin, ticker in rows]
 
 
+def read_active_coverage(conn: psycopg.Connection) -> tuple[int, int]:
+    """``(classified_active, total_active)`` after ALL sources have written.
+
+    The primary pass's :class:`ClassificationSummary` only knows financedatabase's
+    own coverage; once fill sources (b3, sec_sic) have run, the honest
+    whole-universe coverage is whatever currently-effective ``gics_scd`` rows back
+    active securities — so the threshold gate is measured here, not from one pass.
+    """
+    total = conn.execute("SELECT count(*) FROM securities WHERE status = 'active'").fetchone()[0]
+    classified = conn.execute(
+        """
+        SELECT count(*)
+          FROM securities s
+         WHERE s.status = 'active'
+           AND EXISTS (SELECT 1 FROM gics_scd g
+                        WHERE g.composite_figi = s.composite_figi
+                          AND g.valid_to IS NULL
+                          AND g.sector_name IS NOT NULL)
+        """
+    ).fetchone()[0]
+    return (int(classified), int(total))
+
+
 def read_unclassified_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
     """Active securities with NO currently-effective GICS row (the fill-source scope).
 

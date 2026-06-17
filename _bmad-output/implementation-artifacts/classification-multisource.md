@@ -1,6 +1,6 @@
 # Story: Multi-source industry classification (whole-universe, maintained)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Created via bmad-create-story (2026-06-17). Operator: "the classification at the moment is
 very limited. you should incorporate multiple industry classification, like yahoo, google,
@@ -93,23 +93,31 @@ The operator named Yahoo / Google / Perplexity; the honest findings:
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Classification-source abstraction + registry** (AC: 1,5) — a `ClassificationSource`
-  protocol (figi/ticker/mic → normalized GICS classification or None) + an archetype registry +
-  ordered precedence + the SCD merge/provenance writer (extend the `gics.py` writer; keep its
-  per-security `conn.transaction()` durability).
-- [ ] **Task 2 — SEC SIC→GICS source** (AC: 2) — pull SIC from EDGAR (reuse the Q8.3 EDGAR client
-  if present), a versioned SIC→GICS-sector crosswalk, normalize, register. DB-free tests with a
-  captured EDGAR payload.
-- [ ] **Task 3 — Yahoo assetProfile source (crumb flow)** (AC: 3) — getcrumb+cookie, quoteSummary
-  assetProfile, Yahoo→GICS crosswalk; 401/no-crumb → source error (fall through). Reuse the QH.2
-  `YAHOO_SUFFIX` symbol mapping. Tests monkeypatch the fetch + crumb.
-- [ ] **Task 4 — LLM gap-fill source (opt-in, last resort)** (AC: 4) — classify residual names into
-  a GICS sector with provenance + low trust; never override; review-flagged. Gated off by default.
-- [ ] **Task 5 — Whole-universe maintenance command + cadence** (AC: 1,5,6) — `sym classify` extended
-  (or a new `--scope all` / `classify-universe`) to run the precedence chain over all resolved
-  members; coverage report by source; daily-maintenance hook.
-- [ ] **Task 6 — Verify** (AC: 6,7) — `sym validate` (member-completeness GICS → ~0; HON classified),
-  heatmap Unclassified tiles drop; `uv run pytest` green incl. the new source tests; ruff clean.
+- [x] **Task 1 — Classification-source abstraction + registry** (AC: 1,5) — the `GicsSource` protocol
+  (`SecurityIdentity{figi,isin,ticker,mic}` → `dict[figi, GicsClassification]`) + `read_unclassified_identities`
+  fill-scope + the per-security-`conn.transaction()` SCD writer (`apply_classifications`, persists
+  `source`) **already realize** AC1/AC5: precedence = the ordered fill-pass chain (financedatabase →
+  b3 → sec_sic), each fed only the still-unclassified set, so it is fill-only by construction and
+  provenance is the `source` tag. No new registry class needed; no `gics_scd`/heatmap change. (Added
+  `read_active_coverage` for the honest post-fill coverage gate.)
+- [x] **Task 2 — SEC SIC→GICS source** (AC: 2) — `sym/classification/sec_sic.py`: `HttpSecClient`
+  (replicated, NOT imported, from `altdata.sources` — peer-package rule; stdlib `urllib`, SEC-compliant
+  UA w/ contact email), a documented `SIC→GICS-sector` crosswalk (`_SIC_OVERRIDES` + `_SIC_BANDS`),
+  `SecSicGicsSource` (US-mic-scoped, sector-only, `source='sec_sic'`, never guesses). DB-free tests
+  with a fake `SecClient`.
+- [ ] **Task 3 — Yahoo assetProfile source (crumb flow)** (AC: 3) — **DEFERRED** per locked scope.
+- [ ] **Task 4 — LLM gap-fill source (opt-in, last resort)** (AC: 4) — **DEFERRED** per locked scope.
+- [x] **Task 5 — Whole-universe maintenance command** (AC: 1,5,6) — `_cmd_classify` extended with the
+  `sec_sic` fill pass (same in-`with`-catch discipline as b3 so a SEC outage can't roll back earlier
+  passes); coverage-by-source + per-pass attribution report; AC #2 threshold gate now measured on the
+  honest **post-fill** whole-universe coverage (`read_active_coverage`), not the primary pass alone.
+  Already whole-universe (active scope), idempotent/SCD.
+- [x] **Task 6 — Verify** (AC: 6,7) — live `sym classify`: 47 US names filled (incl. **HON →
+  Industrials**), whole-universe coverage **90.0% → 94.4%**, exit 0; `sym validate --universe nasdaq100`
+  `universe_member_completeness: 102 members, 0 incomplete` (was 1: HON) + `identity_completeness` PASS;
+  only remaining FAIL is the pre-existing global `unpriced_securities` (unrelated to classification).
+  `uv run pytest` 623 pass (1 pre-existing unrelated `tests`-import-path failure, confirmed via stash);
+  ruff clean on all touched code.
 
 ## Dev Notes
 
@@ -167,6 +175,73 @@ residual (expected to clear HON + most of the ~134 US gap with no auth).
 **Deferred to a follow-up pass (NOT this story's dev):** AC3 (Yahoo `assetProfile` via the crumb
 flow), AC4 (LLM gap-fill), and the FMP profile source. Revisit once the SEC-SIC residual is known —
 if non-US names remain Unclassified, Yahoo-crumb is the next source; LLM only for the long tail.
+
+## Dev Agent Record
+
+### Completion Notes (2026-06-17)
+
+**Key design finding:** the multi-source abstraction the story called for (AC1/AC5) **already existed**
+in `gics.py` — `GicsSource` protocol + `SecurityIdentity(figi,isin,ticker,mic)` + the
+`read_unclassified_identities` fill-scope + the `source`-persisting SCD writer. b3 (QH.1) is already a
+fill source behind it. So "registry + precedence + provenance" did not need a new registry class:
+**precedence is the ordered fill-pass chain** (financedatabase primary → b3 Brazil fill → sec_sic US
+fill), each pass fed ONLY the still-unclassified actives, which makes every fill source fill-only by
+construction (it can never overwrite a higher-precedence source) and makes provenance the per-row
+`source` tag. Adding SEC was therefore: one new source class + one new fill pass + the crosswalk.
+
+**SEC SIC→GICS source** (`sym/classification/sec_sic.py`): replicated the EDGAR client from
+`altdata.sources` (peer-package topology rule — `sym` must not import `altdata`; stdlib `urllib`,
+SEC-compliant UA carrying a contact email or EDGAR 403s). `company_tickers.json` → CIK, `submissions`
+→ `sic`. A documented SIC→GICS-sector crosswalk: `_SIC_OVERRIDES` (high-traffic exact 4-digit codes —
+semiconductors 3674, software 7372, pharma 2834, REITs 6798, computers 3571 — beat their coarser
+parent band) + `_SIC_BANDS` (ordered inclusive ranges). US-MIC-scoped (a foreign listing sharing a US
+ticker must never inherit a US filer's SIC; mic-less identities trusted ticker-only, mirroring b3).
+Sector-only (`source='sec_sic'`, industry levels NULL — SIC has no GICS sub-structure). Records
+unmapped-SIC / no-CIK / non-US-skipped on side channels; **never guesses** a sector.
+
+**Coverage gate fix:** the AC #2 threshold was previously checked against the financedatabase *primary*
+pass coverage alone (89.98% → rounds to "90.0%" but trips the `< 0.90` gate, exit 2), ignoring what the
+fill passes add. Added `read_active_coverage(conn)` and moved the gate + a final summary line onto the
+honest **post-fill** whole-universe coverage. Live result: 90.0% → **94.4%** (fd 1968 + b3 49 + sec_sic
+47 of 2187 active), exit 0.
+
+**Live verification:** `sym classify` filled 47 US names (incl. HON → Industrials, source `sec_sic`),
+27 no-CIK/no-SIC, 96 non-US skipped (sums exactly to the 170 residual). Re-run idempotent (0 inserted).
+`sym validate --universe nasdaq100`: `universe_member_completeness` 102 members / **0 incomplete** (was
+1 — HON), `identity_completeness` PASS. Sole remaining FAIL is the pre-existing global
+`unpriced_securities` (non-classification, documented in `nasdaq100-universe.md`).
+
+### File List
+- `packages/sym/src/sym/classification/sec_sic.py` (NEW) — SEC client + SIC→GICS crosswalk + `SecSicGicsSource`.
+- `packages/sym/tests/test_classification_sec_sic.py` (NEW) — crosswalk + fetch tests (fake SecClient, no network).
+- `packages/sym/src/sym/classification/gics.py` (UPDATE) — added `read_active_coverage`.
+- `packages/sym/src/sym/cli.py` (UPDATE) — `_cmd_classify`: sec_sic fill pass + report + post-fill coverage gate.
+
+### Code-review fixes (2026-06-17, 3-layer adversarial)
+- **High — per-CIK error isolation:** a single CIK's `submissions` 404/403/blip raised `SecSicError`
+  out of `fetch` and aborted the WHOLE fill pass. Now wrapped per-CIK: the error is recorded on a new
+  `last_errors` side-channel and the loop continues (analogue of the SCD writer's per-security
+  durability). Surfaced in the CLI report. Test: `test_fetch_isolates_a_single_cik_lookup_error`.
+- **Med — SEC rate limit:** `HttpSecClient` now self-throttles (`min_interval=0.12s` ≈ 8 req/s, under
+  SEC's 10/s ceiling) across its sequential `submissions` calls.
+- **Med — AC8 provenance gap:** added `test_apply_classifications_persists_sec_sic_provenance` — runs a
+  sec_sic plan through `apply_classifications` against a recording fake conn and asserts the INSERT
+  carries `source='sec_sic'` (+ the mapped sector), closing the end-to-end provenance assertion AC8 named.
+- **Low — `int(cik_str)` robustness:** a non-numeric directory row is now skipped, not fatal to the parse.
+
+### Known limitations (accepted for the MVP; ledgered)
+- **Ticker punctuation (BRK.B ↔ SEC's BRK-B):** no `.`↔`-` / class-suffix normalization, so dual-class
+  names with punctuated tickers silently UNDER-fill (recorded as no-CIK, never mis-filled). Cheap
+  follow-up if the residual shows such names.
+- **AC1 literal registry:** `_cmd_classify` hard-codes the concrete sources (as the b3 path already
+  did); precedence is the ordered fill-pass chain, not a self-registering config-keyed registry. The
+  precedence/provenance/fill-only guarantees AC1+AC5 require all hold; the "no concrete-class import"
+  wording does not — accepted on an owner-operated tool, ledgered for a future generalization if a 4th+
+  source lands.
+
+### Change Log
+- 2026-06-17: SEC SIC→GICS MVP implemented (Tasks 1,2,5,6). AC3 (Yahoo crumb) + AC4 (LLM) deferred per locked scope. Status → review.
+- 2026-06-17: Applied 3-layer code-review fixes (per-CIK isolation [High], throttle [Med], provenance test [Med], int-guard [Low]); ledgered ticker-punctuation + literal-registry limitations.
 
 ## Open questions (for review)
 1. **Precedence order** — is `B3(BR) → financedatabase → SEC SIC → Yahoo → LLM` right, or should a
