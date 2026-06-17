@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
+import { useRunGuard } from "@/lib/use-run-guard";
 
 type P = Schemas["PortfolioSummary"];
 type C = Schemas["Client"];
@@ -19,15 +20,16 @@ export default function PortfoliosPage() {
   const [filter, setFilter] = useState(""); // "" = all clients (context selection)
   const [createError, setCreateError] = useState<string | null>(null);
 
-  // Generation token: each fetchData call (mount, retry, post-create reload) bumps it and applies
-  // its result only if still the latest. Without it, a slow FAILED mount load resolving after a
-  // fast successful retry would clobber the just-loaded rows with a stale error (and vice versa).
-  const genRef = useRef(0);
+  // Guard against concurrent loads (mount / retry / post-create reload can overlap): a run applies
+  // its result only if still the latest + still mounted. Without it a slow FAILED mount load
+  // resolving after a fast successful retry would clobber the just-loaded rows with a stale error.
+  const guard = useRunGuard();
 
   // Pure fetch: state is only set in the async callbacks, never synchronously — so the mount
   // effect can call it without tripping react-hooks/set-state-in-effect (loading starts true).
-  function fetchData() {
-    const gen = ++genRef.current;
+  // useCallback so the mount effect can depend on it (guard is stable → fetchData is stable).
+  const fetchData = useCallback(() => {
+    const isCurrent = guard.begin();
     Promise.all([
       fetch("/api/portfolios", { cache: "no-store" }).then((r) => {
         if (!r.ok) throw new Error(`portfolios ${r.status}`); // an HTTP error is a load failure, not a list
@@ -39,7 +41,7 @@ export default function PortfoliosPage() {
       }),
     ])
       .then(([p, c]: [P[], C[]]) => {
-        if (gen !== genRef.current) return; // a newer load has superseded this one
+        if (!isCurrent()) return; // a newer load has superseded this one (or we unmounted)
         setList(p);
         setClients(c);
         setError(false);
@@ -47,11 +49,11 @@ export default function PortfoliosPage() {
       })
       // QH.8: surface a load failure honestly (an empty list must not look like a real failure).
       .catch(() => {
-        if (gen !== genRef.current) return; // don't let a stale failure clobber a newer success
+        if (!isCurrent()) return; // don't let a stale failure clobber a newer success
         setError(true);
         setLoading(false);
       });
-  }
+  }, [guard]);
   // For event-handler refreshes (e.g. after create / retry) we DO want the immediate loading flip.
   function load() {
     setLoading(true);
@@ -60,7 +62,7 @@ export default function PortfoliosPage() {
   }
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   // Create helpers check r.ok and catch network errors — a failed POST must surface an error, not
   // silently clear the form + reload (which looks like success) or escape as an unhandled rejection.

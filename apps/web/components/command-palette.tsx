@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 
 import type { Schemas } from "@/lib/api";
 import { SUBNAV_PROVIDERS } from "@/lib/nav";
+import { useRunGuard } from "@/lib/use-run-guard";
 
 type Module = { key: string; name: string; description: string; enabled: boolean };
 type OpDef = Schemas["OpDef"];
@@ -41,14 +42,14 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
     openRef.current = open;
   }, [open]);
 
-  // Run-session token: bumped on every OPEN, so a read-only op launched in one open-episode that
-  // resolves AFTER the user closed AND reopened the palette is recognized as stale and ignored —
-  // the bare `openRef` check (open right now?) can't tell a reopen from "still the same session"
-  // and would yank the user out of their NEW session into Operate.
-  const genRef = useRef(0);
+  // Run-session guard: each OPEN supersedes prior runs, so a read-only op launched in one
+  // open-episode that resolves AFTER the user closed AND reopened the palette is recognized as
+  // stale and ignored — the bare `openRef` check (open right now?) can't tell a reopen from "still
+  // the same session" and would yank the user out of their NEW session into Operate.
+  const guard = useRunGuard();
   useEffect(() => {
-    if (open) genRef.current += 1;
-  }, [open]);
+    if (open) guard.supersede();
+  }, [open, guard]);
 
   // Global open/close shortcut. ⌘K/Ctrl+K toggles from anywhere (captured even inside inputs —
   // the modifier makes it unambiguous); Esc closes. Setting state in an event handler (not in
@@ -178,10 +179,10 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
         return;
       }
       setMsg(`Starting ${op.label}…`);
-      const runGen = genRef.current; // the session this run belongs to
+      const stillCurrentSession = guard.capture(); // bind to the open-episode that launched the run
       // Stale-resolution guard: act only if the palette is STILL open AND still the same
       // open-episode that launched the run (not closed, not closed-then-reopened).
-      const live = () => openRef.current && genRef.current === runGen;
+      const live = () => openRef.current && stillCurrentSession();
       fetch("/api/operate/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -203,7 +204,7 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
           if (live()) setMsg("Run failed — open Operate to retry");
         });
     },
-    [router],
+    [router, guard],
   );
 
   if (!open) return null;
