@@ -65,8 +65,10 @@ export function AnalyticsPanel({ pid }: { pid: string }) {
   }, [pid]);
   useEffect(() => {
     loadLive();
-    const ac = liveAbort.current; // capture for cleanup (avoid reading the ref in the teardown)
-    return () => ac?.abort();
+    // Abort whatever request is CURRENTLY in flight at teardown — read the ref in the cleanup
+    // (refs are stable), not a captured snapshot. Capturing here would freeze the mount-time
+    // controller and leave a later manual refresh's request uncancelled on unmount.
+    return () => liveAbort.current?.abort();
   }, [loadLive]);
 
   useEffect(() => {

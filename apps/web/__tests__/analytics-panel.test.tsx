@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Schemas } from "@/lib/api";
@@ -135,5 +136,31 @@ describe("AnalyticsPanel fetch hardening (QH.8)", () => {
     await Promise.resolve();
     expect(errs).toHaveLength(0); // alive-guard: no setState-after-unmount fallout
     spy.mockRestore();
+  });
+
+  it("aborts the CURRENT in-flight live request on unmount — a manual refresh, not the stale mount controller", async () => {
+    const signals: AbortSignal[] = [];
+    let liveCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { signal?: AbortSignal }) => {
+        const ok = (b: unknown) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+        if (url.includes("/benchmarks")) return ok([]);
+        if (url.includes("/live")) {
+          liveCalls += 1;
+          if (init?.signal) signals.push(init.signal);
+          // mount call resolves (so the ↻ refresh button renders); the manual refresh stays pending
+          return liveCalls === 1 ? ok(livePnl()) : new Promise(() => {});
+        }
+        return ok({});
+      }),
+    );
+    const { unmount } = render(<AnalyticsPanel pid="5" />);
+    await userEvent.click(await screen.findByRole("button", { name: /refresh/i })); // 2nd live request (pending)
+    expect(signals).toHaveLength(2);
+    expect(signals[1].aborted).toBe(false);
+    unmount();
+    // The bug aborted the stale mount controller; the fix aborts whatever is CURRENTLY in flight.
+    expect(signals[1].aborted).toBe(true);
   });
 });
