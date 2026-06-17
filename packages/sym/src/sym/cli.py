@@ -298,13 +298,25 @@ def _cmd_classify(args: argparse.Namespace) -> int:
                 except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
                     llm_error = f"{type(exc).__name__}: {exc}"
 
-            # Whole-universe coverage AFTER every source has written — the honest
-            # multi-source figure (primary `summary.coverage` only knows
-            # financedatabase). This is what the AC #2 threshold gate is measured on.
-            total_classified, total_active = read_active_coverage(conn)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
+
+    # Whole-universe coverage AFTER every source has written — the honest
+    # multi-source figure (primary `summary.coverage` only knows financedatabase).
+    # Read on a FRESH connection so it runs AFTER the classification transaction has
+    # committed (the run is one non-autocommit tx): a failure measuring coverage can
+    # then never roll back the writes — it only costs us the AC #2 gate + the number.
+    total_classified: int | None = None
+    total_active: int | None = None
+    try:
+        with connect() as cov_conn:
+            total_classified, total_active = read_active_coverage(cov_conn)
+    except psycopg.Error as exc:
+        print(
+            f"coverage read failed (classification writes already committed): {exc}",
+            file=sys.stderr,
+        )
 
     print(
         f"classified {summary.classified}/{summary.active_total} active securities "
@@ -394,6 +406,11 @@ def _cmd_classify(args: argparse.Namespace) -> int:
             )
             for failure in llm_summary.failures:
                 print(f"  llm write failed: {failure}")
+    if total_active is None or total_classified is None:
+        # Writes committed; we just couldn't measure coverage — report and don't
+        # gate (returning 2 here would falsely signal a failed classification run).
+        print("whole-universe coverage (all sources): unavailable (coverage read failed)")
+        return 0
     total_coverage = total_classified / total_active if total_active else 0.0
     print(
         f"whole-universe coverage (all sources): {total_classified}/{total_active} "

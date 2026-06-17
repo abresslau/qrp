@@ -302,3 +302,91 @@ def test_failed_write_is_isolated_and_counted():
 
 def test_summary_coverage_is_zero_when_no_active_securities():
     assert ClassificationSummary().coverage == 0.0
+
+
+# --- cross-source precedence / merge (multi-source AC5/AC8) ------------------
+
+
+class _StatefulConn:
+    """A fake conn that models gics_scd effective rows in memory ACROSS calls.
+
+    Unlike `_RouterConn` (static `current`), this records what `apply_classifications`
+    inserts, so a second source's pass sees the first source's writes — letting a
+    test exercise the cross-source merge: fill-only precedence + per-row provenance.
+    """
+
+    def __init__(self):
+        # composite_figi -> (level_names tuple, source, valid_from)
+        self.effective: dict[str, tuple] = {}
+
+    def execute(self, sql, params=()):
+        upper = sql.upper().lstrip()
+        if upper.startswith("SELECT") and "FROM GICS_SCD" in sql.upper():
+            row = self.effective.get(params[0])
+            if row is None:
+                return _Cursor([])
+            names, _source, valid_from = row
+            return _Cursor([(names[0], names[1], names[2], names[3], valid_from)])
+        if upper.startswith("INSERT"):
+            # _insert_row order: figi, sector_code, sector_name, ig_code, ig_name,
+            # ind_code, ind_name, sub_code, sub_name, source, valid_from
+            figi, sector_name = params[0], params[2]
+            ig_name, ind_name, sub_name = params[4], params[6], params[8]
+            source, valid_from = params[9], params[10]
+            self.effective[figi] = ((sector_name, ig_name, ind_name, sub_name), source, valid_from)
+        return _Cursor([])
+
+    def transaction(self):
+        return contextlib.nullcontext()
+
+    def unclassified(self, all_figis):
+        """The fill-source scope: actives with no effective row yet (in request order)."""
+        return [SecurityIdentity(f) for f in all_figis if f not in self.effective]
+
+
+def _src_class(figi, sector, source):
+    return GicsClassification(
+        composite_figi=figi, sector_name=sector, industry_group_name=None,
+        industry_name=None, source=source,
+    )
+
+
+def test_cross_source_merge_is_fill_only_first_writer_wins_with_provenance():
+    """A later (lower-precedence) source fed only the unclassified set fills the gaps
+    and NEVER overwrites an earlier source's rows; each row keeps its own `source`."""
+    conn = _StatefulConn()
+    all_figis = ["BBG000000001", "BBG000000002", "BBG000000003"]
+
+    # Pass 1 (primary): classifies #1 and #2.
+    primary = _FakeSource(
+        {
+            "BBG000000001": _src_class("BBG000000001", "Energy", "financedatabase"),
+            "BBG000000002": _src_class("BBG000000002", "Materials", "financedatabase"),
+        }
+    )
+    p1 = plan_classifications([SecurityIdentity(f) for f in all_figis], primary)
+    s1 = apply_classifications(conn, p1, as_of_date=date(2026, 6, 17))
+    assert s1.rows_inserted == 2
+
+    # Only #3 remains in the fill scope.
+    assert {s.composite_figi for s in conn.unclassified(all_figis)} == {"BBG000000003"}
+
+    # Pass 2 (fill source): WOULD reclassify #1 differently, but is fed only the
+    # unclassified set, so it can only touch #3.
+    fill = _FakeSource(
+        {
+            "BBG000000001": _src_class("BBG000000001", "Industrials", "sec_sic"),  # never seen
+            "BBG000000003": _src_class("BBG000000003", "Utilities", "sec_sic"),
+        }
+    )
+    p2 = plan_classifications(conn.unclassified(all_figis), fill)
+    s2 = apply_classifications(conn, p2, as_of_date=date(2026, 6, 17))
+    assert s2.rows_inserted == 1
+    assert s2.rows_closed == 0  # no overwrite of #1
+
+    # #1 keeps the primary source + value (never overwritten); #3 gets the fill source.
+    assert conn.effective["BBG000000001"][0][0] == "Energy"
+    assert conn.effective["BBG000000001"][1] == "financedatabase"
+    assert conn.effective["BBG000000002"][1] == "financedatabase"
+    assert conn.effective["BBG000000003"][0][0] == "Utilities"
+    assert conn.effective["BBG000000003"][1] == "sec_sic"

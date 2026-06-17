@@ -305,6 +305,24 @@ which I wasn't confident on) deliberately left unclassified. Live `sym classify 
 unmatched, coverage 98.8% → **99.1%** (2168/2187). Default `sym classify` (no flag) unchanged — the LLM
 pass never runs unless asked. 11 DB-free tests (no network, no LLM call at runtime).
 
+### Review Findings (code review 2026-06-17, 3-layer adversarial: Blind / Edge / Acceptance)
+
+decision-needed: none.
+
+patch (all applied 2026-06-17):
+- [x] [Review][Patch] `read_active_coverage` is unguarded — a non-`OperationalError` there discards the whole atomic classify run (and the report block then reads unbound `total_classified`/`total_active`). **FIXED:** moved the coverage read onto a FRESH connection AFTER the write transaction commits, wrapped in `except psycopg.Error` → a coverage-read failure now prints a warning + returns 0 (writes already committed), never rolls them back. [packages/sym/src/sym/cli.py `_cmd_classify`]
+- [x] [Review][Patch] Yahoo cookie-seed response is never closed — **FIXED:** `_ensure_session` now uses `with opener.open(...)` and closes the expected `HTTPError` (fc.yahoo.com 404s) via `exc.close()`. [packages/sym/src/sym/classification/yahoo_profile.py `_ensure_session`]
+- [x] [Review][Patch] LLM artifact loader silently drops a duplicate-ticker row — **FIXED:** `LlmGicsSource.__init__` now raises `LlmClassificationError` on a duplicate ticker instead of first-wins `setdefault`. [packages/sym/src/sym/classification/llm.py]
+- [x] [Review][Patch] AC8 cross-source precedence/merge test gap — **FIXED:** added `test_cross_source_merge_is_fill_only_first_writer_wins_with_provenance` (stateful fake conn; pass 1 classifies #1/#2, pass 2 fed only the unclassified fills #3 and can't overwrite #1; asserts per-row provenance + `rows_closed == 0`). [packages/sym/tests/test_classification.py]
+
+defer (ledgered to deferred-work.md):
+- [x] [Review][Defer] AC5 precedence-upgrade-closes-lower NOT implemented — fill-only first-writer-wins means a later higher-precedence/authoritative source can never supersede an earlier lower-trust (e.g. `source='llm'`) classification; the SCD close-on-change machinery never fires cross-source. The dev record OVERSTATED AC5 as fully met — it satisfies no-overwrite + provenance + precedence-into-an-empty-slot, NOT "a higher-precedence source later filling a name closes the lower one." Real enhancement.
+- [x] [Review][Defer] AC6 cadence/daily-maintenance hook not wired — `sym classify` is whole-universe + idempotent but not scheduled (no Dagster schedule/monitor hook; must set `execution_timezone` when built).
+- [x] [Review][Defer] Yahoo has no circuit-breaker on a 401-storm / total outage — degrades per-symbol (`last_errors`) but walks all N residual at ~1.2s each instead of failing fast.
+- [x] [Review][Defer] SEC `company_tickers.json` "first listing wins" CIK dedup assumes no duplicate tickers across CIKs — can mis-attribute after a ticker reassignment (delisted filer + new filer share a ticker).
+
+dismissed (9): AC1 literal-registry (already ledgered + defensible); AC4 row-level review-workflow (already ledgered); coverage-gate vs fill-scope null-sector mismatch (no source writes null-sector rows — `plan_classifications` filters to `is_classified`); prior-run `llm` rows counted on a later plain run (correct — the gate measures actual DB coverage); `read_unclassified_identities` GROUP BY fan-out (composite_figi is PK); SIC auto-parts >3716→Industrials (3717 isn't a real SIC); Yahoo `.`→`-` for non-US dotted tickers (consistent with the price-path resolver); `last_unmatched` no-CIK/no-SIC conflation (labeled honestly in the CLI); SEC directory call not per-name isolated (single batch call; whole-pass failure is intended).
+
 ## Open questions (for review)
 1. **Precedence order** — is `B3(BR) → financedatabase → SEC SIC → Yahoo → LLM` right, or should a
    live source (Yahoo/SEC) outrank the static financedatabase snapshot for freshness?
