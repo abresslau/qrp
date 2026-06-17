@@ -1,4 +1,21 @@
 
+## Deferred from: FMP classification source (2026-06-17)
+
+- **AC1 self-registering classifier registry — now TRIGGERED (6th source landed):** the FMP source
+  makes six near-identical fill passes hard-coded in `_cmd_classify` (each: error/summary vars + source
+  instance + try/`read_classifiable_identities`/`plan_classifications`/`apply_classifications`/except +
+  a ~12-line report block). The classification code review's AC1 finding (literal "pluggable registry,
+  selected by ordered precedence, never importing a concrete class") was accepted-as-deviation at 5
+  sources; at 6 the boilerplate is the duplication a registry would remove. Generalise: a registry of
+  `(name, rank, factory, opts)` driven off `SOURCE_PRECEDENCE`, looped over with a uniform pass+report
+  (primary financedatabase = all-actives; fill sources = `read_classifiable_identities(source)`; keyed
+  sources gated; opt-in sources flag-gated). Was the retro's conditional action item #5; the condition
+  is now met. NOT done with the FMP build (out of scope for "build the source").
+- **FMP international symbol format unverified:** `fmp_symbol_for_identity` reuses `YAHOO_SUFFIX`
+  (`.L`/`.PA`/…) since no `FMP_API_KEY` was available to probe FMP's exact non-US symbol scheme. US
+  (bare ticker, FMP's strongest coverage) is exact; non-US is a best-guess and should be spot-checked
+  against the live API once a key exists.
+
 ## Deferred from: code review of classification-multisource (2026-06-17)
 
 - **~~AC5 precedence-upgrade-closes-lower not implemented~~ — ✅ DONE (2026-06-17):** built exactly the precedence-aware re-classification path described here. `SOURCE_PRECEDENCE` + `outranks()` + `read_classifiable_identities(conn, source=...)` (unclassified + strictly-lower-held scope) + a precedence-aware `apply_classifications` (supersede close+insert on differing levels; in-place provenance upgrade on same levels; non-outranking different source = no-op; unknown/legacy rows preserved). Cross-run feature — clean no-op on stable data, fires when a higher source's data later covers a lower-held name. 8 unit tests. See `classification-multisource.md` → "AC5 precedence-upgrade built". This also closes AC8's "source upgrade closes+inserts" test gap.
