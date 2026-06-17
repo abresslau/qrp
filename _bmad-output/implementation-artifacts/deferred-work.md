@@ -1,4 +1,9 @@
 
+## Deferred from: code review of the registry refactor (2026-06-17b)
+
+- **No `_cmd_classify` loop-integration test:** the registry units (`run_fill_pass` run/skip/error/empty paths) + the live `sym classify`/`--llm` smoke cover behavior, but nothing tests the CLI's `[run_fill_pass(...) for spec in fill_specs(...)]` loop + the uniform report-printing branches (skipped/error/empty/success, stderr vs stdout) end to end. A full integration test needs a DB or heavy `_cmd_classify` mock; the loop is simple + live-verified, so deferred.
+- **No output-equivalence/snapshot regression test:** there is no golden snapshot pinning the per-pass report lines, so a future wording change (like the empty-scope "— not queried" drift this review caught) wouldn't be caught automatically. A snapshot of a representative run's report lines would guard it.
+
 ## Deferred from: FMP classification source (2026-06-17)
 
 - **~~AC1 self-registering classifier registry — TRIGGERED (6th source)~~ — ✅ DONE (2026-06-17):**
