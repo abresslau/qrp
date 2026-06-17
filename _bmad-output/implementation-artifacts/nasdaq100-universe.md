@@ -50,6 +50,17 @@ overall-PASS due to (a) the deferred non-Brazil-GICS story (HON), (b) the spurio
 (c) pre-existing global unpriced — none newly introduced by this add (except the names, now fixed).
 Accepted as-is per Andre 2026-06-16.
 
+### PCLN-class sweep (2026-06-17) + `api-types.ts`
+
+- **`api-types.ts`** regen verified **in sync** (LiveHeatmap model + `/heatmap/live` route present, match the live API) — the ledgered pre-deploy step is satisfied; no change needed.
+- **Swept all 15 index universes for fund-like / mis-resolved current members.** Found PCLN
+  (`BBG01XSWKWM8`, "Pictet Cleaner Planet") was **also a spurious member of sp500** (token
+  `ticker:PCLN@XNYS`, 2009-11-03 JOIN, no LEAVE — same stale-Priceline→Booking issue). ✅ **Fixed**
+  via `reverse_change` + `rebuild_projection` → sp500 503 → **502 clean members**, PCLN gone, BKNG
+  retained. Confirmed the Pictet-fund figi is now in **NO** universe.
+- The sweep's other hits (Vornado/Northern Trust/Camden/… "Trust"/"Realty") were **false positives**
+  — legit REITs/banks, real classifiable equities. Only PCLN was a true mis-resolution.
+
 ### Live-data note (operator asked "live data is stale")
 
 Not stale — verified: two CAC 40 live pulls ~3s apart advanced `as_of` (+5s) with 4 price changes.
