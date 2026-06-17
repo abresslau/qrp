@@ -214,6 +214,7 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
         read_unclassified_identities,
     )
     from sym.classification.sec_sic import SecSicGicsSource
+    from sym.classification.yahoo_profile import YahooProfileGicsSource
     from sym.config import load_dotenv
     from sym.db import connect
 
@@ -259,6 +260,24 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
                     sec_summary = apply_classifications(conn, sec_plans)
             except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
                 sec_error = f"{type(exc).__name__}: {exc}"
+
+            # Yahoo assetProfile fill pass (multi-source classification, AC #3):
+            # sector-only classifications for actives still unclassified after the
+            # US-only SEC pass — overwhelmingly NON-US (LSE/European) names. Crumb-
+            # gated, so the live client establishes a cookie+crumb session lazily.
+            # Fill-only by construction; same in-`with` catch discipline (a Yahoo
+            # crumb outage must not roll back the earlier passes).
+            yf_error: str | None = None
+            yf_summary = None
+            yf_unclassified: list = []
+            yf = YahooProfileGicsSource()
+            try:
+                yf_unclassified = read_unclassified_identities(conn)
+                if yf_unclassified:
+                    yf_plans = plan_classifications(yf_unclassified, yf)
+                    yf_summary = apply_classifications(conn, yf_plans)
+            except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
+                yf_error = f"{type(exc).__name__}: {exc}"
 
             # Whole-universe coverage AFTER every source has written — the honest
             # multi-source figure (primary `summary.coverage` only knows
@@ -316,6 +335,31 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
             print(f"  sec_sic lookup error: {ticker}: {msg}")
         for failure in sec_summary.failures:
             print(f"  sec_sic write failed: {failure}")
+    if yf_error is not None:
+        print(
+            f"yahoo_profile fill pass FAILED (earlier passes unaffected): {yf_error}",
+            file=sys.stderr,
+        )
+    elif yf_summary is None:
+        print(
+            "yahoo_profile fill pass: nothing to fill (no unclassified actives) — Yahoo not queried"
+        )
+    else:
+        print(
+            f"yahoo_profile fill pass: {len(yf_unclassified)} unclassified active; "
+            f"{yf_summary.rows_inserted} inserted, {yf_summary.unchanged} unchanged, "
+            f"{yf_summary.rows_closed} closed, {yf_summary.failed} failed; "
+            f"{len(yf.last_unmapped_sector)} unmapped sector, "
+            f"{len(yf.last_unmatched)} no-profile, "
+            f"{len(yf.last_unmapped_mic)} unmappable MIC, "
+            f"{len(yf.last_errors)} fetch error(s)"
+        )
+        for symbol, sector in sorted(yf.last_unmapped_sector.items()):
+            print(f"  unmapped Yahoo sector: {symbol}: {sector!r}")
+        for symbol, msg in sorted(yf.last_errors.items()):
+            print(f"  yahoo_profile fetch error: {symbol}: {msg}")
+        for failure in yf_summary.failures:
+            print(f"  yahoo_profile write failed: {failure}")
     total_coverage = total_classified / total_active if total_active else 0.0
     print(
         f"whole-universe coverage (all sources): {total_classified}/{total_active} "
