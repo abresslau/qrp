@@ -123,6 +123,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sym/universes/{universe_id}/heatmap/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Heatmap Live
+         * @description The heatmap recolored by LIVE returns (Story QH.9). External fan-out at serve time —
+         *     degrades to the honest 503 envelope if the provider is wholly unreachable; a per-issuer miss
+         *     is an `unavailable` (neutral) cell, never a request failure. Nothing is persisted.
+         */
+        get: operations["heatmap_live"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sym/securities": {
         parameters: {
             query?: never;
@@ -1174,6 +1196,64 @@ export interface components {
             freshness: string;
         };
         /**
+         * LiveHeatmap
+         * @description The heatmap recolored by live returns (Story QH.9). Same shape as `Heatmap` plus honest
+         *     live labelling: `freshness` is the worst priced cell, `as_of` the oldest priced quote (ISO-8601
+         *     UTC), and `priced`/`total` the coverage. Quotes are best-effort and NOT persisted.
+         */
+        LiveHeatmap: {
+            /** Universe Id */
+            universe_id: string;
+            /** Universe Name */
+            universe_name: string | null;
+            /** Window */
+            window: string;
+            /** Members Resolved */
+            members_resolved: number;
+            /** Shown */
+            shown: number;
+            /** Missing Mcap */
+            missing_mcap: number;
+            /** Merged Share Classes */
+            merged_share_classes: number;
+            /** As Of */
+            as_of: string | null;
+            /** Freshness */
+            freshness: string;
+            /** Priced */
+            priced: number;
+            /** Total */
+            total: number;
+            /** Cells */
+            cells: components["schemas"]["LiveHeatmapCell"][];
+        };
+        /**
+         * LiveHeatmapCell
+         * @description An EOD heatmap cell whose `ret`/`price` are LIVE (Story QH.9), plus per-cell freshness.
+         */
+        LiveHeatmapCell: {
+            /** Ticker */
+            ticker: string;
+            /** Name */
+            name: string | null;
+            /** Sector */
+            sector: string | null;
+            /** Industry */
+            industry: string | null;
+            /** Market Cap Usd */
+            market_cap_usd: number;
+            /** Market Cap Lcy */
+            market_cap_lcy: number | null;
+            /** Currency */
+            currency: string | null;
+            /** Price */
+            price: number | null;
+            /** Ret */
+            ret: number | null;
+            /** Freshness */
+            freshness: string;
+        };
+        /**
          * LivePnl
          * @description Live portfolio PnL (Story QH.2) — the EOD weight×return engine with the price source
          *     swapped to live quotes (per-name return vs its own previous close). NOT persisted.
@@ -2183,6 +2263,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Heatmap"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heatmap_live: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                universe_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveHeatmap"];
                 };
             };
             /** @description Validation Error */
