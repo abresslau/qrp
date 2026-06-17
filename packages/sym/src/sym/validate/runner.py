@@ -11,6 +11,7 @@ from __future__ import annotations
 import psycopg
 from psycopg.types.json import Jsonb
 
+from sym.validate.classification import check_classification_coverage
 from sym.validate.completeness import evaluate_completeness
 from sym.validate.fx import check_fx_coverage
 from sym.validate.instrument_bridge import check_equity_instrument_bridge
@@ -57,6 +58,8 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
         ("fx_coverage", lambda: check_fx_coverage(conn)),                      # FX4 — SLA
         ("maintenance_plan_coverage",                                  # U3.6 — the populate gate
          lambda: check_maintenance_plan_coverage(conn)),
+        ("classification_coverage",                          # multi-source classify — AC6 guardrail
+         lambda: check_classification_coverage(conn)),
     ]
     results: list[CheckResult] = []
     for name, check in checks:
