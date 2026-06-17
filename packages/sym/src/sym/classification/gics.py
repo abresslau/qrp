@@ -41,8 +41,9 @@ SOURCE_PRECEDENCE: dict[str, int] = {
     "financedatabase": 0,
     "b3": 1,
     "sec_sic": 2,
-    "yahoo_profile": 3,
-    "llm": 4,
+    "fmp": 3,  # paid vendor profile — above the free yahoo/llm, below official sources
+    "yahoo_profile": 4,
+    "llm": 5,
 }
 
 

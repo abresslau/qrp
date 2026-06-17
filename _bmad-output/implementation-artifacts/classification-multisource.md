@@ -283,6 +283,34 @@ Focused code review of the crumb-session lifecycle (the only non-SEC-mirrored lo
 - 2026-06-17: Added LLM gap-fill (AC4, Task 4) — opt-in `sym classify --llm` 5th pass, reviewable JSON
   artifact, 7 operating companies classified (source='llm'), funds correctly left unclassified;
   coverage → **99.1%**. ALL 8 ACs now landed (AC1–AC8). Only FMP profile source remains ledgered.
+- 2026-06-17: Added the FMP profile source (the last ledgered source — now built). Keyed/dormant
+  in-env (no `FMP_API_KEY`). See "FMP profile source added" below.
+
+### FMP profile source added (2026-06-17 — last deferred source)
+
+`sym/classification/fmp_profile.py`: `FmpProfileGicsSource` over FMP's `/v3/profile` endpoint
+(`sector`/`industry` + `isFund`/`isEtf`). **KEYED** — needs `FMP_API_KEY` (the same key the FMP
+universe provider uses); the `_cmd_classify` pass is **gated on the key** (one clean "skipped — no
+FMP_API_KEY" line, dormant until set) so it never adds no-key noise. Probed first per the
+name-the-probe rule: no key in-env, so built production-ready + unit-tested (DB-free fake client) but
+not live-verified here.
+
+Design (applies the retro lessons from the start): shared `RequestThrottle`, per-symbol error
+isolation, defensive `_parse_profile_payload` (malformed shapes → no raise), stdlib `urllib` (uniform
+with sec_sic/yahoo). An FMP→GICS crosswalk (FMP shares Yahoo's vendor taxonomy + a few legacy labels).
+Bonus over the guess-prone sources: FMP's `isFund`/`isEtf` lets it **explicitly decline funds** (→
+`last_skipped_fund`) rather than mis-classify them. Sector-only, `source='fmp'`.
+
+Precedence: inserted at rank **3** in `SOURCE_PRECEDENCE` (financedatabase 0 → b3 1 → sec_sic 2 → **fmp
+3** → yahoo_profile 4 → llm 5) — a paid vendor outranks the free yahoo/llm but sits below the
+official/regulatory sources. Via the AC5 scope it can supersede yahoo/llm names once keyed. CLI chain
+runs it between sec_sic and yahoo. 9 unit tests (crosswalk, symbol, fund-skip, unmapped, per-symbol
+isolation, no-key-raises, provenance). 717 tests green.
+
+**Note — AC1 registry trigger:** FMP is the **6th** source, and `_cmd_classify` now hard-codes six
+near-identical fill passes. Per the retro action item, a 6th source is the trigger to consider the
+self-registering registry generalization (AC1-as-written). Ledgered as the natural next refactor — NOT
+done here (out of scope for "build the FMP source").
 
 ### LLM gap-fill added (2026-06-17, AC4 — final source)
 

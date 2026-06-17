@@ -423,6 +423,10 @@ def test_outranks_precedence_order():
     assert outranks("financedatabase", "yahoo_profile")
     assert outranks("sec_sic", "yahoo_profile")
     assert outranks("yahoo_profile", "llm")
+    assert outranks("sec_sic", "fmp")  # official outranks the paid vendor
+    assert outranks("fmp", "yahoo_profile")  # paid vendor outranks the free one
+    assert outranks("fmp", "llm")
+    assert not outranks("yahoo_profile", "fmp")  # free vendor never outranks the paid one
     assert not outranks("llm", "financedatabase")  # lower never outranks higher
     assert not outranks("financedatabase", "financedatabase")  # equal is not STRICTLY higher
     assert not outranks("financedatabase", "manual")  # unknown current is preserved
@@ -520,11 +524,11 @@ def test_read_classifiable_scope_lower_sources_by_precedence():
     conn = _CaptureConn()
     read_classifiable_identities(conn, source="sec_sic")
     _sql, params = conn.calls[-1]
-    assert set(params[0]) == {"yahoo_profile", "llm"}
+    assert set(params[0]) == {"fmp", "yahoo_profile", "llm"}
 
     conn2 = _CaptureConn()
     read_classifiable_identities(conn2, source="financedatabase")
-    assert set(conn2.calls[-1][1][0]) == {"b3", "sec_sic", "yahoo_profile", "llm"}
+    assert set(conn2.calls[-1][1][0]) == {"b3", "sec_sic", "fmp", "yahoo_profile", "llm"}
 
     conn3 = _CaptureConn()
     read_classifiable_identities(conn3, source="llm")

@@ -204,6 +204,7 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.classification.b3 import B3GicsSource
+    from sym.classification.fmp_profile import FmpProfileGicsSource
     from sym.classification.gics import (
         DEFAULT_COVERAGE_THRESHOLD,
         FinanceDatabaseGicsSource,
@@ -261,6 +262,25 @@ def _cmd_classify(args: argparse.Namespace) -> int:
                     sec_summary = apply_classifications(conn, sec_plans)
             except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
                 sec_error = f"{type(exc).__name__}: {exc}"
+
+            # FMP company-profile fill pass (multi-source) — KEYED: contributes only
+            # when $FMP_API_KEY is set, else it fails honestly (caught here) and the
+            # chain continues. Ranks above yahoo/llm (paid vendor), so its scope also
+            # covers names those lower sources hold (AC5 supersede). Fill/precedence
+            # via read_classifiable_identities; same in-`with` catch discipline.
+            fmp_error: str | None = None
+            fmp_summary = None
+            fmp_unclassified: list = []
+            fmp = FmpProfileGicsSource()
+            fmp_keyed = bool(os.environ.get("FMP_API_KEY"))
+            if fmp_keyed:
+                try:
+                    fmp_unclassified = read_classifiable_identities(conn, source="fmp")
+                    if fmp_unclassified:
+                        fmp_plans = plan_classifications(fmp_unclassified, fmp)
+                        fmp_summary = apply_classifications(conn, fmp_plans)
+                except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
+                    fmp_error = f"{type(exc).__name__}: {exc}"
 
             # Yahoo assetProfile fill pass (multi-source classification, AC #3):
             # sector-only classifications for actives still unclassified after the
@@ -368,6 +388,30 @@ def _cmd_classify(args: argparse.Namespace) -> int:
             print(f"  sec_sic lookup error: {ticker}: {msg}")
         for failure in sec_summary.failures:
             print(f"  sec_sic write failed: {failure}")
+    if not fmp_keyed:
+        print("fmp fill pass: skipped — no FMP_API_KEY (keyed source, dormant until set)")
+    elif fmp_error is not None:
+        print(f"fmp fill pass FAILED (earlier passes unaffected): {fmp_error}", file=sys.stderr)
+    elif fmp_summary is None:
+        print("fmp fill pass: nothing to fill (no classifiable actives) — FMP not queried")
+    else:
+        print(
+            f"fmp fill pass (keyed): {len(fmp_unclassified)} in-scope active; "
+            f"{fmp_summary.rows_inserted} inserted, {fmp_summary.rows_updated} upgraded, "
+            f"{fmp_summary.unchanged} unchanged, {fmp_summary.rows_closed} superseded, "
+            f"{fmp_summary.failed} failed; "
+            f"{len(fmp.last_unmapped_sector)} unmapped sector, "
+            f"{len(fmp.last_unmatched)} no-profile, "
+            f"{len(fmp.last_skipped_fund)} funds skipped, "
+            f"{len(fmp.last_unmapped_mic)} unmappable MIC, "
+            f"{len(fmp.last_errors)} fetch error(s)"
+        )
+        for symbol, sector in sorted(fmp.last_unmapped_sector.items()):
+            print(f"  unmapped FMP sector: {symbol}: {sector!r}")
+        for symbol, msg in sorted(fmp.last_errors.items()):
+            print(f"  fmp fetch error: {symbol}: {msg}")
+        for failure in fmp_summary.failures:
+            print(f"  fmp write failed: {failure}")
     if yf_error is not None:
         print(
             f"yahoo_profile fill pass FAILED (earlier passes unaffected): {yf_error}",
