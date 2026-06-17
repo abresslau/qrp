@@ -181,8 +181,11 @@ def run_fill_pass(conn: psycopg.Connection, spec: FillSpec) -> PassResult:
     """
     if spec.gate is not None and not spec.gate():
         return PassResult(spec.name, None, None, 0, True, skip_line=spec.skip_line)
-    source = spec.factory()
     try:
+        # Construct INSIDE the try: a source ctor that does I/O (LlmGicsSource loads its
+        # artifact) must fail as a per-pass error, never escape to roll back the shared
+        # transaction (the primary + earlier fills already wrote into this connection).
+        source = spec.factory()
         ids = read_classifiable_identities(conn, source=spec.name)
         if not ids:
             return PassResult(spec.name, None, None, 0, False)
@@ -194,14 +197,25 @@ def run_fill_pass(conn: psycopg.Connection, spec: FillSpec) -> PassResult:
         return PassResult(spec.name, None, f"{type(exc).__name__}: {exc}", 0, False)
 
 
-# Cross-check at import: every spec's name is a known fill source ranked strictly below
-# financedatabase, and the specs are in ascending precedence order. A mis-ordered or
-# unknown entry is a programming error, surfaced loudly rather than silently mis-running.
-_spec_names = [s.name for s in fill_specs(llm_enabled=True)]
-assert all(n in SOURCE_PRECEDENCE for n in _spec_names), "fill spec name not in SOURCE_PRECEDENCE"
-assert "financedatabase" not in _spec_names, "financedatabase is the primary, not a fill spec"
-_ranks = [SOURCE_PRECEDENCE[n] for n in _spec_names]
-assert _ranks == sorted(_ranks) and len(set(_ranks)) == len(_ranks), (
-    "fill specs out of precedence order"
-)
-assert set(_spec_names) | {"financedatabase"} == set(SOURCE_PRECEDENCE), "a source is unregistered"
+def validate_fill_specs(specs: list[FillSpec]) -> None:
+    """Fail-fast if the fill chain isn't a complete, strictly-ascending-precedence cover of
+    :data:`SOURCE_PRECEDENCE` minus the financedatabase primary.
+
+    A mis-ordered or unregistered source is a programming error — raised loudly (an explicit
+    ``raise``, NOT ``assert``, so it survives ``python -O``) rather than silently mis-running
+    the chain. Called at import below, and exercised directly by the registry tests.
+    """
+    names = [s.name for s in specs]
+    unknown = [n for n in names if n not in SOURCE_PRECEDENCE]
+    if unknown:
+        raise RuntimeError(f"fill spec name(s) not in SOURCE_PRECEDENCE: {unknown}")
+    if "financedatabase" in names:
+        raise RuntimeError("financedatabase is the primary anchor, not a fill spec")
+    ranks = [SOURCE_PRECEDENCE[n] for n in names]
+    if ranks != sorted(ranks) or len(set(ranks)) != len(ranks):
+        raise RuntimeError(f"fill specs out of precedence order: {names}")
+    if set(names) | {"financedatabase"} != set(SOURCE_PRECEDENCE):
+        raise RuntimeError(f"a known source is unregistered in the fill chain: {names}")
+
+
+validate_fill_specs(fill_specs(llm_enabled=True))

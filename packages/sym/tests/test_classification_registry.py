@@ -11,7 +11,7 @@ from sym.classification.gics import (
     GicsClassification,
     SecurityIdentity,
 )
-from sym.classification.registry import FillSpec, fill_specs, run_fill_pass
+from sym.classification.registry import FillSpec, fill_specs, run_fill_pass, validate_fill_specs
 
 
 def test_fill_specs_cover_every_source_in_precedence_order():
@@ -115,6 +115,40 @@ def test_run_fill_pass_isolates_a_source_error(monkeypatch):
     r = run_fill_pass(object(), spec)
     assert r.summary is None
     assert r.error is not None and "kaboom" in r.error
+
+
+def test_run_fill_pass_isolates_a_factory_error():
+    # a source whose CONSTRUCTOR raises (e.g. LlmGicsSource loading a broken artifact)
+    # must be caught per-pass, NOT escape and roll back the shared transaction.
+    def _boom_factory():
+        raise RuntimeError("bad artifact")
+
+    spec = FillSpec("llm", _boom_factory, render=lambda src, s, n: ["x"])
+    r = run_fill_pass(object(), spec)  # must not raise
+    assert r.summary is None
+    assert r.error is not None and "bad artifact" in r.error
+
+
+def test_validate_fill_specs_rejects_bad_chains():
+    good = fill_specs(llm_enabled=True)
+    validate_fill_specs(good)  # the shipped chain is valid
+
+    # unknown source name
+    with pytest.raises(RuntimeError, match="not in SOURCE_PRECEDENCE"):
+        validate_fill_specs([FillSpec("nope", object, render=lambda *a: [])])
+    # financedatabase is the anchor, never a fill spec
+    with pytest.raises(RuntimeError, match="primary anchor"):
+        validate_fill_specs([FillSpec("financedatabase", object, render=lambda *a: [])])
+    # out of precedence order (yahoo_profile rank 4 before sec_sic rank 2)
+    out_of_order = [
+        FillSpec("yahoo_profile", object, render=lambda *a: []),
+        FillSpec("sec_sic", object, render=lambda *a: []),
+    ]
+    with pytest.raises(RuntimeError, match="out of precedence order"):
+        validate_fill_specs(out_of_order)
+    # incomplete (a known source missing)
+    with pytest.raises(RuntimeError, match="unregistered"):
+        validate_fill_specs([FillSpec("b3", object, render=lambda *a: [])])
 
 
 def test_renderers_reproduce_source_attribution():

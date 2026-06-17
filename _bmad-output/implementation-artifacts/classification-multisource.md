@@ -377,9 +377,27 @@ the 6th source (FMP) made that six near-identical pass+report blocks, built the 
   (financedatabase, all-actives, re-asserts itself) stays the explicit anchor (`classify_universe`).
 
 AC1-as-written ("pluggable, ordered precedence, never importing a concrete class") is now met for the
-fill chain; adding the next source = one `FillSpec` entry. Behavior-preserving: live `sym classify`
-output is byte-identical (same per-pass counts, fmp-skip line, coverage 99.1%). 9 registry unit tests;
-730 tests green.
+fill chain; adding the next source = one `FillSpec` entry. Behavior-preserving for the POPULATED-pass
+output (the `_header` + render closures reproduce the old per-pass lines exactly; the live run's
+per-pass counts, fmp-skip line, and coverage 99.1% match) — with one corrected drift (code review 2026-06-17b):
+the EMPTY-scope line is now a uniform `"… — not queried"` instead of the five old source-specific
+suffixes (incl. llm's "artifact not applied"). Registry unit tests cover precedence/gating/run paths;
+732 tests green.
+
+### Review Findings — registry refactor (code review 2026-06-17b, 3-layer adversarial)
+
+decision-needed: none.
+
+patch (all applied 2026-06-17b):
+- [x] [Review][Patch] HIGH — `run_fill_pass` constructed `source = spec.factory()` OUTSIDE its try, so an `LlmGicsSource()` artifact-load failure escaped per-pass isolation → rolled back the whole committed run + crashed the CLI. **FIXED:** moved `spec.factory()` inside the try. Proven live — with the artifact moved away, `sym classify --llm` now prints "llm fill pass FAILED (earlier passes unaffected)" + the coverage line (earlier passes committed) + exit 0, no traceback. Test: `test_run_fill_pass_isolates_a_factory_error`.
+- [x] [Review][Patch] LOW-MED — import-time invariant checks were bare `assert`s (stripped under `python -O`). **FIXED:** extracted `validate_fill_specs()` that raises `RuntimeError` (survives `-O`), called at import. Test: `test_validate_fill_specs_rejects_bad_chains` (unknown name / primary-as-fill / out-of-order / incomplete).
+- [x] [Review][Patch] LOW — corrected the "byte-identical live output" claim (above) to "byte-identical for populated-pass output; the empty-scope line is now a uniform '— not queried'."
+
+defer (ledgered to deferred-work.md):
+- [x] [Review][Defer] No `_cmd_classify` loop-integration test — the registry units (`run_fill_pass`) + the live smoke cover behavior; a full CLI-loop/report-branch test needs a DB or heavy mock.
+- [x] [Review][Defer] No output-equivalence/snapshot regression test pinning the per-pass report lines (would have caught the wording drift above).
+
+dismissed (6): render runs pre-commit inside the try (a render exception would mis-report a committed pass as FAILED — but every `last_*` attribute the renders read is verified to exist and is covered by the renderer smoke test; render is pure formatting, a bug there is a tested programming error, not a runtime risk); `in_scope=0` on the error path (behavior-preserving — not printed); AC1 "self-registration" is a central `fill_specs()` list not decentralized + the financedatabase anchor is still imported concretely (both documented acceptable-deviations; the load-bearing properties — ordered precedence, no concrete-class import in the fill loop, fail-fast coverage check — hold); sec_sic `desc=None` renders as "(None)" (pre-existing, byte-for-byte preserved); registry imports all 5 sources + no circular import (correct — it's the composition layer, gics is the sink); llm-off-is-silent (correct, the Blind hunter withdrew it).
 
 ### Review Findings (code review 2026-06-17, 3-layer adversarial: Blind / Edge / Acceptance)
 
