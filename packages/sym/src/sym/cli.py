@@ -205,27 +205,20 @@ def _cmd_classify(args: argparse.Namespace) -> int:
 
     from sym.classification.gics import (
         DEFAULT_COVERAGE_THRESHOLD,
-        FinanceDatabaseGicsSource,
-        classify_universe,
         read_active_coverage,
     )
-    from sym.classification.registry import fill_specs, run_fill_pass
+    from sym.classification.registry import run_classification_chain
     from sym.config import load_dotenv
     from sym.db import connect
 
     load_dotenv()
-    source = FinanceDatabaseGicsSource()
 
     try:
         with connect() as conn:
-            summary = classify_universe(conn, source)
-            # Fill chain (b3 → sec_sic → fmp → yahoo_profile → llm) in precedence order
-            # via the registry. Each pass runs in its own try (a fill failure is caught
-            # and attributed, never rolling back or masking the others); all share THIS
-            # one transaction, committed when the `with` block exits cleanly. The whole
-            # chain is fill/supersede-only — the primary financedatabase pass above is the
-            # only all-actives source.
-            results = [run_fill_pass(conn, spec) for spec in fill_specs(llm_enabled=args.llm)]
+            # The full chain (financedatabase primary + the precedence-ordered fill specs)
+            # via the single shared orchestrator — identical to the unattended EOD `classify`
+            # step. Each fill pass is error-isolated inside this one committed transaction.
+            summary, results = run_classification_chain(conn, llm_enabled=args.llm)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1

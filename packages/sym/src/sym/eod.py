@@ -6,11 +6,13 @@ scheduler either calls each ``sym <step>`` as its own task (fine-grained retries
 or runs ``sym eod`` (one cron line). Each step is error-isolated and reports a
 short status; the run fails (non-zero exit) only if a *critical* step fails.
 
-Tiered cadence: the daily core is monitor → fill → map → benchmarks → fx →
-recompute → validate; ``fundamentals`` (weekly) and ``snapshot-calendar``
+Tiered cadence: the daily core is monitor → fill → map → classify → benchmarks →
+fx → recompute → validate; ``fundamentals`` (weekly) and ``snapshot-calendar``
 (occasional) run on their own schedules and are not in the daily default.
 (``map`` keeps the equity → ``instrument``/``sym_id`` bridge current so
-cross-asset joins never drop a new security.)
+cross-asset joins never drop a new security; ``classify`` runs right after ``map``
+so a newly-joined member gets its GICS sector before ``validate`` checks
+member-completeness — and before the next morning's heatmap.)
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("monitor", "Discover index-universe membership changes", critical=False),
     EodStep("fill", "Incremental EOD price fill (since each cursor)", critical=True),
     EodStep("map", "Map new securities to instrument identity (sym_id bridge)", critical=False),
+    EodStep("classify", "GICS classification (financedatabase + fill chain)", critical=False),
     EodStep("benchmarks", "Refresh benchmark index levels + returns", critical=False),
     EodStep("fx", "Daily FX rate fill (Frankfurter)", critical=False),
     EodStep("recompute", "Materialize fact_returns (PR + TR)", critical=True),
@@ -171,6 +174,28 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
             b = backfill_equity_instruments(conn)
             return f"mapped new={b.created} existing={b.existed}"
+        if key == "classify":
+            from sym.classification.gics import read_active_coverage
+            from sym.classification.registry import run_classification_chain
+
+            # Unattended → llm_enabled=False (the opt-in, low-trust LLM pass never runs here).
+            primary, results = run_classification_chain(conn, llm_enabled=False)
+            classified, total = read_active_coverage(conn)
+            touched = sum(
+                r.summary.rows_inserted + r.summary.rows_updated + r.summary.rows_closed
+                for r in results
+                if r.summary is not None
+            )
+            errored = [r.name for r in results if r.error is not None]
+            detail = (
+                f"coverage {classified}/{total}; primary +{primary.rows_inserted} "
+                f"~{primary.rows_updated}; fills touched {touched}"
+            )
+            if errored:
+                # A source hiccup (network) is non-fatal — classify is non-critical — but
+                # surface it in the step detail rather than swallowing it.
+                detail += f"; source errors: {', '.join(errored)}"
+            return detail
         if key == "benchmarks":
             from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels
             from sym.benchmarks.links import link_universe_benchmarks
