@@ -384,6 +384,30 @@ the EMPTY-scope line is now a uniform `"… — not queried"` instead of the fiv
 suffixes (incl. llm's "artifact not applied"). Registry unit tests cover precedence/gating/run paths;
 732 tests green.
 
+### AC6 cadence hook built (2026-06-17b — classification now runs in the daily EOD)
+
+AC6's "hooks into the daily maintenance alongside the universe monitor" was the last unbuilt
+half (the `sym classify` command existed; the cadence didn't). Wired it:
+
+- **`sym/eod.py`** — added `classify` to `DAILY_STEPS` (non-critical), positioned right after
+  `map` (new securities resolved) and before `validate` (so the integrity gate sees the fresh
+  classifications + closes the `universe_member_completeness` GICS check). The step dispatch runs
+  the shared chain and reports a status line (coverage X/Y; primary +inserted ~upgraded; fills
+  touched; + any source errors). Unattended → `llm_enabled=False` (the opt-in LLM pass never runs
+  in the nightly).
+- **`registry.py`** — `run_classification_chain(conn, *, llm_enabled=False)` is the SINGLE
+  orchestrator (primary `classify_universe` + the precedence-ordered fill loop), now used by BOTH
+  `sym classify` (CLI) and the EOD `classify` step — so an unattended run and a manual run are
+  byte-identical. `_cmd_classify` was DRY'd onto it.
+- **Scheduling** — no new schedule needed: the existing `lineage/schedules.py:sym_eod_daily`
+  (`cron 30 18 * * 1-5`, `execution_timezone="America/New_York"` — already satisfies the
+  schedule-timezone rule) shells out to `sym eod`, so `classify` rides the nightly automatically.
+  Manual: `uv run sym eod --steps classify`.
+
+Verified live: `sym eod --steps classify` → `[ ok ] classify: coverage 2168/2187; primary +0 ~0;
+fills touched 0`, overall OK; `sym eod --dry-run` lists `classify` after `map`. AC6 fully met. 733
+tests green (eod step-order test updated; `run_classification_chain` test added).
+
 ### Review Findings — registry refactor (code review 2026-06-17b, 3-layer adversarial)
 
 decision-needed: none.
@@ -411,7 +435,7 @@ patch (all applied 2026-06-17):
 
 defer (ledgered to deferred-work.md):
 - [x] [Review][Defer→BUILT 2026-06-17] AC5 precedence-upgrade-closes-lower — was first-writer-wins; **now built** (see "AC5 precedence-upgrade built" below). AC5 is now fully met.
-- [x] [Review][Defer] AC6 cadence/daily-maintenance hook not wired — `sym classify` is whole-universe + idempotent but not scheduled (no Dagster schedule/monitor hook; must set `execution_timezone` when built).
+- [x] [Review][Defer→BUILT 2026-06-17b] AC6 cadence/daily-maintenance hook — **now wired** (see "AC6 cadence hook built" below). AC6 is now fully met.
 - [x] [Review][Defer] Yahoo has no circuit-breaker on a 401-storm / total outage — degrades per-symbol (`last_errors`) but walks all N residual at ~1.2s each instead of failing fast.
 - [x] [Review][Defer] SEC `company_tickers.json` "first listing wins" CIK dedup assumes no duplicate tickers across CIKs — can mis-attribute after a ticker reassignment (delisted filer + new filer share a ticker).
 

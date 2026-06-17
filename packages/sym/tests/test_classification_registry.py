@@ -174,3 +174,25 @@ def test_every_fill_spec_has_a_renderer(name):
     spec = next(s for s in fill_specs(llm_enabled=True) if s.name == name)
     assert callable(spec.render)
     assert callable(spec.factory)
+
+
+def test_run_classification_chain_runs_primary_then_fills(monkeypatch):
+    # The shared orchestrator behind the CLI and the EOD step: primary first, then each
+    # fill spec. Stub the gics functions so it's DB-free + deterministic.
+    calls: list[str] = []
+    monkeypatch.setattr(
+        reg, "classify_universe", lambda conn, source: calls.append("primary") or _summary()
+    )
+    monkeypatch.setattr(reg, "read_classifiable_identities", lambda conn, source: [])
+    primary, results = reg.run_classification_chain(object(), llm_enabled=False)
+    assert calls == ["primary"]  # primary ran first
+    # one PassResult per fill spec (llm excluded because llm_enabled=False gates it off)
+    fill_names = [s.name for s in fill_specs(llm_enabled=False)]
+    assert [r.name for r in results] == fill_names
+    assert "llm" in fill_names  # the spec is present...
+    llm_result = next(r for r in results if r.name == "llm")
+    assert llm_result.skipped  # ...but gated off → skipped
+
+
+def _summary():
+    return ClassificationSummary(rows_inserted=0)

@@ -26,7 +26,9 @@ from sym.classification.fmp_profile import FmpProfileGicsSource
 from sym.classification.gics import (
     SOURCE_PRECEDENCE,
     ClassificationSummary,
+    FinanceDatabaseGicsSource,
     apply_classifications,
+    classify_universe,
     plan_classifications,
     read_classifiable_identities,
 )
@@ -195,6 +197,22 @@ def run_fill_pass(conn: psycopg.Connection, spec: FillSpec) -> PassResult:
         )
     except Exception as exc:  # noqa: BLE001 — a fill failure must not mask/destroy earlier passes
         return PassResult(spec.name, None, f"{type(exc).__name__}: {exc}", 0, False)
+
+
+def run_classification_chain(
+    conn: psycopg.Connection, *, llm_enabled: bool = False
+) -> tuple[ClassificationSummary, list[PassResult]]:
+    """Run the whole chain over one connection and return ``(primary_summary, results)``.
+
+    The financedatabase primary (all-actives, re-asserts itself) runs first, then each fill
+    spec in precedence order. This is the SINGLE orchestrator behind both the ``sym classify``
+    CLI and the EOD ``classify`` maintenance step, so an unattended daily run and a manual run
+    are identical. ``llm_enabled`` defaults False — the opt-in, low-trust LLM pass never runs
+    unattended.
+    """
+    primary = classify_universe(conn, FinanceDatabaseGicsSource())
+    results = [run_fill_pass(conn, spec) for spec in fill_specs(llm_enabled=llm_enabled)]
+    return primary, results
 
 
 def validate_fill_specs(specs: list[FillSpec]) -> None:

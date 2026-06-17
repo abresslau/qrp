@@ -1,7 +1,7 @@
 """A daily schedule for sym's end-of-day pipeline — Dagster as a *trigger + observer only*.
 
 Deliberately minimal: Dagster does NOT model the EOD steps as a workflow. ``sym`` already owns the
-daily sequence (monitor → fill → map → benchmarks → fx → recompute → validate); this fires the
+daily sequence (monitor → fill → map → classify → benchmarks → fx → recompute → validate); this fires the
 **exact same** `sym eod` CLI an operator runs by hand, then retains the run log and auto-retries
 transient failures. There is no Dagster op-graph, asset-job, or sensor here — one op, one job,
 one schedule.
