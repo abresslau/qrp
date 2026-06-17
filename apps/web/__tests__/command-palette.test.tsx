@@ -221,4 +221,71 @@ describe("CommandPalette (QH.7 / AC2)", () => {
     await Promise.resolve();
     expect(reg.macroLoad).toHaveBeenCalledTimes(2);
   });
+
+  // ---- console hardening (a11y + run-session token) ----
+
+  it("locks body scroll while open and restores the prior value on close (a11y)", () => {
+    document.body.style.overflow = "scroll"; // a pre-existing value to restore
+    render(<CommandPalette modules={MODULES} />);
+    openPalette();
+    expect(document.body.style.overflow).toBe("hidden");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.body.style.overflow).toBe("scroll");
+    document.body.style.overflow = "";
+  });
+
+  it("restores focus to the previously-focused element on close (a11y)", () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+    render(<CommandPalette modules={MODULES} />);
+    openPalette();
+    expect(document.activeElement).not.toBe(trigger); // focus moved into the palette
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.activeElement).toBe(trigger); // focus returned, not orphaned to <body>
+    trigger.remove();
+  });
+
+  it("traps Tab/Shift+Tab focus within the dialog (a11y)", () => {
+    render(<CommandPalette modules={MODULES} />);
+    openPalette();
+    const dialog = screen.getByRole("dialog");
+    const input = screen.getByPlaceholderText(/Jump to a module/) as HTMLElement;
+    const buttons = dialog.querySelectorAll("button");
+    const last = buttons[buttons.length - 1] as HTMLElement;
+
+    input.focus(); // first focusable
+    fireEvent.keyDown(dialog, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(last); // Shift+Tab at the top wraps to the bottom
+
+    last.focus();
+    fireEvent.keyDown(dialog, { key: "Tab" });
+    expect(document.activeElement).toBe(input); // Tab at the bottom wraps to the top
+  });
+
+  it("does NOT navigate if a read-only op resolves after the palette was closed AND reopened (run-session token)", async () => {
+    let resolveRun: (r: unknown) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/operate/ops"))
+          return Promise.resolve({ ok: true, json: () => Promise.resolve([op({ key: "map", label: "Map", writes: false })]) });
+        if (url.includes("/operate/run")) return new Promise((res) => { resolveRun = res; }); // pending
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }),
+    );
+    render(<CommandPalette modules={MODULES} />);
+    openPalette();
+    await userEvent.click(await screen.findByText("Run: Map")); // session A starts /run (pending)
+    fireEvent.keyDown(window, { key: "Escape" }); // close session A
+    openPalette(); // reopen — session B (a fresh open-episode)
+    resolveRun({ ok: true, json: () => Promise.resolve({ ok: true, job_id: 1 }) }); // A's run finally resolves
+    await Promise.resolve();
+    await Promise.resolve();
+    // The bare openRef check would have navigated (palette IS open) — yanking the user out of
+    // session B. The run-session token recognizes A as stale and leaves session B untouched.
+    expect(nav.push).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 });

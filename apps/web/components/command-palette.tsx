@@ -30,6 +30,8 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
   const [asyncScreens, setAsyncScreens] = useState<Record<string, ReadonlyArray<{ href: string; label: string }>>>({});
   const [msg, setMsg] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const activeItemRef = useRef<HTMLButtonElement>(null);
   const opsLoadedRef = useRef(false); // ops list: latched once loaded
   const subLoadedRef = useRef<Set<string>>(new Set()); // async submenus: latched per source ON SUCCESS
   // QH.8: mirror of `open` for async resolutions to read — a fetch settling after the palette
@@ -37,6 +39,15 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
   const openRef = useRef(open);
   useEffect(() => {
     openRef.current = open;
+  }, [open]);
+
+  // Run-session token: bumped on every OPEN, so a read-only op launched in one open-episode that
+  // resolves AFTER the user closed AND reopened the palette is recognized as stale and ignored —
+  // the bare `openRef` check (open right now?) can't tell a reopen from "still the same session"
+  // and would yank the user out of their NEW session into Operate.
+  const genRef = useRef(0);
+  useEffect(() => {
+    if (open) genRef.current += 1;
   }, [open]);
 
   // Global open/close shortcut. ⌘K/Ctrl+K toggles from anywhere (captured even inside inputs —
@@ -90,9 +101,19 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
     }
   }, [open, modules]);
 
-  // Focus the search field when the palette opens.
+  // Open-session a11y: focus the search field, lock body scroll (so the page doesn't scroll
+  // behind the backdrop), and on close RESTORE focus to whatever was focused before we opened
+  // (otherwise focus is orphaned to <body> — a keyboard/screen-reader user loses their place).
   useEffect(() => {
-    if (open) inputRef.current?.focus();
+    if (!open) return;
+    const prevFocused = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    inputRef.current?.focus();
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      prevFocused?.focus?.();
+    };
   }, [open]);
 
   const entries = useMemo<Entry[]>(() => {
@@ -127,6 +148,15 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
 
   const selSafe = filtered.length ? Math.min(sel, filtered.length - 1) : 0;
 
+  // Keep the highlighted row visible when ↑/↓ moves the selection past the max-h-80 fold.
+  useEffect(() => {
+    try {
+      activeItemRef.current?.scrollIntoView({ block: "nearest" });
+    } catch {
+      // scrollIntoView is unimplemented under jsdom (tests) — a no-op there is fine.
+    }
+  }, [selSafe]);
+
   const act = useCallback(
     (entry?: Entry) => {
       if (!entry) return;
@@ -148,6 +178,10 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
         return;
       }
       setMsg(`Starting ${op.label}…`);
+      const runGen = genRef.current; // the session this run belongs to
+      // Stale-resolution guard: act only if the palette is STILL open AND still the same
+      // open-episode that launched the run (not closed, not closed-then-reopened).
+      const live = () => openRef.current && genRef.current === runGen;
       fetch("/api/operate/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -157,9 +191,7 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
           // O.4 envelope: {error:{message}} on failure, RunResult {ok,job_id,reason} on success.
           const res: { ok?: boolean; job_id?: number; reason?: string; error?: { message?: string } } =
             await r.json().catch(() => ({}));
-          // QH.8: if the user closed the palette while the run was in flight, do not navigate or
-          // surface a message on the dismissed palette — the op still ran server-side.
-          if (!openRef.current) return;
+          if (!live()) return;
           if (r.ok && res.ok) {
             setOpen(false);
             router.push("/sym/operate");
@@ -168,7 +200,7 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
           }
         })
         .catch(() => {
-          if (openRef.current) setMsg("Run failed — open Operate to retry");
+          if (live()) setMsg("Run failed — open Operate to retry");
         });
     },
     [router],
@@ -183,8 +215,28 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
       role="presentation"
     >
       <div
+        ref={dialogRef}
         className="w-full max-w-xl overflow-hidden rounded-xl border border-border bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Focus trap: keep Tab / Shift+Tab cycling within the dialog so focus never lands on
+          // the page behind the modal backdrop. (Esc/Arrows/Enter are handled elsewhere.)
+          if (e.key !== "Tab") return;
+          const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
+            'input, button, [href], [tabindex]:not([tabindex="-1"])',
+          );
+          if (!focusables || focusables.length === 0) return;
+          const first = focusables[0];
+          const last = focusables[focusables.length - 1];
+          const activeEl = document.activeElement;
+          if (e.shiftKey && activeEl === first) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && activeEl === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
@@ -229,6 +281,7 @@ export function CommandPalette({ modules }: { modules: Module[] }) {
                 )}
                 <button
                   type="button"
+                  ref={active ? activeItemRef : null}
                   onMouseEnter={() => setSel(i)}
                   onClick={() => act(e)}
                   className={[
