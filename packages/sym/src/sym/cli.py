@@ -203,20 +203,13 @@ def _cmd_delist(args: argparse.Namespace) -> int:
 def _cmd_classify(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.classification.b3 import B3GicsSource
-    from sym.classification.fmp_profile import FmpProfileGicsSource
     from sym.classification.gics import (
         DEFAULT_COVERAGE_THRESHOLD,
         FinanceDatabaseGicsSource,
-        apply_classifications,
         classify_universe,
-        plan_classifications,
         read_active_coverage,
-        read_classifiable_identities,
     )
-    from sym.classification.llm import LlmGicsSource
-    from sym.classification.sec_sic import SecSicGicsSource
-    from sym.classification.yahoo_profile import YahooProfileGicsSource
+    from sym.classification.registry import fill_specs, run_fill_pass
     from sym.config import load_dotenv
     from sym.db import connect
 
@@ -226,98 +219,13 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     try:
         with connect() as conn:
             summary = classify_universe(conn, source)
-            # B3 fill pass (Story QH.1): sector-only classifications for actives the
-            # primary source left unclassified. Fill-only by construction — it sees
-            # only unclassified identities, so it can never overwrite financedatabase.
-            b3_error: str | None = None
-            b3_summary = None
-            unclassified: list = []
-            b3 = B3GicsSource()
-            try:
-                # EVERYTHING fill-pass lives inside this catch: the connection is
-                # non-autocommit, so an exception escaping to the `with connect()`
-                # boundary would roll back the ENTIRE primary pass (its per-figi
-                # transactions are savepoints of the one outer transaction).
-                unclassified = read_classifiable_identities(conn, source="b3")
-                if unclassified:
-                    b3_plans = plan_classifications(unclassified, b3)
-                    b3_summary = apply_classifications(conn, b3_plans)
-            except Exception as exc:  # noqa: BLE001 — any fill failure must not mask/destroy the primary pass
-                b3_error = f"{type(exc).__name__}: {exc}"
-
-            # SEC SIC→GICS fill pass (multi-source classification): sector-only
-            # classifications for US-listed actives still unclassified after
-            # financedatabase + b3 — the non-Brazil GICS gap (e.g. HON). Fill-only
-            # by construction (sees only the still-unclassified identities), so it
-            # can never overwrite financedatabase or b3. Same in-`with` catch
-            # discipline as b3: a SEC outage must not roll back the earlier passes.
-            sec_error: str | None = None
-            sec_summary = None
-            sec_unclassified: list = []
-            sec = SecSicGicsSource()
-            try:
-                sec_unclassified = read_classifiable_identities(conn, source="sec_sic")
-                if sec_unclassified:
-                    sec_plans = plan_classifications(sec_unclassified, sec)
-                    sec_summary = apply_classifications(conn, sec_plans)
-            except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
-                sec_error = f"{type(exc).__name__}: {exc}"
-
-            # FMP company-profile fill pass (multi-source) — KEYED: contributes only
-            # when $FMP_API_KEY is set, else it fails honestly (caught here) and the
-            # chain continues. Ranks above yahoo/llm (paid vendor), so its scope also
-            # covers names those lower sources hold (AC5 supersede). Fill/precedence
-            # via read_classifiable_identities; same in-`with` catch discipline.
-            fmp_error: str | None = None
-            fmp_summary = None
-            fmp_unclassified: list = []
-            fmp = FmpProfileGicsSource()
-            fmp_keyed = bool(os.environ.get("FMP_API_KEY"))
-            if fmp_keyed:
-                try:
-                    fmp_unclassified = read_classifiable_identities(conn, source="fmp")
-                    if fmp_unclassified:
-                        fmp_plans = plan_classifications(fmp_unclassified, fmp)
-                        fmp_summary = apply_classifications(conn, fmp_plans)
-                except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
-                    fmp_error = f"{type(exc).__name__}: {exc}"
-
-            # Yahoo assetProfile fill pass (multi-source classification, AC #3):
-            # sector-only classifications for actives still unclassified after the
-            # US-only SEC pass — overwhelmingly NON-US (LSE/European) names. Crumb-
-            # gated, so the live client establishes a cookie+crumb session lazily.
-            # Fill-only by construction; same in-`with` catch discipline (a Yahoo
-            # crumb outage must not roll back the earlier passes).
-            yf_error: str | None = None
-            yf_summary = None
-            yf_unclassified: list = []
-            yf = YahooProfileGicsSource()
-            try:
-                yf_unclassified = read_classifiable_identities(conn, source="yahoo_profile")
-                if yf_unclassified:
-                    yf_plans = plan_classifications(yf_unclassified, yf)
-                    yf_summary = apply_classifications(conn, yf_plans)
-            except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
-                yf_error = f"{type(exc).__name__}: {exc}"
-
-            # LLM gap-fill pass (multi-source, AC #4) — OPT-IN (`--llm`), last in
-            # precedence, lowest trust. Sector-only from the reviewed
-            # llm_classifications.json artifact (source='llm'). Fill-only; same
-            # in-`with` catch discipline. OFF by default — never runs unless asked.
-            llm_error: str | None = None
-            llm_summary = None
-            llm_unclassified: list = []
-            llm = None
-            if args.llm:
-                try:
-                    llm = LlmGicsSource()
-                    llm_unclassified = read_classifiable_identities(conn, source="llm")
-                    if llm_unclassified:
-                        llm_plans = plan_classifications(llm_unclassified, llm)
-                        llm_summary = apply_classifications(conn, llm_plans)
-                except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
-                    llm_error = f"{type(exc).__name__}: {exc}"
-
+            # Fill chain (b3 → sec_sic → fmp → yahoo_profile → llm) in precedence order
+            # via the registry. Each pass runs in its own try (a fill failure is caught
+            # and attributed, never rolling back or masking the others); all share THIS
+            # one transaction, committed when the `with` block exits cleanly. The whole
+            # chain is fill/supersede-only — the primary financedatabase pass above is the
+            # only all-actives source.
+            results = [run_fill_pass(conn, spec) for spec in fill_specs(llm_enabled=args.llm)]
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -345,115 +253,20 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         f"{summary.rows_closed} closed, {summary.unchanged} unchanged, "
         f"{summary.failed} failed"
     )
-    if b3_error is not None:
-        print(f"b3 fill pass FAILED (primary pass unaffected): {b3_error}", file=sys.stderr)
-    elif b3_summary is None:
-        print("b3 fill pass: nothing to fill (no classifiable actives) — B3 not queried")
-    else:
-        print(
-            f"b3 fill pass: {len(unclassified)} in-scope active; "
-            f"{b3_summary.rows_inserted} inserted, {b3_summary.rows_updated} upgraded, "
-            f"{b3_summary.unchanged} unchanged, {b3_summary.rows_closed} superseded, "
-            f"{b3_summary.failed} failed; "
-            f"{len(set(b3.last_unmapped.values()))} unmapped segments "
-            f"({len(b3.last_unmapped)} tickers), {len(b3.last_conflicts)} view conflicts, "
-            f"{len(b3.last_unmatched)} in-scope unfilled"
-        )
-        for ticker, segment in sorted(b3.last_unmapped.items()):
-            print(f"  unmapped B3 segment: {ticker}: {segment!r}")
-        for ticker, (seg_a, seg_b) in sorted(b3.last_conflicts.items()):
-            print(f"  B3 view conflict (skipped): {ticker}: {seg_a!r} vs {seg_b!r}")
-        if b3.last_unmatched:
-            print(f"  no B3 classification for: {', '.join(b3.last_unmatched)}")
-        for failure in b3_summary.failures:
-            print(f"  b3 write failed: {failure}")
-    if sec_error is not None:
-        print(f"sec_sic fill pass FAILED (earlier passes unaffected): {sec_error}", file=sys.stderr)
-    elif sec_summary is None:
-        print("sec_sic fill pass: nothing to fill (no classifiable actives) — SEC not queried")
-    else:
-        print(
-            f"sec_sic fill pass: {len(sec_unclassified)} in-scope active; "
-            f"{sec_summary.rows_inserted} inserted, {sec_summary.rows_updated} upgraded, "
-            f"{sec_summary.unchanged} unchanged, {sec_summary.rows_closed} superseded, "
-            f"{sec_summary.failed} failed; "
-            f"{len(sec.last_unmapped_sic)} unmapped SIC, "
-            f"{len(sec.last_unmatched)} no-CIK/no-SIC, "
-            f"{len(sec.last_skipped_non_us)} non-US skipped, "
-            f"{len(sec.last_errors)} lookup error(s)"
-        )
-        for ticker, (sic, desc) in sorted(sec.last_unmapped_sic.items()):
-            print(f"  unmapped SIC: {ticker}: {sic} ({desc})")
-        for ticker, msg in sorted(sec.last_errors.items()):
-            print(f"  sec_sic lookup error: {ticker}: {msg}")
-        for failure in sec_summary.failures:
-            print(f"  sec_sic write failed: {failure}")
-    if not fmp_keyed:
-        print("fmp fill pass: skipped — no FMP_API_KEY (keyed source, dormant until set)")
-    elif fmp_error is not None:
-        print(f"fmp fill pass FAILED (earlier passes unaffected): {fmp_error}", file=sys.stderr)
-    elif fmp_summary is None:
-        print("fmp fill pass: nothing to fill (no classifiable actives) — FMP not queried")
-    else:
-        print(
-            f"fmp fill pass (keyed): {len(fmp_unclassified)} in-scope active; "
-            f"{fmp_summary.rows_inserted} inserted, {fmp_summary.rows_updated} upgraded, "
-            f"{fmp_summary.unchanged} unchanged, {fmp_summary.rows_closed} superseded, "
-            f"{fmp_summary.failed} failed; "
-            f"{len(fmp.last_unmapped_sector)} unmapped sector, "
-            f"{len(fmp.last_unmatched)} no-profile, "
-            f"{len(fmp.last_skipped_fund)} funds skipped, "
-            f"{len(fmp.last_unmapped_mic)} unmappable MIC, "
-            f"{len(fmp.last_errors)} fetch error(s)"
-        )
-        for symbol, sector in sorted(fmp.last_unmapped_sector.items()):
-            print(f"  unmapped FMP sector: {symbol}: {sector!r}")
-        for symbol, msg in sorted(fmp.last_errors.items()):
-            print(f"  fmp fetch error: {symbol}: {msg}")
-        for failure in fmp_summary.failures:
-            print(f"  fmp write failed: {failure}")
-    if yf_error is not None:
-        print(
-            f"yahoo_profile fill pass FAILED (earlier passes unaffected): {yf_error}",
-            file=sys.stderr,
-        )
-    elif yf_summary is None:
-        print(
-            "yahoo_profile fill pass: nothing to fill (no classifiable actives) — Yahoo not queried"
-        )
-    else:
-        print(
-            f"yahoo_profile fill pass: {len(yf_unclassified)} in-scope active; "
-            f"{yf_summary.rows_inserted} inserted, {yf_summary.rows_updated} upgraded, "
-            f"{yf_summary.unchanged} unchanged, {yf_summary.rows_closed} superseded, "
-            f"{yf_summary.failed} failed; "
-            f"{len(yf.last_unmapped_sector)} unmapped sector, "
-            f"{len(yf.last_unmatched)} no-profile, "
-            f"{len(yf.last_unmapped_mic)} unmappable MIC, "
-            f"{len(yf.last_errors)} fetch error(s)"
-        )
-        for symbol, sector in sorted(yf.last_unmapped_sector.items()):
-            print(f"  unmapped Yahoo sector: {symbol}: {sector!r}")
-        for symbol, msg in sorted(yf.last_errors.items()):
-            print(f"  yahoo_profile fetch error: {symbol}: {msg}")
-        for failure in yf_summary.failures:
-            print(f"  yahoo_profile write failed: {failure}")
-    if args.llm:
-        if llm_error is not None:
-            print(f"llm fill pass FAILED (earlier passes unaffected): {llm_error}", file=sys.stderr)
-        elif llm_summary is None:
-            print("llm fill pass: nothing to fill (no classifiable actives) — artifact not applied")
-        else:
+    for r in results:
+        if r.skipped:
+            if r.skip_line:
+                print(r.skip_line)
+        elif r.error is not None:
             print(
-                f"llm fill pass (opt-in, low-trust): {len(llm_unclassified)} in-scope active; "
-                f"{llm_summary.rows_inserted} inserted, {llm_summary.rows_updated} upgraded, "
-                f"{llm_summary.unchanged} unchanged, {llm_summary.rows_closed} superseded, "
-                f"{llm_summary.failed} failed; "
-                f"{len(llm.last_unmatched) if llm else 0} unmatched (funds/uncovered), "
-                f"{len(llm.last_mic_mismatch) if llm else 0} MIC mismatch"
+                f"{r.name} fill pass FAILED (earlier passes unaffected): {r.error}",
+                file=sys.stderr,
             )
-            for failure in llm_summary.failures:
-                print(f"  llm write failed: {failure}")
+        elif r.summary is None:
+            print(f"{r.name} fill pass: nothing to fill (no classifiable actives) — not queried")
+        else:
+            for line in r.lines:
+                print(line)
     if total_active is None or total_classified is None:
         # Writes committed; we just couldn't measure coverage — report and don't
         # gate (returning 2 here would falsely signal a failed classification run).

@@ -1,16 +1,13 @@
 
 ## Deferred from: FMP classification source (2026-06-17)
 
-- **AC1 self-registering classifier registry — now TRIGGERED (6th source landed):** the FMP source
-  makes six near-identical fill passes hard-coded in `_cmd_classify` (each: error/summary vars + source
-  instance + try/`read_classifiable_identities`/`plan_classifications`/`apply_classifications`/except +
-  a ~12-line report block). The classification code review's AC1 finding (literal "pluggable registry,
-  selected by ordered precedence, never importing a concrete class") was accepted-as-deviation at 5
-  sources; at 6 the boilerplate is the duplication a registry would remove. Generalise: a registry of
-  `(name, rank, factory, opts)` driven off `SOURCE_PRECEDENCE`, looped over with a uniform pass+report
-  (primary financedatabase = all-actives; fill sources = `read_classifiable_identities(source)`; keyed
-  sources gated; opt-in sources flag-gated). Was the retro's conditional action item #5; the condition
-  is now met. NOT done with the FMP build (out of scope for "build the source").
+- **~~AC1 self-registering classifier registry — TRIGGERED (6th source)~~ — ✅ DONE (2026-06-17):**
+  built `sym/classification/registry.py` (`FillSpec` + `fill_specs(llm_enabled)` precedence-ordered +
+  `run_fill_pass`; per-source `render` closures; import-time order/coverage assertion vs
+  `SOURCE_PRECEDENCE`). `_cmd_classify`'s five pass+report blocks collapse to one
+  `run_fill_pass`-over-`fill_specs` loop + a uniform report loop; the CLI no longer imports any
+  fill-source class (the primary financedatabase stays the explicit anchor). Behavior-preserving
+  (byte-identical live output). AC1-as-written is now met for the fill chain. 9 registry tests; 730 green.
 - **FMP international symbol format unverified:** `fmp_symbol_for_identity` reuses `YAHOO_SUFFIX`
   (`.L`/`.PA`/…) since no `FMP_API_KEY` was available to probe FMP's exact non-US symbol scheme. US
   (bare ticker, FMP's strongest coverage) is exact; non-US is a best-guess and should be spot-checked

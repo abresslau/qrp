@@ -360,6 +360,27 @@ source can actually supersede them). 8 new unit tests: `outranks` ladder, supers
 same-sector provenance-upgrade-in-place, lower-never-overwrites-higher, unknown-source-preserved,
 end-to-end cross-source supersede, and the scope-query's lower-source param set. 685 tests green.
 
+### AC1 registry generalization built (2026-06-17 — closes the last partial)
+
+The code review flagged AC1 as partial: `_cmd_classify` hard-coded each concrete source. After
+the 6th source (FMP) made that six near-identical pass+report blocks, built the registry:
+
+- **`sym/classification/registry.py`** — owns the concrete fill sources. `FillSpec(name, factory,
+  render, gate, skip_line)` per source; `fill_specs(*, llm_enabled)` returns the chain in precedence
+  order (b3 → sec_sic → fmp → yahoo_profile → llm); `run_fill_pass(conn, spec)` runs one uniformly
+  (gate → `read_classifiable_identities(source)` → plan → apply → render). An import-time assertion
+  cross-checks the spec set + order against `SOURCE_PRECEDENCE` (an unregistered/mis-ordered source
+  fails loudly). Per-source rendering moved here as `render` closures (faithful to the old output).
+- **`_cmd_classify`** — the five hand-written pass blocks + five report blocks collapse to
+  `results = [run_fill_pass(conn, spec) for spec in fill_specs(llm_enabled=args.llm)]` + one uniform
+  report loop. The CLI **no longer imports any fill-source class** — only the registry. The primary
+  (financedatabase, all-actives, re-asserts itself) stays the explicit anchor (`classify_universe`).
+
+AC1-as-written ("pluggable, ordered precedence, never importing a concrete class") is now met for the
+fill chain; adding the next source = one `FillSpec` entry. Behavior-preserving: live `sym classify`
+output is byte-identical (same per-pass counts, fmp-skip line, coverage 99.1%). 9 registry unit tests;
+730 tests green.
+
 ### Review Findings (code review 2026-06-17, 3-layer adversarial: Blind / Edge / Acceptance)
 
 decision-needed: none.
