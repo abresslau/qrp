@@ -200,7 +200,7 @@ def _cmd_delist(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_classify(_args: argparse.Namespace) -> int:
+def _cmd_classify(args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.classification.b3 import B3GicsSource
@@ -213,6 +213,7 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
         read_active_coverage,
         read_unclassified_identities,
     )
+    from sym.classification.llm import LlmGicsSource
     from sym.classification.sec_sic import SecSicGicsSource
     from sym.classification.yahoo_profile import YahooProfileGicsSource
     from sym.config import load_dotenv
@@ -278,6 +279,24 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
                     yf_summary = apply_classifications(conn, yf_plans)
             except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
                 yf_error = f"{type(exc).__name__}: {exc}"
+
+            # LLM gap-fill pass (multi-source, AC #4) — OPT-IN (`--llm`), last in
+            # precedence, lowest trust. Sector-only from the reviewed
+            # llm_classifications.json artifact (source='llm'). Fill-only; same
+            # in-`with` catch discipline. OFF by default — never runs unless asked.
+            llm_error: str | None = None
+            llm_summary = None
+            llm_unclassified: list = []
+            llm = None
+            if args.llm:
+                try:
+                    llm = LlmGicsSource()
+                    llm_unclassified = read_unclassified_identities(conn)
+                    if llm_unclassified:
+                        llm_plans = plan_classifications(llm_unclassified, llm)
+                        llm_summary = apply_classifications(conn, llm_plans)
+                except Exception as exc:  # noqa: BLE001 — fill failure must not mask/destroy earlier passes
+                    llm_error = f"{type(exc).__name__}: {exc}"
 
             # Whole-universe coverage AFTER every source has written — the honest
             # multi-source figure (primary `summary.coverage` only knows
@@ -360,6 +379,21 @@ def _cmd_classify(_args: argparse.Namespace) -> int:
             print(f"  yahoo_profile fetch error: {symbol}: {msg}")
         for failure in yf_summary.failures:
             print(f"  yahoo_profile write failed: {failure}")
+    if args.llm:
+        if llm_error is not None:
+            print(f"llm fill pass FAILED (earlier passes unaffected): {llm_error}", file=sys.stderr)
+        elif llm_summary is None:
+            print("llm fill pass: nothing to fill (no unclassified actives) — artifact not applied")
+        else:
+            print(
+                f"llm fill pass (opt-in, low-trust): {len(llm_unclassified)} unclassified active; "
+                f"{llm_summary.rows_inserted} inserted, {llm_summary.unchanged} unchanged, "
+                f"{llm_summary.rows_closed} closed, {llm_summary.failed} failed; "
+                f"{len(llm.last_unmatched) if llm else 0} unmatched (funds/uncovered), "
+                f"{len(llm.last_mic_mismatch) if llm else 0} MIC mismatch"
+            )
+            for failure in llm_summary.failures:
+                print(f"  llm write failed: {failure}")
     total_coverage = total_classified / total_active if total_active else 0.0
     print(
         f"whole-universe coverage (all sources): {total_classified}/{total_active} "
@@ -1404,6 +1438,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_classify = sub.add_parser(
         "classify",
         help="Populate GICS classification for active securities from financedatabase.",
+    )
+    p_classify.add_argument(
+        "--llm",
+        action="store_true",
+        help="Also run the opt-in LLM gap-fill pass (low-trust; reviewed "
+        "llm_classifications.json artifact; source='llm') after the deterministic sources.",
     )
     p_classify.set_defaults(func=_cmd_classify)
 

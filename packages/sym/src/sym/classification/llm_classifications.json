@@ -1,0 +1,16 @@
+{
+  "_meta": {
+    "description": "LLM-assisted GICS gap-fill (classification-multisource AC #4). Last-resort, low-trust, REVIEWABLE source: operating companies the deterministic sources (financedatabase/b3/sec_sic/yahoo_profile) left unclassified - almost all recent renames/spinoffs. Written source='llm'. Funds/ETFs are DELIBERATELY ABSENT - a fund has no GICS sector, so none is invented. Edit this file + re-run `sym classify --llm` to revise. Each sector MUST be one of the 11 GICS sectors.",
+    "classified_by": "claude-opus-4-8 (Claude Code, human-in-the-loop)",
+    "as_of": "2026-06-17"
+  },
+  "classifications": [
+    {"ticker": "CADE", "mic": "XNYS", "name": "Cadence Bank", "sector": "Financials", "rationale": "US regional bank holding company"},
+    {"ticker": "CIVI", "mic": "XNYS", "name": "Civitas Resources", "sector": "Energy", "rationale": "Colorado oil & gas exploration and production"},
+    {"ticker": "CMA", "mic": "XNYS", "name": "Comerica Inc", "sector": "Financials", "rationale": "US commercial bank"},
+    {"ticker": "KLG", "mic": "XNYS", "name": "WK Kellogg Co", "sector": "Consumer Staples", "rationale": "Packaged cereal/food maker (2023 spinoff from Kellanova)"},
+    {"ticker": "PCH", "mic": "XNYS", "name": "PotlatchDeltic Corp", "sector": "Real Estate", "rationale": "Timberland REIT (GICS Specialized REITs)"},
+    {"ticker": "TGNA", "mic": "XNYS", "name": "Tegna Inc", "sector": "Communication Services", "rationale": "Television broadcasting / media"},
+    {"ticker": "ZEUS", "mic": "XNYS", "name": "Olympic Steel Inc", "sector": "Materials", "rationale": "Steel processing and distribution"}
+  ]
+}
