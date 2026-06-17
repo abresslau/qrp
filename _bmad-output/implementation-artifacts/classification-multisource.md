@@ -1,6 +1,6 @@
 # Story: Multi-source industry classification (whole-universe, maintained)
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story (2026-06-17). Operator: "the classification at the moment is
 very limited. you should incorporate multiple industry classification, like yahoo, google,
@@ -105,7 +105,13 @@ The operator named Yahoo / Google / Perplexity; the honest findings:
   UA w/ contact email), a documented `SIC→GICS-sector` crosswalk (`_SIC_OVERRIDES` + `_SIC_BANDS`),
   `SecSicGicsSource` (US-mic-scoped, sector-only, `source='sec_sic'`, never guesses). DB-free tests
   with a fake `SecClient`.
-- [ ] **Task 3 — Yahoo assetProfile source (crumb flow)** (AC: 3) — **DEFERRED** per locked scope.
+- [x] **Task 3 — Yahoo assetProfile source (crumb flow)** (AC: 3) — `sym/classification/yahoo_profile.py`:
+  `HttpYahooProfileClient` (cookie→getcrumb→quoteSummary crumb flow, lazy session + one 401-retry,
+  query1/query2 host fallback, throttle, URL-encoded symbol+crumb), an 11→11 `YAHOO_SECTOR_TO_GICS`
+  crosswalk, `YahooProfileGicsSource` (sector-only, `source='yahoo_profile'`, per-symbol error
+  isolation). Reuses sym's own `YAHOO_SUFFIX` (no cross-package import). Built 2026-06-17 after a
+  re-probe confirmed the crumb flow works in-env (AAPL→Technology, SHEL.L→Energy). DB-free tests with
+  a fake client + fake opener. **Closed the non-US residual: coverage 94.4% → 98.8%.**
 - [ ] **Task 4 — LLM gap-fill source (opt-in, last resort)** (AC: 4) — **DEFERRED** per locked scope.
 - [x] **Task 5 — Whole-universe maintenance command** (AC: 1,5,6) — `_cmd_classify` extended with the
   `sec_sic` fill pass (same in-`with`-catch discipline as b3 so a SEC outage can't roll back earlier
@@ -239,9 +245,36 @@ honest **post-fill** whole-universe coverage. Live result: 90.0% → **94.4%** (
   wording does not — accepted on an owner-operated tool, ledgered for a future generalization if a 4th+
   source lands.
 
+### Yahoo assetProfile source added (2026-06-17, AC3 — "what's next" follow-up)
+
+After the SEC MVP merged, Andre chose to continue closing the gap. The residual was 123 (mostly
+NON-US: XLON 69, XMIL 11, …) which SEC SIC structurally can't reach. Re-probed the Yahoo crumb flow
+(per the name-the-probe rule) — it **works in-env**: seed cookie from fc.yahoo.com (404s but sets
+cookies) → getcrumb → quoteSummary assetProfile (AAPL→Technology, SHEL.L→Energy). Built
+`yahoo_profile.py` as the **4th fill pass** (same fill-only/provenance/in-`with`-catch discipline).
+Yahoo uses its own 11-sector taxonomy → an 11→11 `YAHOO_SECTOR_TO_GICS` crosswalk. Symbol built from
+`SecurityIdentity.ticker`+`mic` via sym's own `YAHOO_SUFFIX` (DB-free, no cross-package import).
+
+**Live: 97 of 123 filled, coverage 94.4% → 98.8%** (2161/2187). ftse100 incomplete 69 → 4 (the 4 are
+closed-end investment trusts — SMT.L/PCT.L etc. — which legitimately have no GICS sector). Residual 26
+= 14 no-profile + 12 stable 404s (funds + merged tickers) — the long tail the deferred LLM (AC4) would
+target; marginal at 98.8%.
+
+Focused code review of the crumb-session lifecycle (the only non-SEC-mirrored logic) found + fixed:
+- **High — dead 401-retry:** `_fetch_profile` raised without `from last_exc`, so the `__cause__`-based
+  401 detection never fired (and a crumb expiry would then poison every later symbol). Replaced with an
+  explicit `is_auth` flag on `YahooProfileError`, set across the host-fallback loop (also fixes the
+  Med: a 401 masked by a later host's 404).
+- **High — `quoteSummary: null` crash:** the payload parse did `payload.get("quoteSummary", {}).get(...)`
+  — but `{}` only covers a MISSING key, not a `null` value, so `None.get(...)` raised an `AttributeError`
+  that escaped per-symbol isolation and aborted the whole pass. Extracted a defensive
+  `_parse_profile_payload` (guards every level; 10 malformed-shape cases tested) — analogue of the
+  sec_sic High fix.
+
 ### Change Log
 - 2026-06-17: SEC SIC→GICS MVP implemented (Tasks 1,2,5,6). AC3 (Yahoo crumb) + AC4 (LLM) deferred per locked scope. Status → review.
 - 2026-06-17: Applied 3-layer code-review fixes (per-CIK isolation [High], throttle [Med], provenance test [Med], int-guard [Low]); ledgered ticker-punctuation + literal-registry limitations.
+- 2026-06-17: Added Yahoo assetProfile source (AC3, Task 3) — 4th fill pass, coverage → 98.8%; fixed 2 High review findings (dead 401-retry, quoteSummary-null crash). AC4 (LLM) still deferred.
 
 ## Open questions (for review)
 1. **Precedence order** — is `B3(BR) → financedatabase → SEC SIC → Yahoo → LLM` right, or should a
