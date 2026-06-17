@@ -70,3 +70,56 @@ describe("PortfoliosPage load-failure surfacing (QH.8 / AC5)", () => {
     expect(screen.queryByText(/Couldn.t load portfolios/)).not.toBeInTheDocument();
   });
 });
+
+describe("PortfoliosPage create + race hardening (console hardening)", () => {
+  it("surfaces a failed create (r.ok) and keeps the form populated instead of silently reloading", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string }) => {
+        if (init?.method === "POST")
+          return Promise.resolve({ ok: false, status: 422, json: () => Promise.resolve({ error: { message: "bad name" } }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) }); // mount GETs: empty
+      }),
+    );
+    render(<PortfoliosPage />);
+    await screen.findByText(/No portfolios yet/);
+    const nameInput = screen.getByPlaceholderText(/Growth book/);
+    await userEvent.type(nameInput, "X book");
+    await userEvent.click(screen.getByRole("button", { name: /New portfolio/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Couldn.t create portfolio: bad name/);
+    expect(nameInput).toHaveValue("X book"); // not cleared — the user can fix + retry
+  });
+
+  it("a slow stale mount failure does not clobber a newer successful load (generation token)", async () => {
+    let rejectMount: (e: unknown) => void = () => {};
+    let pcall = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string, init?: { method?: string }) => {
+        if (init?.method === "POST") return Promise.resolve({ ok: true, json: () => Promise.resolve({ ok: true }) });
+        if (url.includes("/portfolios/clients")) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+        if (url.includes("/api/portfolios")) {
+          pcall += 1;
+          if (pcall === 1) return new Promise((_res, rej) => { rejectMount = rej; }); // mount GET: slow, will fail
+          return Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve([{ portfolio_id: 1, name: "Growth", client: "", n_weights: 1, latest_as_of_date: "2026-06-01" }]),
+          });
+        }
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }),
+    );
+    render(<PortfoliosPage />);
+    // mount load is still in flight (no error yet). A create triggers a newer load() that wins.
+    await userEvent.type(screen.getByPlaceholderText(/Growth book/), "New");
+    await userEvent.click(screen.getByRole("button", { name: /New portfolio/ }));
+    expect(await screen.findByText("Growth")).toBeInTheDocument(); // newer load applied its rows
+
+    rejectMount(new Error("late mount failure")); // the stale mount load finally fails
+    await Promise.resolve();
+    await Promise.resolve();
+    // Without the generation token, this stale failure would setError(true) and clobber the rows.
+    expect(screen.getByText("Growth")).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn.t load portfolios/)).not.toBeInTheDocument();
+  });
+});

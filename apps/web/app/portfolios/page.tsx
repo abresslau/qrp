@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
 
@@ -17,10 +17,17 @@ export default function PortfoliosPage() {
   const [client, setClient] = useState("");
   const [newClient, setNewClient] = useState("");
   const [filter, setFilter] = useState(""); // "" = all clients (context selection)
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Generation token: each fetchData call (mount, retry, post-create reload) bumps it and applies
+  // its result only if still the latest. Without it, a slow FAILED mount load resolving after a
+  // fast successful retry would clobber the just-loaded rows with a stale error (and vice versa).
+  const genRef = useRef(0);
 
   // Pure fetch: state is only set in the async callbacks, never synchronously — so the mount
   // effect can call it without tripping react-hooks/set-state-in-effect (loading starts true).
   function fetchData() {
+    const gen = ++genRef.current;
     Promise.all([
       fetch("/api/portfolios", { cache: "no-store" }).then((r) => {
         if (!r.ok) throw new Error(`portfolios ${r.status}`); // an HTTP error is a load failure, not a list
@@ -32,6 +39,7 @@ export default function PortfoliosPage() {
       }),
     ])
       .then(([p, c]: [P[], C[]]) => {
+        if (gen !== genRef.current) return; // a newer load has superseded this one
         setList(p);
         setClients(c);
         setError(false);
@@ -39,6 +47,7 @@ export default function PortfoliosPage() {
       })
       // QH.8: surface a load failure honestly (an empty list must not look like a real failure).
       .catch(() => {
+        if (gen !== genRef.current) return; // don't let a stale failure clobber a newer success
         setError(true);
         setLoading(false);
       });
@@ -53,15 +62,33 @@ export default function PortfoliosPage() {
     fetchData();
   }, []);
 
+  // Create helpers check r.ok and catch network errors — a failed POST must surface an error, not
+  // silently clear the form + reload (which looks like success) or escape as an unhandled rejection.
+  async function postJson(url: string, body: unknown): Promise<string | null> {
+    try {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (r.ok) return null;
+      const res: { error?: { message?: string } } = await r.json().catch(() => ({}));
+      return res.error?.message ?? `request failed (${r.status})`;
+    } catch {
+      return "request failed — check your connection and retry";
+    }
+  }
+
   async function createPortfolio(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
+    setCreateError(null);
     const body: Schemas["CreatePortfolio"] = { name, client, base_currency: "USD" };
-    await fetch("/api/portfolios", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const err = await postJson("/api/portfolios", body);
+    if (err) {
+      setCreateError(`Couldn't create portfolio: ${err}`);
+      return; // keep the form populated so the user can retry
+    }
     setName("");
     setClient("");
     load();
@@ -70,12 +97,13 @@ export default function PortfoliosPage() {
   async function createClient(e: React.FormEvent) {
     e.preventDefault();
     if (!newClient.trim()) return;
+    setCreateError(null);
     const body: Schemas["CreateClient"] = { name: newClient };
-    await fetch("/api/portfolios/clients", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const err = await postJson("/api/portfolios/clients", body);
+    if (err) {
+      setCreateError(`Couldn't create client: ${err}`);
+      return;
+    }
     setNewClient("");
     load();
   }
@@ -166,6 +194,11 @@ export default function PortfoliosPage() {
           + New portfolio
         </button>
       </form>
+      {createError && (
+        <p role="alert" className="mt-2 text-sm text-red-500">
+          {createError}
+        </p>
+      )}
 
       <div className="mt-5 overflow-hidden rounded-xl border border-border">
         <table className="w-full text-sm">
