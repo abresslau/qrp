@@ -305,6 +305,33 @@ which I wasn't confident on) deliberately left unclassified. Live `sym classify 
 unmatched, coverage 98.8% → **99.1%** (2168/2187). Default `sym classify` (no flag) unchanged — the LLM
 pass never runs unless asked. 11 DB-free tests (no network, no LLM call at runtime).
 
+### AC5 precedence-upgrade built (2026-06-17 — closes the review's sharpest finding)
+
+The review found the chain was fill-only **first-writer-wins**: a later higher-precedence source
+could never supersede an earlier lower-trust one (a `source='llm'` row was "sticky"). Now built so a
+source may (re)classify a security that is unclassified OR held by a **strictly lower-precedence**
+source, per an explicit `SOURCE_PRECEDENCE` ladder (financedatabase 0 → b3 1 → sec_sic 2 →
+yahoo_profile 3 → llm 4):
+
+- **`gics.py`**: `SOURCE_PRECEDENCE` + `outranks(new, current)` (strict; either side unknown → False,
+  so legacy/manual rows are never clobbered and unknown sources never supersede). `read_classifiable_identities(conn, source=...)`
+  returns unclassified + lower-held actives (the scope that lets a higher source reclaim a name).
+  `apply_classifications` is precedence-aware: levels differ + outranks → close+insert (supersede);
+  same levels + outranks → **in-place provenance upgrade** (no new SCD row, value unchanged); a
+  non-outranking different source is a no-op (defensive guard). `_current_row` now also reads `source`.
+- **`cli.py`**: the 4 fill passes use `read_classifiable_identities(conn, source=<their source>)`; the
+  primary (financedatabase, all-actives) supersedes via the precedence-aware writer directly. Per-pass
+  reports gained `upgraded`/`superseded` counts; "unclassified active" → "in-scope active".
+
+It is a CROSS-RUN feature: on stable data it is a clean **no-op** (verified — source breakdown
+unchanged, 0 historical rows, no churn); it fires when a source's data improves between runs (e.g.
+financedatabase later gains a name an `llm` pass had filled → supersedes it). Live run confirms the
+broadened scope (b3 sees 170, sec_sic 123, yahoo 26 = unclassified + lower-held) and the re-attempt
+path (yahoo re-tries the 7 `llm` names every run, 404s, so the `llm` rows correctly persist until a
+source can actually supersede them). 8 new unit tests: `outranks` ladder, supersede-on-later-day,
+same-sector provenance-upgrade-in-place, lower-never-overwrites-higher, unknown-source-preserved,
+end-to-end cross-source supersede, and the scope-query's lower-source param set. 685 tests green.
+
 ### Review Findings (code review 2026-06-17, 3-layer adversarial: Blind / Edge / Acceptance)
 
 decision-needed: none.
@@ -316,7 +343,7 @@ patch (all applied 2026-06-17):
 - [x] [Review][Patch] AC8 cross-source precedence/merge test gap — **FIXED:** added `test_cross_source_merge_is_fill_only_first_writer_wins_with_provenance` (stateful fake conn; pass 1 classifies #1/#2, pass 2 fed only the unclassified fills #3 and can't overwrite #1; asserts per-row provenance + `rows_closed == 0`). [packages/sym/tests/test_classification.py]
 
 defer (ledgered to deferred-work.md):
-- [x] [Review][Defer] AC5 precedence-upgrade-closes-lower NOT implemented — fill-only first-writer-wins means a later higher-precedence/authoritative source can never supersede an earlier lower-trust (e.g. `source='llm'`) classification; the SCD close-on-change machinery never fires cross-source. The dev record OVERSTATED AC5 as fully met — it satisfies no-overwrite + provenance + precedence-into-an-empty-slot, NOT "a higher-precedence source later filling a name closes the lower one." Real enhancement.
+- [x] [Review][Defer→BUILT 2026-06-17] AC5 precedence-upgrade-closes-lower — was first-writer-wins; **now built** (see "AC5 precedence-upgrade built" below). AC5 is now fully met.
 - [x] [Review][Defer] AC6 cadence/daily-maintenance hook not wired — `sym classify` is whole-universe + idempotent but not scheduled (no Dagster schedule/monitor hook; must set `execution_timezone` when built).
 - [x] [Review][Defer] Yahoo has no circuit-breaker on a 401-storm / total outage — degrades per-symbol (`last_errors`) but walks all N residual at ~1.2s each instead of failing fast.
 - [x] [Review][Defer] SEC `company_tickers.json` "first listing wins" CIK dedup assumes no duplicate tickers across CIKs — can mis-attribute after a ticker reassignment (delisted filer + new filer share a ticker).

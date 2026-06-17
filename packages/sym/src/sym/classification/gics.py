@@ -30,6 +30,35 @@ _FD_INDUSTRY = "industry"
 
 DEFAULT_COVERAGE_THRESHOLD = 0.90  # AC #2 — never silently widened.
 
+# Source precedence for the multi-source fill chain (lower number = HIGHER precedence /
+# more authoritative). A source may (re)classify a security that is unclassified OR
+# currently held by a STRICTLY lower-precedence source, and must never modify a row from
+# an equal-or-higher source. Drives `read_classifiable_identities` (the per-source scope)
+# and the supersede/upgrade decision in `apply_classifications`. A source NOT in this map
+# (a legacy/manual `source` value) is treated as out-of-band: it is never auto-superseded
+# (its row is preserved) and never supersedes another — so unknown rows are never clobbered.
+SOURCE_PRECEDENCE: dict[str, int] = {
+    "financedatabase": 0,
+    "b3": 1,
+    "sec_sic": 2,
+    "yahoo_profile": 3,
+    "llm": 4,
+}
+
+
+def outranks(new_source: str | None, current_source: str | None) -> bool:
+    """True if ``new_source`` is STRICTLY higher precedence than ``current_source``.
+
+    Either side being unknown (outside :data:`SOURCE_PRECEDENCE`) returns False — an
+    unknown current row is preserved (never auto-superseded) and an unknown new source
+    never supersedes — so the chain only ever upgrades between sources it understands.
+    """
+    new_rank = SOURCE_PRECEDENCE.get(new_source) if new_source is not None else None
+    cur_rank = SOURCE_PRECEDENCE.get(current_source) if current_source is not None else None
+    if new_rank is None or cur_rank is None:
+        return False
+    return new_rank < cur_rank
+
 
 @dataclass(frozen=True)
 class GicsClassification:
@@ -274,17 +303,60 @@ def read_unclassified_identities(conn: psycopg.Connection) -> list[SecurityIdent
     return [SecurityIdentity(figi, isin, ticker, mic) for figi, mic, isin, ticker in rows]
 
 
+def read_classifiable_identities(
+    conn: psycopg.Connection, *, source: str
+) -> list[SecurityIdentity]:
+    """Active securities the given ``source`` may (re)classify (AC5 precedence scope).
+
+    Returns actives that are either unclassified OR currently held by a STRICTLY
+    lower-precedence source (per :data:`SOURCE_PRECEDENCE`) — the latter is what lets a
+    higher-precedence source *supersede* a lower one on a later run (e.g. financedatabase
+    or sec_sic reclaiming a name an ``llm``/``yahoo_profile`` pass had filled). A row from
+    an equal/higher source, or an unknown/legacy source, is excluded so the source can
+    never downgrade or clobber it. A ``source`` outside the precedence map gets the plain
+    unclassified scope (it can only fill empty slots).
+    """
+    if source not in SOURCE_PRECEDENCE:
+        return read_unclassified_identities(conn)
+    rank = SOURCE_PRECEDENCE[source]
+    lower_sources = [s for s, r in SOURCE_PRECEDENCE.items() if r > rank]
+    # In scope unless a CURRENTLY-EFFECTIVE row "blocks" it — a blocking row is one whose
+    # source is NOT strictly-lower (i.e. equal/higher precedence, or NULL/unknown).
+    rows = conn.execute(
+        """
+        SELECT s.composite_figi, s.mic,
+               max(y.symbol_value) FILTER (WHERE y.symbol_type = 'isin')   AS isin,
+               max(y.symbol_value) FILTER (WHERE y.symbol_type = 'ticker') AS ticker
+          FROM securities s
+          LEFT JOIN security_symbology y
+                 ON y.composite_figi = s.composite_figi
+                AND y.valid_to IS NULL
+         WHERE s.status = 'active'
+           AND NOT EXISTS (SELECT 1 FROM gics_scd g
+                            WHERE g.composite_figi = s.composite_figi
+                              AND g.valid_to IS NULL
+                              AND (g.source IS NULL OR g.source <> ALL(%s::text[])))
+         GROUP BY s.composite_figi, s.mic
+         ORDER BY s.composite_figi
+        """,
+        (lower_sources,),
+    ).fetchall()
+    return [SecurityIdentity(figi, isin, ticker, mic) for figi, mic, isin, ticker in rows]
+
+
 def _current_row(
     conn: psycopg.Connection, composite_figi: str
-) -> tuple[tuple[str | None, str | None, str | None, str | None], date] | None:
-    """The currently-effective ``(level_names, valid_from)`` for a FIGI, or None.
+) -> tuple[tuple[str | None, str | None, str | None, str | None], date, str | None] | None:
+    """The currently-effective ``(level_names, valid_from, source)`` for a FIGI, or None.
 
-    ``valid_from`` is returned so a same-day correction can be told apart from a
-    genuine cross-day version change (see :func:`apply_classifications`).
+    ``valid_from`` distinguishes a same-day correction from a cross-day version change;
+    ``source`` lets :func:`apply_classifications` decide whether a writing source
+    outranks the row already there (the AC5 precedence-upgrade).
     """
     row = conn.execute(
         """
-        SELECT sector_name, industry_group_name, industry_name, sub_industry_name, valid_from
+        SELECT sector_name, industry_group_name, industry_name, sub_industry_name,
+               valid_from, source
           FROM gics_scd
          WHERE composite_figi = %s
            AND valid_to IS NULL
@@ -293,7 +365,7 @@ def _current_row(
     ).fetchone()
     if row is None:
         return None
-    return (tuple(row[:4]), row[4])
+    return (tuple(row[:4]), row[4], row[5])
 
 
 def apply_classifications(
@@ -314,6 +386,13 @@ def apply_classifications(
       a zero-width period that violates ``gics_scd_validity_chk`` (``valid_to >
       valid_from``); a same-day correction has no historical period to preserve.
 
+    Precedence-aware (AC5): when the writing source **outranks** the source of the
+    currently-effective row (see :func:`outranks`), it supersedes it — same shape as a
+    re-classification: levels changed → close + insert (or same-day update); same levels
+    → an in-place **provenance upgrade** (no new row, since the classification value is
+    unchanged — only its attribution improves). A non-outranking different source never
+    modifies the row (defensive; the per-source scope already excludes these).
+
     Each security writes in its own transaction; a single failing write is
     rolled back, counted in ``summary.failed``, and the run continues — one bad
     row never halts the rest.
@@ -324,24 +403,37 @@ def apply_classifications(
         try:
             with conn.transaction():
                 current = _current_row(conn, classification.composite_figi)
-                if current is not None and current[0] == classification.level_names():
-                    summary.unchanged += 1
-                    continue
-                if current is not None and current[1] == as_of_date:
-                    _update_in_place(conn, classification)
-                    summary.rows_updated += 1
-                    continue
-                if current is not None and as_of_date < current[1]:
-                    # Backdated write: closing at as_of_date would violate the
-                    # valid_to > valid_from CHECK — record WHY, don't let the
-                    # CheckViolation vanish into an anonymous count.
-                    summary.failed += 1
-                    summary.failures.append(
-                        f"{classification.composite_figi}: backdated ({as_of_date} < "
-                        f"current valid_from {current[1]})"
-                    )
-                    continue
                 if current is not None:
+                    cur_levels, cur_valid_from, cur_source = current
+                    same_source = classification.source == cur_source
+                    if not same_source and not outranks(classification.source, cur_source):
+                        # A lower/equal-precedence (or unknown) different source must
+                        # never overwrite or downgrade an existing row.
+                        summary.unchanged += 1
+                        continue
+                    if cur_levels == classification.level_names():
+                        if same_source:
+                            summary.unchanged += 1
+                            continue
+                        # Same sector, higher-precedence source now backs it → upgrade
+                        # provenance in place (no new SCD row; value unchanged).
+                        _update_in_place(conn, classification)
+                        summary.rows_updated += 1
+                        continue
+                    if cur_valid_from == as_of_date:
+                        _update_in_place(conn, classification)
+                        summary.rows_updated += 1
+                        continue
+                    if as_of_date < cur_valid_from:
+                        # Backdated write: closing at as_of_date would violate the
+                        # valid_to > valid_from CHECK — record WHY, don't let the
+                        # CheckViolation vanish into an anonymous count.
+                        summary.failed += 1
+                        summary.failures.append(
+                            f"{classification.composite_figi}: backdated ({as_of_date} < "
+                            f"current valid_from {cur_valid_from})"
+                        )
+                        continue
                     conn.execute(
                         """
                         UPDATE gics_scd

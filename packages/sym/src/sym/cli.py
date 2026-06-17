@@ -211,7 +211,7 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         classify_universe,
         plan_classifications,
         read_active_coverage,
-        read_unclassified_identities,
+        read_classifiable_identities,
     )
     from sym.classification.llm import LlmGicsSource
     from sym.classification.sec_sic import SecSicGicsSource
@@ -237,7 +237,7 @@ def _cmd_classify(args: argparse.Namespace) -> int:
                 # non-autocommit, so an exception escaping to the `with connect()`
                 # boundary would roll back the ENTIRE primary pass (its per-figi
                 # transactions are savepoints of the one outer transaction).
-                unclassified = read_unclassified_identities(conn)
+                unclassified = read_classifiable_identities(conn, source="b3")
                 if unclassified:
                     b3_plans = plan_classifications(unclassified, b3)
                     b3_summary = apply_classifications(conn, b3_plans)
@@ -255,7 +255,7 @@ def _cmd_classify(args: argparse.Namespace) -> int:
             sec_unclassified: list = []
             sec = SecSicGicsSource()
             try:
-                sec_unclassified = read_unclassified_identities(conn)
+                sec_unclassified = read_classifiable_identities(conn, source="sec_sic")
                 if sec_unclassified:
                     sec_plans = plan_classifications(sec_unclassified, sec)
                     sec_summary = apply_classifications(conn, sec_plans)
@@ -273,7 +273,7 @@ def _cmd_classify(args: argparse.Namespace) -> int:
             yf_unclassified: list = []
             yf = YahooProfileGicsSource()
             try:
-                yf_unclassified = read_unclassified_identities(conn)
+                yf_unclassified = read_classifiable_identities(conn, source="yahoo_profile")
                 if yf_unclassified:
                     yf_plans = plan_classifications(yf_unclassified, yf)
                     yf_summary = apply_classifications(conn, yf_plans)
@@ -291,7 +291,7 @@ def _cmd_classify(args: argparse.Namespace) -> int:
             if args.llm:
                 try:
                     llm = LlmGicsSource()
-                    llm_unclassified = read_unclassified_identities(conn)
+                    llm_unclassified = read_classifiable_identities(conn, source="llm")
                     if llm_unclassified:
                         llm_plans = plan_classifications(llm_unclassified, llm)
                         llm_summary = apply_classifications(conn, llm_plans)
@@ -328,12 +328,13 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     if b3_error is not None:
         print(f"b3 fill pass FAILED (primary pass unaffected): {b3_error}", file=sys.stderr)
     elif b3_summary is None:
-        print("b3 fill pass: nothing to fill (no unclassified actives) — B3 not queried")
+        print("b3 fill pass: nothing to fill (no classifiable actives) — B3 not queried")
     else:
         print(
-            f"b3 fill pass: {len(unclassified)} unclassified active; "
-            f"{b3_summary.rows_inserted} inserted, {b3_summary.unchanged} unchanged, "
-            f"{b3_summary.rows_closed} closed, {b3_summary.failed} failed; "
+            f"b3 fill pass: {len(unclassified)} in-scope active; "
+            f"{b3_summary.rows_inserted} inserted, {b3_summary.rows_updated} upgraded, "
+            f"{b3_summary.unchanged} unchanged, {b3_summary.rows_closed} superseded, "
+            f"{b3_summary.failed} failed; "
             f"{len(set(b3.last_unmapped.values()))} unmapped segments "
             f"({len(b3.last_unmapped)} tickers), {len(b3.last_conflicts)} view conflicts, "
             f"{len(b3.last_unmatched)} in-scope unfilled"
@@ -349,12 +350,13 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     if sec_error is not None:
         print(f"sec_sic fill pass FAILED (earlier passes unaffected): {sec_error}", file=sys.stderr)
     elif sec_summary is None:
-        print("sec_sic fill pass: nothing to fill (no unclassified actives) — SEC not queried")
+        print("sec_sic fill pass: nothing to fill (no classifiable actives) — SEC not queried")
     else:
         print(
-            f"sec_sic fill pass: {len(sec_unclassified)} unclassified active; "
-            f"{sec_summary.rows_inserted} inserted, {sec_summary.unchanged} unchanged, "
-            f"{sec_summary.rows_closed} closed, {sec_summary.failed} failed; "
+            f"sec_sic fill pass: {len(sec_unclassified)} in-scope active; "
+            f"{sec_summary.rows_inserted} inserted, {sec_summary.rows_updated} upgraded, "
+            f"{sec_summary.unchanged} unchanged, {sec_summary.rows_closed} superseded, "
+            f"{sec_summary.failed} failed; "
             f"{len(sec.last_unmapped_sic)} unmapped SIC, "
             f"{len(sec.last_unmatched)} no-CIK/no-SIC, "
             f"{len(sec.last_skipped_non_us)} non-US skipped, "
@@ -373,13 +375,14 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         )
     elif yf_summary is None:
         print(
-            "yahoo_profile fill pass: nothing to fill (no unclassified actives) — Yahoo not queried"
+            "yahoo_profile fill pass: nothing to fill (no classifiable actives) — Yahoo not queried"
         )
     else:
         print(
-            f"yahoo_profile fill pass: {len(yf_unclassified)} unclassified active; "
-            f"{yf_summary.rows_inserted} inserted, {yf_summary.unchanged} unchanged, "
-            f"{yf_summary.rows_closed} closed, {yf_summary.failed} failed; "
+            f"yahoo_profile fill pass: {len(yf_unclassified)} in-scope active; "
+            f"{yf_summary.rows_inserted} inserted, {yf_summary.rows_updated} upgraded, "
+            f"{yf_summary.unchanged} unchanged, {yf_summary.rows_closed} superseded, "
+            f"{yf_summary.failed} failed; "
             f"{len(yf.last_unmapped_sector)} unmapped sector, "
             f"{len(yf.last_unmatched)} no-profile, "
             f"{len(yf.last_unmapped_mic)} unmappable MIC, "
@@ -395,12 +398,13 @@ def _cmd_classify(args: argparse.Namespace) -> int:
         if llm_error is not None:
             print(f"llm fill pass FAILED (earlier passes unaffected): {llm_error}", file=sys.stderr)
         elif llm_summary is None:
-            print("llm fill pass: nothing to fill (no unclassified actives) — artifact not applied")
+            print("llm fill pass: nothing to fill (no classifiable actives) — artifact not applied")
         else:
             print(
-                f"llm fill pass (opt-in, low-trust): {len(llm_unclassified)} unclassified active; "
-                f"{llm_summary.rows_inserted} inserted, {llm_summary.unchanged} unchanged, "
-                f"{llm_summary.rows_closed} closed, {llm_summary.failed} failed; "
+                f"llm fill pass (opt-in, low-trust): {len(llm_unclassified)} in-scope active; "
+                f"{llm_summary.rows_inserted} inserted, {llm_summary.rows_updated} upgraded, "
+                f"{llm_summary.unchanged} unchanged, {llm_summary.rows_closed} superseded, "
+                f"{llm_summary.failed} failed; "
                 f"{len(llm.last_unmatched) if llm else 0} unmatched (funds/uncovered), "
                 f"{len(llm.last_mic_mismatch) if llm else 0} MIC mismatch"
             )
