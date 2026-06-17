@@ -157,6 +157,17 @@ The operator named Yahoo / Google / Perplexity; the honest findings:
 - Deferred/ledger: FMP profile source (keyed); a fully PIT-historical classification feed (codes +
   sub-industry); the LLM source's review/confirm workflow.
 
+## Scope decision (LOCKED 2026-06-17, Andre)
+
+**First dev pass = SEC SIC→GICS MVP.** Build **AC1 (registry/precedence/provenance), AC2 (SEC
+SIC→GICS, keyless), AC5 (precedence+merge), AC6 (whole-universe maintenance), AC7 (heatmap/validate
+consume), AC8 (tests)** — keep `financedatabase` + B3 as registered sources; SEC SIC fills the
+residual (expected to clear HON + most of the ~134 US gap with no auth).
+
+**Deferred to a follow-up pass (NOT this story's dev):** AC3 (Yahoo `assetProfile` via the crumb
+flow), AC4 (LLM gap-fill), and the FMP profile source. Revisit once the SEC-SIC residual is known —
+if non-US names remain Unclassified, Yahoo-crumb is the next source; LLM only for the long tail.
+
 ## Open questions (for review)
 1. **Precedence order** — is `B3(BR) → financedatabase → SEC SIC → Yahoo → LLM` right, or should a
    live source (Yahoo/SEC) outrank the static financedatabase snapshot for freshness?
