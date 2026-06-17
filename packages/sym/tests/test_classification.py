@@ -22,7 +22,9 @@ from sym.classification.gics import (
     apply_classifications,
     classification_from_row,
     classify_universe,
+    outranks,
     plan_classifications,
+    read_classifiable_identities,
 )
 
 
@@ -40,9 +42,16 @@ def _gics(
     )
 
 
-def _row(valid_from, sector="Information Technology", ig="Software & Services", ind="Software"):
-    """A currently-effective gics_scd row as _RouterConn stores it (5-tuple)."""
-    return (sector, ig, ind, None, valid_from)
+def _row(
+    valid_from,
+    sector="Information Technology",
+    ig="Software & Services",
+    ind="Software",
+    source="financedatabase",
+):
+    """A currently-effective gics_scd row as _RouterConn stores it (6-tuple:
+    the four level names, valid_from, then source — matching `_current_row`'s SELECT)."""
+    return (sector, ig, ind, None, valid_from, source)
 
 
 class _FakeSource:
@@ -325,8 +334,8 @@ class _StatefulConn:
             row = self.effective.get(params[0])
             if row is None:
                 return _Cursor([])
-            names, _source, valid_from = row
-            return _Cursor([(names[0], names[1], names[2], names[3], valid_from)])
+            names, source, valid_from = row
+            return _Cursor([(names[0], names[1], names[2], names[3], valid_from, source)])
         if upper.startswith("INSERT"):
             # _insert_row order: figi, sector_code, sector_name, ig_code, ig_name,
             # ind_code, ind_name, sub_code, sub_name, source, valid_from
@@ -390,3 +399,141 @@ def test_cross_source_merge_is_fill_only_first_writer_wins_with_provenance():
     assert conn.effective["BBG000000002"][1] == "financedatabase"
     assert conn.effective["BBG000000003"][0][0] == "Utilities"
     assert conn.effective["BBG000000003"][1] == "sec_sic"
+
+
+# --- AC5 precedence upgrade: higher source supersedes lower -----------------
+
+
+class _CaptureConn:
+    """Records executed (sql, params); returns empty cursors. For scope-query tests."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, tuple]] = []
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+        return _Cursor([])
+
+    def transaction(self):
+        return contextlib.nullcontext()
+
+
+def test_outranks_precedence_order():
+    assert outranks("financedatabase", "llm")
+    assert outranks("financedatabase", "yahoo_profile")
+    assert outranks("sec_sic", "yahoo_profile")
+    assert outranks("yahoo_profile", "llm")
+    assert not outranks("llm", "financedatabase")  # lower never outranks higher
+    assert not outranks("financedatabase", "financedatabase")  # equal is not STRICTLY higher
+    assert not outranks("financedatabase", "manual")  # unknown current is preserved
+    assert not outranks("manual", "llm")  # unknown new never supersedes
+    assert not outranks(None, "llm")
+
+
+def test_higher_precedence_source_supersedes_lower_on_later_day():
+    """financedatabase (high) replacing an llm (low) row with a DIFFERENT sector closes
+    the llm row and inserts the new one — a genuine cross-source supersede."""
+    figi = "BBG000B9XRY4"
+    current = {figi: _row(date(2026, 1, 1), sector="Energy", source="llm")}
+    conn = _RouterConn(current=current)
+    # _gics default source = financedatabase (outranks llm), default sector differs from Energy
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
+    assert summary.rows_closed == 1
+    assert summary.rows_inserted == 1
+    assert summary.rows_updated == 0
+    statements = " ".join(sql.upper() for sql, _ in conn.calls)
+    assert "SET VALID_TO" in statements
+    assert "INSERT INTO GICS_SCD" in statements
+
+
+def test_higher_precedence_same_sector_upgrades_provenance_in_place():
+    """financedatabase agreeing with an llm row's sector upgrades provenance IN PLACE —
+    no new SCD row (the classification value is unchanged, only its attribution)."""
+    figi = "BBG000B9XRY4"
+    current = {figi: _row(date(2026, 1, 1), source="llm")}  # same levels as _gics default
+    conn = _RouterConn(current=current)
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
+    assert summary.rows_updated == 1
+    assert summary.rows_inserted == 0
+    assert summary.rows_closed == 0
+    assert summary.unchanged == 0
+    statements = " ".join(sql.upper() for sql, _ in conn.calls)
+    assert "SET VALID_TO" not in statements  # not closed
+    assert "INSERT INTO GICS_SCD" not in statements  # no new row
+    assert "SET SECTOR_CODE" in statements  # in-place update (rewrites source too)
+
+
+def test_lower_precedence_source_never_overwrites_higher():
+    """An llm (low) classification must never overwrite a financedatabase (high) row,
+    even with a different sector — the defensive guard leaves it unchanged."""
+    figi = "BBG000B9XRY4"
+    current = {figi: _row(date(2026, 1, 1), sector="Energy", source="financedatabase")}
+    conn = _RouterConn(current=current)
+    llm_class = GicsClassification(
+        composite_figi=figi, sector_name="Materials", industry_group_name=None,
+        industry_name=None, source="llm",
+    )
+    summary = apply_classifications(conn, [llm_class], as_of_date=date(2026, 6, 6))
+    assert summary.unchanged == 1
+    assert summary.rows_inserted == 0
+    assert summary.rows_closed == 0
+    assert summary.rows_updated == 0
+    statements = " ".join(sql.upper() for sql, _ in conn.calls)
+    assert "SET VALID_TO" not in statements
+    assert "INSERT INTO GICS_SCD" not in statements
+
+
+def test_unknown_source_row_is_preserved():
+    """A legacy/manual classification (source outside the precedence map) is never
+    auto-superseded — we don't clobber rows we don't understand."""
+    figi = "BBG000B9XRY4"
+    current = {figi: _row(date(2026, 1, 1), sector="Energy", source="manual")}
+    conn = _RouterConn(current=current)
+    summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
+    assert summary.unchanged == 1
+    assert summary.rows_inserted == 0
+    assert summary.rows_closed == 0
+
+
+def test_cross_source_higher_precedence_supersedes_lower_end_to_end():
+    """Full sequence: llm classifies a name, then financedatabase (higher) supersedes it
+    on a later run — the row's source + sector both flip to financedatabase."""
+    conn = _StatefulConn()
+    figi = "BBG000000001"
+    llm = _FakeSource({figi: _src_class(figi, "Utilities", "llm")})
+    apply_classifications(conn, plan_classifications([SecurityIdentity(figi)], llm),
+                          as_of_date=date(2026, 6, 6))
+    assert conn.effective[figi][1] == "llm"
+
+    fd = _FakeSource({figi: _src_class(figi, "Energy", "financedatabase")})
+    s = apply_classifications(conn, plan_classifications([SecurityIdentity(figi)], fd),
+                              as_of_date=date(2026, 6, 7))
+    assert s.rows_closed == 1
+    assert s.rows_inserted == 1
+    assert conn.effective[figi][0][0] == "Energy"
+    assert conn.effective[figi][1] == "financedatabase"
+
+
+def test_read_classifiable_scope_lower_sources_by_precedence():
+    """The scope query passes exactly the strictly-lower-precedence sources as the
+    'supersedable' set (so a source sees unclassified + lower-held names)."""
+    conn = _CaptureConn()
+    read_classifiable_identities(conn, source="sec_sic")
+    _sql, params = conn.calls[-1]
+    assert set(params[0]) == {"yahoo_profile", "llm"}
+
+    conn2 = _CaptureConn()
+    read_classifiable_identities(conn2, source="financedatabase")
+    assert set(conn2.calls[-1][1][0]) == {"b3", "sec_sic", "yahoo_profile", "llm"}
+
+    conn3 = _CaptureConn()
+    read_classifiable_identities(conn3, source="llm")
+    assert conn3.calls[-1][1][0] == []  # nothing ranks below llm → only unclassified in scope
+
+
+def test_read_classifiable_unknown_source_falls_back_to_unclassified():
+    conn = _CaptureConn()
+    read_classifiable_identities(conn, source="manual")
+    sql, _params = conn.calls[-1]
+    # the plain unclassified query has no source-precedence filter
+    assert "<> ALL" not in sql.upper()
