@@ -128,7 +128,15 @@ class LlmGicsSource:
         self._records = list(records) if records is not None else load_llm_classifications()
         self._by_ticker: dict[str, LlmRecord] = {}
         for rec in self._records:
-            self._by_ticker.setdefault(rec.ticker, rec)
+            if rec.ticker in self._by_ticker:
+                # A duplicate ticker (e.g. a dual-listing) would silently lose one
+                # row under first-wins — refuse loudly so the artifact is fixed
+                # (key by (ticker, mic) if a real dual-listing ever needs covering).
+                raise LlmClassificationError(
+                    f"duplicate ticker {rec.ticker!r} in LLM artifact — "
+                    "each ticker must appear at most once"
+                )
+            self._by_ticker[rec.ticker] = rec
         self.last_unmatched: list[str] = []
         self.last_mic_mismatch: list[str] = []
 

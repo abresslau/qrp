@@ -183,9 +183,12 @@ class HttpYahooProfileClient:
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
         # Seed the session cookies. fc.yahoo.com 404s but sets them; tolerate that.
         try:
-            opener.open(urllib.request.Request(_COOKIE_URL, headers=_UA), timeout=_HTTP_TIMEOUT)
-        except urllib.error.HTTPError:
-            pass  # 404 expected — the Set-Cookie still landed
+            with opener.open(
+                urllib.request.Request(_COOKIE_URL, headers=_UA), timeout=_HTTP_TIMEOUT
+            ):
+                pass  # `with` closes the response — the Set-Cookie already landed in the jar
+        except urllib.error.HTTPError as exc:
+            exc.close()  # 404 is expected (fc.yahoo.com); close it — Set-Cookie still landed
         except OSError as exc:
             raise YahooProfileError(f"Yahoo cookie seed failed: {exc}") from exc
         crumb = ""
