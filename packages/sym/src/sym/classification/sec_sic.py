@@ -28,11 +28,11 @@ carrying a contact email, or they return 403.
 from __future__ import annotations
 
 import json
-import time
 import urllib.request
 from collections.abc import Sequence
 from typing import Protocol
 
+from sym.classification._http import RequestThrottle
 from sym.classification.gics import GicsClassification, SecurityIdentity
 
 # SEC fair-access policy requires a descriptive UA with a contact address.
@@ -76,19 +76,10 @@ class HttpSecClient:
     """
 
     def __init__(self, min_interval: float = 0.12) -> None:
-        self._min_interval = min_interval
-        self._last_request = 0.0
-
-    def _throttle(self) -> None:
-        if self._min_interval <= 0:
-            return
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < self._min_interval:
-            time.sleep(self._min_interval - elapsed)
-        self._last_request = time.monotonic()
+        self._throttle = RequestThrottle(min_interval)
 
     def _get_json(self, url: str) -> object:
-        self._throttle()
+        self._throttle.wait()
         req = urllib.request.Request(url, headers=_UA)
         try:
             with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:

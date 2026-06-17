@@ -28,13 +28,13 @@ from __future__ import annotations
 
 import http.cookiejar
 import json
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Sequence
 from typing import Protocol
 
+from sym.classification._http import RequestThrottle
 from sym.classification.gics import GicsClassification, SecurityIdentity
 from sym.sources.yfinance_adapter import YAHOO_SUFFIX
 
@@ -163,18 +163,9 @@ class HttpYahooProfileClient:
     """
 
     def __init__(self, min_interval: float = 0.3) -> None:
-        self._min_interval = min_interval
-        self._last_request = 0.0
+        self._throttle = RequestThrottle(min_interval)
         self._crumb: str | None = None
         self._opener: urllib.request.OpenerDirector | None = None
-
-    def _throttle(self) -> None:
-        if self._min_interval <= 0:
-            return
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < self._min_interval:
-            time.sleep(self._min_interval - elapsed)
-        self._last_request = time.monotonic()
 
     def _ensure_session(self) -> None:
         if self._crumb is not None and self._opener is not None:
@@ -233,7 +224,7 @@ class HttpYahooProfileClient:
 
     def sector_for_symbol(self, symbol: str) -> tuple[str | None, str | None]:
         self._ensure_session()
-        self._throttle()
+        self._throttle.wait()
         try:
             payload = self._fetch_profile(symbol)
         except YahooProfileError as exc:
@@ -244,7 +235,7 @@ class HttpYahooProfileClient:
             self._crumb = None
             self._opener = None
             self._ensure_session()
-            self._throttle()
+            self._throttle.wait()
             payload = self._fetch_profile(symbol)
         return _parse_profile_payload(payload)
 

@@ -226,7 +226,7 @@ def test_list_fx_reviews_open_only_by_default():
 def test_fx_coverage_warns_on_open_rejections():
     from datetime import date as _d
 
-    from tests.test_fx_coverage import _Conn as _CovConn
+    from test_fx_coverage import _Conn as _CovConn
 
     from sym.validate.fx import check_fx_coverage
 
