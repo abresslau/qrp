@@ -408,6 +408,14 @@ Verified live: `sym eod --steps classify` → `[ ok ] classify: coverage 2168/21
 fills touched 0`, overall OK; `sym eod --dry-run` lists `classify` after `map`. AC6 fully met. 733
 tests green (eod step-order test updated; `run_classification_chain` test added).
 
+**Coverage guardrail (2026-06-17b — retro action item):** with classification now unattended-daily, a
+silent regression needs an automated gate. Added `validate/classification.py:check_classification_coverage`
+to the `sym validate` suite (now 14 checks; runs in the nightly `validate` step too) — gates
+whole-universe coverage at the same `DEFAULT_COVERAGE_THRESHOLD` via the shared `read_active_coverage`
+(validate + classify gates can't disagree), FAILs below the floor, always reports the by-source
+breakdown for drift visibility. Live: `[PASS] classification_coverage: 2168/2187 = 99.1%; by source:
+financedatabase 1968, yahoo_profile 97, b3 49, sec_sic 47, llm 7`.
+
 ### Review Findings — registry refactor (code review 2026-06-17b, 3-layer adversarial)
 
 decision-needed: none.
