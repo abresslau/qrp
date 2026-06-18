@@ -121,7 +121,7 @@ export default function ExplorerPage() {
       {gap && universe && (
         <div className="mb-2 flex items-center gap-2 text-xs">
           <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-amber-600/20 dark:text-amber-400 dark:ring-amber-500/30">
-            Missing {gap}
+            Missing data
           </span>
           <button
             onClick={() => {
