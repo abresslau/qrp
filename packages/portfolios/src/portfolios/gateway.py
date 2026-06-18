@@ -245,6 +245,11 @@ class DbPortfolioGateway:
                 {"figi": f, "ticker": tickers.get(f, f), "name": names.get(f), "weight": float(w)}
                 for f, w in wrows
             ]
+        # Net = signed sum (directional tilt); gross = abs sum (leverage). Computed from the
+        # SHOWN vector so they track the as-of picker and stay consistent with the holdings table.
+        # None when no vector is in scope (don't fabricate a 0 for an empty portfolio).
+        net_exposure = sum(w["weight"] for w in weights) if shown else None
+        gross_exposure = sum(abs(w["weight"]) for w in weights) if shown else None
         return {
             "portfolio_id": meta[0],
             "name": meta[1],
@@ -255,6 +260,8 @@ class DbPortfolioGateway:
             "as_of_dates": dates,
             "latest_as_of_date": latest,
             "shown_as_of_date": shown,
+            "net_exposure": net_exposure,
+            "gross_exposure": gross_exposure,
             "weights": weights,
         }
 
