@@ -361,11 +361,23 @@ class DbPortfolioGateway:
         ).fetchall()
         figis = [r[0] for r in wrows]
         # weight×return is a cross-database join — assemble in-app: returns + labels from sym.
-        # Pin every constituent to ONE returns date (the latest available for this window) so
-        # the summed portfolio return never blends returns as-of different dates.
+        # Pin every constituent to ONE returns date so the summed portfolio return never blends
+        # as-of dates — but to the latest BROADLY-COMPLETE date, NOT the bare max: the newest
+        # as_of is often a sparse "today" (only the markets that have closed so far), and pinning
+        # to it would drop every constituent whose market's latest session is a day behind. Pick
+        # the most recent date that >=90% of the covered members reach (scoped to THESE figis, so
+        # it's a tiny grouped scan, not a full fact_returns aggregate).
         ret_date = self._sym.execute(
-            "SELECT max(as_of_date) FROM fact_returns "
-            "WHERE composite_figi = ANY(%s) AND window_id = %s",
+            """
+            WITH per_day AS (
+                SELECT as_of_date, count(*) AS n
+                  FROM fact_returns
+                 WHERE composite_figi = ANY(%s) AND window_id = %s
+                 GROUP BY as_of_date
+            )
+            SELECT max(as_of_date) FROM per_day
+             WHERE n >= 0.9 * (SELECT max(n) FROM per_day)
+            """,
             (figis, window_id),
         ).fetchone()[0]
         pr_map = (
