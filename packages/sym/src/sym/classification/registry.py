@@ -34,7 +34,7 @@ from sym.classification.gics import (
 )
 from sym.classification.llm import LlmGicsSource
 from sym.classification.sec_sic import SecSicGicsSource
-from sym.classification.yahoo_profile import YahooProfileGicsSource
+from sym.classification.yahoo_profile import MAX_CONSECUTIVE_ERRORS, YahooProfileGicsSource
 
 
 @dataclass(frozen=True)
@@ -100,12 +100,19 @@ def _render_sec(src, s: ClassificationSummary, n: int) -> list[str]:
         f"{len(src.last_unmapped_sic)} unmapped SIC, {len(src.last_unmatched)} no-CIK/no-SIC, "
         f"{len(src.last_skipped_non_us)} non-US skipped, {len(src.last_errors)} lookup error(s)"
     )
+    ambiguous = getattr(src, "last_ambiguous_ticker", {})
+    if ambiguous:
+        extra += f", {len(ambiguous)} ambiguous ticker(s)"
     lines = [_header("sec_sic fill pass", n, s, extra)]
     lines += [
         f"  unmapped SIC: {t}: {sic} ({desc})"
         for t, (sic, desc) in sorted(src.last_unmapped_sic.items())
     ]
     lines += [f"  sec_sic lookup error: {t}: {m}" for t, m in sorted(src.last_errors.items())]
+    lines += [
+        f"  sec_sic ambiguous ticker {t}: CIKs {', '.join(ciks)} (resolved to active filer)"
+        for t, ciks in sorted(ambiguous.items())
+    ]
     lines += [f"  sec_sic write failed: {fail}" for fail in s.failures]
     return lines
 
@@ -131,6 +138,9 @@ def _render_yahoo(src, s: ClassificationSummary, n: int) -> list[str]:
         f"{len(src.last_unmapped_sector)} unmapped sector, {len(src.last_unmatched)} no-profile, "
         f"{len(src.last_unmapped_mic)} unmappable MIC, {len(src.last_errors)} fetch error(s)"
     )
+    short_circuited = getattr(src, "last_short_circuited", [])
+    if short_circuited:
+        extra += f", {len(short_circuited)} not attempted (circuit-breaker)"
     lines = [_header("yahoo_profile fill pass", n, s, extra)]
     lines += [
         f"  unmapped Yahoo sector: {sym}: {sec!r}"
@@ -139,6 +149,12 @@ def _render_yahoo(src, s: ClassificationSummary, n: int) -> list[str]:
     lines += [
         f"  yahoo_profile fetch error: {sym}: {m}" for sym, m in sorted(src.last_errors.items())
     ]
+    if short_circuited:
+        lines.append(
+            f"  yahoo_profile circuit-breaker tripped after "
+            f"{MAX_CONSECUTIVE_ERRORS} consecutive errors; "
+            f"{len(short_circuited)} name(s) not attempted (retried next run)"
+        )
     lines += [f"  yahoo_profile write failed: {fail}" for fail in s.failures]
     return lines
 

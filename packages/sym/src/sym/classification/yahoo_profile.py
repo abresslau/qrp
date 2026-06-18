@@ -53,6 +53,15 @@ _CRUMB_PATH = "/v1/test/getcrumb"
 _PROFILE_PATH = "/v10/finance/quoteSummary/{sym}?modules=assetProfile&crumb={crumb}"
 _HTTP_TIMEOUT = 20
 
+# Circuit-breaker: after this many CONSECUTIVE fetch errors the source stops walking
+# the residual and returns what it has. A sustained Yahoo outage (crumb dead / 401-storm)
+# otherwise costs ~1.2s per remaining name (0.3s throttle + 2 host attempts + a 401
+# re-establish-and-retry) — wasteful in the nightly EOD. A single success or a clean
+# no-profile resets the counter, so a few scattered bad names never trip it; only a
+# genuine run of failures (the outage signature) does. The next nightly run retries the
+# residual, so a short-circuited pass just fills fewer names this time.
+MAX_CONSECUTIVE_ERRORS = 5
+
 
 class YahooProfileError(RuntimeError):
     """The Yahoo session/crumb could not be established, or a profile fetch failed.
@@ -258,6 +267,9 @@ class YahooProfileGicsSource:
       no symbol could be built;
     * ``last_errors`` (symbol -> message): a per-symbol fetch error — isolated so
       one bad name never aborts the rest of the pass.
+    * ``last_short_circuited`` (symbols): names NOT attempted because the
+      consecutive-error circuit-breaker (:data:`MAX_CONSECUTIVE_ERRORS`) tripped —
+      the outage signal, surfaced so a short pass is never mistaken for "all filled".
     """
 
     def __init__(self, client: YahooProfileClient | None = None) -> None:
@@ -266,15 +278,19 @@ class YahooProfileGicsSource:
         self.last_unmatched: list[str] = []
         self.last_unmapped_mic: list[str] = []
         self.last_errors: dict[str, str] = {}
+        self.last_short_circuited: list[str] = []
 
     def fetch(self, securities: Sequence[SecurityIdentity]) -> dict[str, GicsClassification]:
         self.last_unmapped_sector = {}
         self.last_unmatched = []
         self.last_unmapped_mic = []
         self.last_errors = {}
+        self.last_short_circuited = []
 
         found: dict[str, GicsClassification] = {}
-        for security in securities:
+        securities = list(securities)
+        consecutive_errors = 0
+        for i, security in enumerate(securities):
             if not security.ticker:
                 continue
             symbol = yahoo_symbol_for_identity(security)
@@ -285,7 +301,20 @@ class YahooProfileGicsSource:
                 sector, _industry = self._client.sector_for_symbol(symbol)
             except YahooProfileError as exc:
                 self.last_errors[symbol] = str(exc)
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    # A run of fetch errors is the outage signature — stop here and
+                    # record every not-yet-attempted name rather than walk them all.
+                    for rest in securities[i + 1 :]:
+                        if rest.ticker:
+                            self.last_short_circuited.append(
+                                yahoo_symbol_for_identity(rest) or rest.ticker.upper()
+                            )
+                    break
                 continue
+            # Any non-error outcome (a hit OR a clean no-profile) resets the breaker:
+            # only a genuine consecutive run of errors, not scattered bad names, trips it.
+            consecutive_errors = 0
             if sector is None:
                 self.last_unmatched.append(symbol)
                 continue

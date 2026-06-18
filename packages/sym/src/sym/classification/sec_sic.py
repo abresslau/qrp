@@ -77,6 +77,9 @@ class HttpSecClient:
 
     def __init__(self, min_interval: float = 0.12) -> None:
         self._throttle = RequestThrottle(min_interval)
+        # ticker -> all CIKs the directory carried for it, when >1 (a reassignment
+        # collision). Recorded so the source can report the ambiguity; reset per call.
+        self.last_ambiguous_ticker: dict[str, list[str]] = {}
 
     def _get_json(self, url: str) -> object:
         self._throttle.wait()
@@ -91,10 +94,15 @@ class HttpSecClient:
         wanted = {t.upper() for t in tickers}
         if not wanted:
             return {}
+        self.last_ambiguous_ticker = {}
         payload = self._get_json(_CIK_URL)
         if not isinstance(payload, dict):
             raise SecSicError("company_tickers.json was not a JSON object")
-        out: dict[str, str] = {}
+        # Collect ALL CIKs the directory carries per ticker — NOT first-wins. SEC can
+        # list the same ticker under two CIKs after a reassignment (an old delisted
+        # filer + the new active one), and blindly taking the first risks attributing a
+        # stale filer's SIC to the new name.
+        candidates: dict[str, list[str]] = {}
         for row in payload.values():
             if not isinstance(row, dict):
                 continue
@@ -102,13 +110,63 @@ class HttpSecClient:
             cik_raw = row.get("cik_str")
             if ticker in wanted and cik_raw is not None:
                 try:
-                    # First listing wins; the directory has no duplicate-ticker rows.
-                    out.setdefault(ticker, f"{int(cik_raw):010d}")
+                    cik = f"{int(cik_raw):010d}"
                 except (TypeError, ValueError):
                     # A non-numeric cik_str is a one-off shape fault — skip that row,
                     # don't fail the whole directory parse.
                     continue
+                ciks = candidates.setdefault(ticker, [])
+                if cik not in ciks:
+                    ciks.append(cik)
+        out: dict[str, str] = {}
+        for ticker, ciks in candidates.items():
+            if len(ciks) == 1:
+                # The overwhelming-majority path — one CIK, zero extra calls.
+                out[ticker] = ciks[0]
+                continue
+            # Rare collision: resolve to the active filer (bounded to colliding
+            # tickers, so the common path is untouched) and record the ambiguity.
+            self.last_ambiguous_ticker[ticker] = list(ciks)
+            out[ticker] = self._resolve_active_cik(ticker, ciks)
         return out
+
+    def _resolve_active_cik(self, ticker: str, ciks: Sequence[str]) -> str:
+        """Pick the active filer among CIKs sharing a ticker.
+
+        Prefers the filer whose ``submissions`` payload still lists the ticker as
+        current, tie-broken by the most-recent filing date; falls back to the first
+        candidate when no submissions are reachable. Only ever called for the rare
+        duplicate-ticker collision, so the extra ``submissions`` fetches are bounded.
+        """
+        best_cik = ciks[0]
+        best_key: tuple[bool, str] = (False, "")
+        for cik in ciks:
+            try:
+                payload = self._get_json(_SUBMISSIONS_URL.format(cik=cik))
+            except SecSicError:
+                continue  # a candidate we can't read can't win; keep the fallback
+            if not isinstance(payload, dict):
+                continue
+            # Defensive at every level: a malformed/partial submissions payload (under
+            # rate-limit / error envelopes SEC returns odd shapes) must NOT raise here —
+            # an exception would escape this method and abort the whole fill pass, the
+            # very per-name isolation this source otherwise guarantees.
+            raw_tickers = payload.get("tickers")
+            current = (
+                {str(t).upper() for t in raw_tickers if t}
+                if isinstance(raw_tickers, (list, tuple))
+                else set()
+            )
+            recent = payload.get("filings")
+            recent = recent.get("recent") if isinstance(recent, dict) else None
+            dates = recent.get("filingDate") if isinstance(recent, dict) else None
+            valid_dates = [str(d) for d in dates if d] if isinstance(dates, list) else []
+            latest = max(valid_dates) if valid_dates else ""
+            key = (ticker.upper() in current, latest)
+            if key > best_key:
+                best_key = key
+                best_cik = cik
+        return best_cik
 
     def sic_for_cik(self, cik: str) -> tuple[str | None, str | None]:
         payload = self._get_json(_SUBMISSIONS_URL.format(cik=cik))
@@ -272,6 +330,10 @@ class SecSicGicsSource:
       errored (404 for a renamed/delisted CIK, a transient SEC blip, a 403/429).
       Isolated so ONE bad CIK never aborts the rest of the pass — the analogue of
       the SCD writer's per-security transaction durability.
+    * ``last_ambiguous_ticker`` (ticker -> [cik, …]): a ticker the SEC directory
+      carried under more than one CIK (a reassignment collision); the client
+      resolved it to the active filer, but the ambiguity is surfaced here so a
+      mis-resolution is visible rather than silent.
     """
 
     def __init__(self, client: SecClient | None = None) -> None:
@@ -280,12 +342,14 @@ class SecSicGicsSource:
         self.last_unmatched: list[str] = []
         self.last_skipped_non_us: list[str] = []
         self.last_errors: dict[str, str] = {}
+        self.last_ambiguous_ticker: dict[str, list[str]] = {}
 
     def fetch(self, securities: Sequence[SecurityIdentity]) -> dict[str, GicsClassification]:
         self.last_unmapped_sic = {}
         self.last_unmatched = []
         self.last_skipped_non_us = []
         self.last_errors = {}
+        self.last_ambiguous_ticker = {}
 
         # In-scope = US-listed (or mic-less, trusted ticker-only) with a ticker.
         # Keep the LAST identity per ticker (stable, deterministic) so the result
@@ -302,6 +366,9 @@ class SecSicGicsSource:
             return {}
 
         ciks = self._client.company_ciks(list(by_ticker))
+        # The live client records duplicate-ticker collisions it had to resolve; a
+        # test fake won't have the attribute, so default to none.
+        self.last_ambiguous_ticker = dict(getattr(self._client, "last_ambiguous_ticker", {}))
         found: dict[str, GicsClassification] = {}
         for ticker, security in by_ticker.items():
             cik = ciks.get(ticker)
