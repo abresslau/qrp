@@ -905,6 +905,19 @@ export interface components {
             /** N Series */
             n_series: number;
         };
+        /** ClassificationBySource */
+        ClassificationBySource: {
+            /** Source */
+            source: string;
+            /** Sector */
+            sector: string | null;
+            /** Industry */
+            industry: string | null;
+            /** Sub Industry */
+            sub_industry: string | null;
+            /** Effective */
+            effective: boolean;
+        };
         /** Client */
         Client: {
             /** Client Id */
@@ -1604,6 +1617,8 @@ export interface components {
         PriceInfo: {
             /** Close */
             close: number | null;
+            /** Volume */
+            volume: number | null;
             /** Session Date */
             session_date: string | null;
         };
@@ -1824,12 +1839,20 @@ export interface components {
             status: string | null;
             /** Delist Date */
             delist_date: string | null;
+            /** Country */
+            country: string | null;
+            /** Country Iso */
+            country_iso: string | null;
             /** Sector */
             sector: string | null;
             /** Industry */
             industry: string | null;
             /** Sub Industry */
             sub_industry: string | null;
+            /** Source */
+            source: string | null;
+            /** Classifications */
+            classifications: components["schemas"]["ClassificationBySource"][];
             price: components["schemas"]["PriceInfo"];
             fundamentals: components["schemas"]["FundamentalsInfo"] | null;
             /** Returns */
@@ -1849,6 +1872,20 @@ export interface components {
             currency: string | null;
             /** Status */
             status: string | null;
+            /** Price */
+            price: number | null;
+            /** Session Date */
+            session_date: string | null;
+            /** Volume */
+            volume: number | null;
+            /** Market Cap Usd */
+            market_cap_usd: number | null;
+            /** Country */
+            country: string | null;
+            /** Country Iso */
+            country_iso: string | null;
+            /** Sector */
+            sector: string | null;
         };
         /** SeriesDetail */
         SeriesDetail: {
