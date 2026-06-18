@@ -280,6 +280,39 @@ def _cmd_classify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_classify_opinions(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.classification.registry import run_opinion_matrix
+    from sym.config import load_dotenv
+    from sym.db import connect
+
+    load_dotenv()
+    try:
+        with connect() as conn:
+            results = run_opinion_matrix(conn, llm_enabled=args.llm)
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+
+    errored = 0
+    for r in results:
+        if r.skipped:
+            if r.skip_line:
+                print(r.skip_line)
+        elif r.error is not None:
+            errored += 1
+            print(f"{r.name} opinion FAILED (others unaffected): {r.error}", file=sys.stderr)
+        else:
+            s = r.summary
+            print(
+                f"{r.name} opinion: {s.classified} classified of {s.in_scope} fetched; "
+                f"{s.rows_inserted} inserted, {s.rows_updated} updated, {s.unchanged} unchanged, "
+                f"{s.rows_closed} superseded, {s.failed} failed"
+            )
+    return 2 if errored else 0
+
+
 def _cmd_snapshot_calendar(_args: argparse.Namespace) -> int:
     import psycopg
 
@@ -1317,6 +1350,19 @@ def build_parser() -> argparse.ArgumentParser:
         "llm_classifications.json artifact; source='llm') after the deterministic sources.",
     )
     p_classify.set_defaults(func=_cmd_classify)
+
+    p_opinions = sub.add_parser(
+        "classify-opinions",
+        help="Multi-source opinion matrix: run EVERY source over ALL active securities and "
+        "record each source's own GICS opinion in gics_source_opinion (gics_scd untouched). "
+        "On-demand — NOT the nightly EOD (yahoo over the whole universe is slow).",
+    )
+    p_opinions.add_argument(
+        "--llm",
+        action="store_true",
+        help="Also include the opt-in LLM artifact source in the matrix.",
+    )
+    p_opinions.set_defaults(func=_cmd_classify_opinions)
 
     p_snapshot_cal = sub.add_parser(
         "snapshot-calendar",

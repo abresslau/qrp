@@ -41,9 +41,12 @@ SOURCE_PRECEDENCE: dict[str, int] = {
     "financedatabase": 0,
     "b3": 1,
     "sec_sic": 2,
-    "fmp": 3,  # paid vendor profile — above the free yahoo/llm, below official sources
+    "fmp": 3,  # paid vendor profile — above the free yahoo/wikidata/llm, below official sources
     "yahoo_profile": 4,
-    "llm": 5,
+    "wikidata": 5,  # free structured (community) — above the LLM tier, below vendor/official
+    "llm": 6,  # LLM tier (low-trust) ↓
+    "perplexity": 7,
+    "google": 8,
 }
 
 
@@ -232,14 +235,16 @@ def plan_classifications(
 
 
 def read_active_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
-    """Active securities with their current ISIN/ticker (the GICS match keys).
+    """Active securities with their current ISIN/ticker/MIC (the GICS match keys).
 
     The ISIN enables the financedatabase ISIN fallback for names the dataset
-    lacks a CompositeFIGI for. Active-only is the explicit survivorship scope.
+    lacks a CompositeFIGI for; the MIC lets exchange-scoped sources (b3, sec_sic,
+    yahoo_profile, …) match correctly when ALL active names are fed to every source
+    (the multi-source opinion matrix). Active-only is the explicit survivorship scope.
     """
     rows = conn.execute(
         """
-        SELECT s.composite_figi,
+        SELECT s.composite_figi, s.mic,
                max(y.symbol_value) FILTER (WHERE y.symbol_type = 'isin')   AS isin,
                max(y.symbol_value) FILTER (WHERE y.symbol_type = 'ticker') AS ticker
           FROM securities s
@@ -247,11 +252,11 @@ def read_active_identities(conn: psycopg.Connection) -> list[SecurityIdentity]:
                  ON y.composite_figi = s.composite_figi
                 AND y.valid_to IS NULL
          WHERE s.status = 'active'
-         GROUP BY s.composite_figi
+         GROUP BY s.composite_figi, s.mic
          ORDER BY s.composite_figi
         """
     ).fetchall()
-    return [SecurityIdentity(figi, isin, ticker) for figi, isin, ticker in rows]
+    return [SecurityIdentity(figi, isin, ticker, mic) for figi, mic, isin, ticker in rows]
 
 
 def read_active_coverage(conn: psycopg.Connection) -> tuple[int, int]:
