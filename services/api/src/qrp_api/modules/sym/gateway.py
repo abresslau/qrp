@@ -493,10 +493,17 @@ class DbSymGateway:
     """
 
     def securities(
-        self, q: str | None, limit: int, offset: int, universe: str | None = None
+        self,
+        q: str | None,
+        limit: int,
+        offset: int,
+        universe: str | None = None,
+        gap: str | None = None,
     ) -> dict:
-        """Paged list of securities — optionally searched (ticker/name/FIGI) and/or filtered
-        to one universe's resolved members. Both filters apply to the count + rows alike."""
+        """Paged list of securities — optionally searched (ticker/name/FIGI), filtered to one
+        universe's resolved members, and/or restricted to that universe's GAP names in a layer
+        (``gap`` in prices/returns/fundamentals = the members the Universes-coverage "partial"
+        pill counts as not-covered). All filters apply to the count + rows alike."""
         c = self._conn
         conds: list[str] = []
         params: list = []
@@ -518,6 +525,29 @@ class DbSymGateway:
                 "AND r.resolution_status = 'resolved')"
             )
             params.append(universe)
+        # Gap drill-down (only within a universe): members NOT covered in a layer — the inverse
+        # of the coverage "covered" test, using the SAME cutoffs so it matches the pill count.
+        if gap and universe:
+            latest = _scalar(c, "SELECT max(session_date) FROM prices_raw")
+            if gap == "prices":
+                conds.append(
+                    "NOT EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi "
+                    "AND p.session_date >= %s - 7)"
+                )
+                params.append(latest)
+            elif gap == "returns":
+                one_win = _scalar(c, "SELECT min(window_id) FROM return_window")
+                conds.append(
+                    "NOT EXISTS (SELECT 1 FROM fact_returns fr WHERE fr.composite_figi = s.composite_figi "
+                    "AND fr.window_id = %s AND fr.as_of_date >= %s - 7)"
+                )
+                params += [one_win, latest]
+            elif gap == "fundamentals":
+                conds.append(
+                    "NOT EXISTS (SELECT 1 FROM fundamentals f WHERE f.composite_figi = s.composite_figi "
+                    "AND f.as_of_date >= %s - 180)"
+                )
+                params.append(latest)
         where = (" WHERE " + " AND ".join(conds)) if conds else ""
         total = c.execute(
             f"SELECT count(*) {self._SEC_FROM} {where}", params
