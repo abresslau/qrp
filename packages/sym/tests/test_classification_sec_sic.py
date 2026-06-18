@@ -10,6 +10,7 @@ import pytest
 
 from sym.classification.gics import SecurityIdentity, apply_classifications
 from sym.classification.sec_sic import (
+    HttpSecClient,
     SecSicError,
     SecSicGicsSource,
     sic_to_gics_sector,
@@ -187,6 +188,158 @@ def test_fetch_isolates_a_single_cik_lookup_error():
     assert out["FIGI_GOOD"].sector_name == "Information Technology"
     assert "BAD" in src.last_errors
     assert "404" in src.last_errors["BAD"]
+
+
+# --- HttpSecClient.company_ciks duplicate-ticker / CIK dedup ---------------------------
+
+
+def _directory(rows):
+    """Build a company_tickers.json-shaped directory: {idx: {cik_str, ticker, title}}."""
+    return {str(i): row for i, row in enumerate(rows)}
+
+
+def _submissions(tickers, dates):
+    return {"tickers": tickers, "filings": {"recent": {"filingDate": dates}}}
+
+
+def test_company_ciks_single_cik_path_is_unchanged_and_makes_no_extra_calls(monkeypatch):
+    client = HttpSecClient(min_interval=0)
+    calls: list[str] = []
+
+    def fake_get(url):
+        calls.append(url)
+        return _directory(
+            [
+                {"cik_str": 320193, "ticker": "AAPL", "title": "Apple"},
+                {"cik_str": 773840, "ticker": "HON", "title": "Honeywell"},
+            ]
+        )
+
+    monkeypatch.setattr(client, "_get_json", fake_get)
+    out = client.company_ciks(["AAPL", "HON"])
+
+    assert out == {"AAPL": "0000320193", "HON": "0000773840"}
+    assert client.last_ambiguous_ticker == {}
+    # only the directory was fetched — no submissions calls for single-CIK tickers
+    assert len(calls) == 1
+
+
+def test_company_ciks_resolves_duplicate_ticker_to_active_filer(monkeypatch):
+    # ZZZ appears under two CIKs (an old delisted filer + a new active one). The
+    # resolver must pick the filer that still lists ZZZ as current, not directory order.
+    client = HttpSecClient(min_interval=0)
+    stale = "0000000111"
+    active = "0000000222"
+
+    def fake_get(url):
+        if "company_tickers" in url:
+            return _directory(
+                [
+                    {"cik_str": 111, "ticker": "ZZZ", "title": "Old Filer (delisted)"},
+                    {"cik_str": 222, "ticker": "ZZZ", "title": "New Filer (active)"},
+                ]
+            )
+        if stale in url:
+            return _submissions(["WAS"], ["2014-02-01"])  # no longer lists ZZZ, old filing
+        if active in url:
+            return _submissions(["ZZZ"], ["2026-05-01"])  # currently lists ZZZ, recent
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(client, "_get_json", fake_get)
+    out = client.company_ciks(["ZZZ"])
+
+    assert out == {"ZZZ": active}  # NOT the first directory row (stale)
+    # the collision is surfaced for the report, listing both candidate CIKs
+    assert client.last_ambiguous_ticker == {"ZZZ": [stale, active]}
+
+
+def test_company_ciks_duplicate_ticker_falls_back_to_first_when_submissions_unreadable(monkeypatch):
+    client = HttpSecClient(min_interval=0)
+
+    def fake_get(url):
+        if "company_tickers" in url:
+            return _directory(
+                [
+                    {"cik_str": 111, "ticker": "ZZZ", "title": "A"},
+                    {"cik_str": 222, "ticker": "ZZZ", "title": "B"},
+                ]
+            )
+        raise SecSicError("submissions unreachable")
+
+    monkeypatch.setattr(client, "_get_json", fake_get)
+    out = client.company_ciks(["ZZZ"])
+
+    # no submissions reachable → deterministic fallback to the first candidate, still surfaced
+    assert out == {"ZZZ": "0000000111"}
+    assert client.last_ambiguous_ticker == {"ZZZ": ["0000000111", "0000000222"]}
+
+
+def test_company_ciks_duplicate_ticker_tie_breaks_on_recency_when_both_list_ticker(monkeypatch):
+    # both filers CURRENTLY list ZZZ — the active-listing signal ties, so the resolver
+    # must fall through to most-recent filingDate (proves filingDate isn't ignored).
+    client = HttpSecClient(min_interval=0)
+
+    def fake_get(url):
+        if "company_tickers" in url:
+            return _directory(
+                [
+                    {"cik_str": 111, "ticker": "ZZZ", "title": "Older"},
+                    {"cik_str": 222, "ticker": "ZZZ", "title": "Newer"},
+                ]
+            )
+        if "0000000111" in url:
+            return _submissions(["ZZZ"], ["2019-03-01"])  # lists ZZZ but older
+        if "0000000222" in url:
+            return _submissions(["ZZZ"], ["2026-05-01"])  # lists ZZZ and more recent
+        raise AssertionError(f"unexpected url {url}")
+
+    monkeypatch.setattr(client, "_get_json", fake_get)
+    out = client.company_ciks(["ZZZ"])
+
+    assert out == {"ZZZ": "0000000222"}  # recency broke the active-listing tie
+
+
+def test_resolve_active_cik_survives_malformed_submissions_without_raising(monkeypatch):
+    # A partial/malformed submissions payload must NOT crash the resolver (and thus
+    # abort the whole fill pass): an all-falsy filingDate list (empty after filtering)
+    # and a non-list `tickers` are the concrete traps. Falls back to the first CIK.
+    client = HttpSecClient(min_interval=0)
+
+    def fake_get(url):
+        if "company_tickers" in url:
+            return _directory(
+                [
+                    {"cik_str": 111, "ticker": "ZZZ", "title": "A"},
+                    {"cik_str": 222, "ticker": "ZZZ", "title": "B"},
+                ]
+            )
+        # both malformed: tickers is a bare string (truthy non-list), filingDate all-falsy
+        return {"tickers": "ZZZ", "filings": {"recent": {"filingDate": ["", None]}}}
+
+    monkeypatch.setattr(client, "_get_json", fake_get)
+    out = client.company_ciks(["ZZZ"])  # must not raise
+
+    assert out == {"ZZZ": "0000000111"}  # graceful fallback to the first candidate
+    assert client.last_ambiguous_ticker == {"ZZZ": ["0000000111", "0000000222"]}
+
+
+def test_source_surfaces_ambiguity_from_the_client():
+    # the source copies the client's collision record into its own side-channel so the
+    # renderer can report it (the live client has it; a plain fake wouldn't).
+    class _AmbiguousClient:
+        last_ambiguous_ticker = {"ZZZ": ["0000000111", "0000000222"]}
+
+        def company_ciks(self, tickers):
+            return {"ZZZ": "0000000222"}
+
+        def sic_for_cik(self, cik):
+            return ("3571", "Electronic Computers")
+
+    src = SecSicGicsSource(client=_AmbiguousClient())
+    out = src.fetch([SecurityIdentity("FIGI_Z", ticker="ZZZ", mic="XNAS")])
+
+    assert out["FIGI_Z"].sector_name == "Information Technology"
+    assert src.last_ambiguous_ticker == {"ZZZ": ["0000000111", "0000000222"]}
 
 
 # --- AC8: provenance persists end-to-end through the SCD writer -------------------------

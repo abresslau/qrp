@@ -144,6 +144,71 @@ def test_fetch_isolates_a_single_symbol_fetch_error():
     assert "BAD.L" in src.last_errors
 
 
+# --- circuit-breaker (consecutive-failure short-circuit on a Yahoo outage) --------------
+
+
+def _err(msg="HTTP Error 401"):
+    return YahooProfileError(msg, is_auth=True)
+
+
+def test_circuit_breaker_trips_after_consecutive_errors_and_records_remainder():
+    from sym.classification.yahoo_profile import MAX_CONSECUTIVE_ERRORS
+
+    # Every symbol errors → a total outage. The pass must stop after K errors and
+    # record the not-yet-attempted names instead of walking the whole residual.
+    names = [SecurityIdentity(f"F{i}", ticker=f"T{i}", mic="XLON") for i in range(12)]
+    client = FakeYahooClient({}, raises={f"T{i}.L": _err() for i in range(12)})
+    src = YahooProfileGicsSource(client=client)
+    out = src.fetch(names)
+
+    assert out == {}
+    # exactly K symbols attempted (each errored), then the breaker tripped
+    assert len(client.calls) == MAX_CONSECUTIVE_ERRORS
+    assert len(src.last_errors) == MAX_CONSECUTIVE_ERRORS
+    # the remaining 12 - K names are recorded as not-attempted, none silently dropped
+    assert len(src.last_short_circuited) == 12 - MAX_CONSECUTIVE_ERRORS
+    assert src.last_short_circuited[0] == f"T{MAX_CONSECUTIVE_ERRORS}.L"
+
+
+def test_scattered_errors_interleaved_with_hits_never_trip_the_breaker():
+    # errors separated by successes must NOT trip the breaker — a success resets the
+    # consecutive counter, so only a genuine run of failures short-circuits.
+    profiles, raises, names = {}, {}, []
+    for i in range(12):
+        names.append(SecurityIdentity(f"F{i}", ticker=f"T{i}", mic="XLON"))
+        if i % 2 == 0:
+            raises[f"T{i}.L"] = _err()  # every other name errors
+        else:
+            profiles[f"T{i}.L"] = ("Energy", "x")  # ...but the alternates succeed
+    client = FakeYahooClient(profiles, raises=raises)
+    src = YahooProfileGicsSource(client=client)
+    out = src.fetch(names)
+
+    assert len(client.calls) == 12  # every name attempted — breaker never tripped
+    assert src.last_short_circuited == []
+    assert len(out) == 6  # the six successes classified
+
+
+def test_clean_no_profile_resets_the_breaker():
+    # a clean no-profile (Yahoo returned (None, None)) is NOT an error and must reset
+    # the counter — interleaving no-profiles with errors should never trip the breaker.
+    profiles, raises, names = {}, {}, []
+    for i in range(12):
+        names.append(SecurityIdentity(f"F{i}", ticker=f"T{i}", mic="XLON"))
+        if i % 2 == 0:
+            raises[f"T{i}.L"] = _err()
+        # odd i: absent from profiles → FakeYahooClient returns (None, None) = no-profile
+    client = FakeYahooClient(profiles, raises=raises)
+    src = YahooProfileGicsSource(client=client)
+    src.fetch(names)
+
+    assert len(client.calls) == 12  # never short-circuited
+    assert src.last_short_circuited == []
+    assert len(src.last_unmatched) == 6  # the no-profiles
+    # sanity: with 6 errors total but none consecutive past the threshold, none dropped
+    assert len(src.last_errors) == 6
+
+
 # --- AC8: provenance persists end-to-end through the SCD writer -------------------------
 
 
