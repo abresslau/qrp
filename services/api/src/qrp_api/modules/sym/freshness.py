@@ -26,13 +26,19 @@ class AreaFreshness:
     as_of_date: date | None
     days_behind: int | None  # vs the latest session; None when unknown
     status: str  # "ok" | "stale" | "unknown"
+    coverage: str | None = None  # optional note, e.g. "102/2145 at the latest session"
 
 
-def classify(area: str, as_of_date: date | None, latest_session: date | None) -> AreaFreshness:
+def classify(
+    area: str,
+    as_of_date: date | None,
+    latest_session: date | None,
+    coverage: str | None = None,
+) -> AreaFreshness:
     if as_of_date is None:
-        return AreaFreshness(area, None, None, "unknown")
+        return AreaFreshness(area, None, None, "unknown", coverage)
     if latest_session is None:
-        return AreaFreshness(area, as_of_date, None, "unknown")
+        return AreaFreshness(area, as_of_date, None, "unknown", coverage)
     days_behind = max(0, (latest_session - as_of_date).days)
     status = "stale" if days_behind > STALE_AFTER_DAYS else "ok"
-    return AreaFreshness(area, as_of_date, days_behind, status)
+    return AreaFreshness(area, as_of_date, days_behind, status, coverage)

@@ -5,6 +5,7 @@ type Freshness = {
   as_of_date: string | null;
   days_behind: number | null;
   status: "ok" | "stale" | "unknown";
+  coverage: string | null;
 };
 type LastRun = {
   run_id: string;
@@ -18,6 +19,7 @@ type Overview = {
   securities: number;
   universes: number;
   priced_securities: number;
+  priced_at_latest: number;
   latest_session: string | null;
   freshness: Freshness[];
   last_run: LastRun;
@@ -76,7 +78,15 @@ export default async function SymOverviewPage() {
         <Stat label="Securities" value={o.securities.toLocaleString()} />
         <Stat label="Universes" value={o.universes} />
         <Stat label="Priced" value={o.priced_securities.toLocaleString()} />
-        <Stat label="Latest session" value={o.latest_session ?? "—"} />
+        <Stat
+          label="At latest session"
+          value={
+            <>
+              {o.priced_at_latest.toLocaleString()}
+              <span className="ml-1 text-sm font-normal text-muted">/ {o.priced_securities.toLocaleString()}</span>
+            </>
+          }
+        />
       </div>
 
       <h2 className="mt-8 text-sm font-medium uppercase tracking-wide text-muted">Freshness</h2>
@@ -85,7 +95,10 @@ export default async function SymOverviewPage() {
           <tbody className="divide-y divide-border">
             {o.freshness.map((f) => (
               <tr key={f.area} className="hover:bg-fg/5">
-                <td className="px-4 py-3 capitalize text-fg">{f.area}</td>
+                <td className="px-4 py-3 capitalize text-fg">
+                  {f.area}
+                  {f.coverage && <span className="ml-2 text-xs text-muted/70">{f.coverage}</span>}
+                </td>
                 <td className="px-4 py-3 tabular-nums text-muted">{f.as_of_date ?? "—"}</td>
                 <td className="px-4 py-3 tabular-nums text-muted">
                   {f.days_behind === null ? "" : `${f.days_behind}d behind`}

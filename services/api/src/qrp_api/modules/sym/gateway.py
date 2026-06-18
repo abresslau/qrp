@@ -49,6 +49,7 @@ class SymOverview:
     securities: int
     universes: int
     priced_securities: int
+    priced_at_latest: int
     latest_session: date | None
     freshness: list[AreaFreshness]
     last_run: LastRun | None
@@ -83,14 +84,46 @@ class DbSymGateway:
         universes = _scalar(c, "SELECT count(*) FROM universe")
         priced = _scalar(c, "SELECT count(DISTINCT composite_figi) FROM prices_raw")
         latest_session = _scalar(c, "SELECT max(session_date) FROM prices_raw")
+        # How many securities actually have a bar on the newest session — exposes the gap
+        # when a recent load only refreshed a sub-universe (e.g. nasdaq100) and the rest lag.
+        priced_at_latest = (
+            _scalar(
+                c,
+                "SELECT count(DISTINCT composite_figi) FROM prices_raw WHERE session_date = %s",
+                (latest_session,),
+            )
+            if latest_session is not None
+            else 0
+        )
+        # The latest session at which the universe is BROADLY priced (>=90% of a full-load
+        # day). The prices area's freshness keys off THIS, not max(session_date) — otherwise
+        # one fresh sub-universe makes prices report "0 days behind / ok" while most of the
+        # universe is days stale (the max-is-fresh-masks-the-laggards trap).
+        coverage_session = _scalar(
+            c,
+            """
+            WITH per_day AS (
+                SELECT session_date, count(DISTINCT composite_figi) AS n
+                  FROM prices_raw GROUP BY session_date
+            )
+            SELECT max(session_date) FROM per_day
+             WHERE n >= 0.9 * (SELECT max(n) FROM per_day)
+            """,
+        )
 
         area_as_of = {
-            "prices": _scalar(c, "SELECT max(session_date) FROM prices_raw"),
+            "prices": coverage_session,
             "returns": _scalar(c, "SELECT max(as_of_date) FROM fact_returns"),
             "fx": _scalar(c, "SELECT max(as_of_date) FROM fx_rate"),
             "fundamentals": _scalar(c, "SELECT max(as_of_date) FROM fundamentals"),
         }
-        freshness = [classify(a, d, latest_session) for a, d in area_as_of.items()]
+        prices_coverage = (
+            f"{priced_at_latest}/{priced} at {latest_session}" if latest_session else None
+        )
+        freshness = [
+            classify(a, d, latest_session, coverage=(prices_coverage if a == "prices" else None))
+            for a, d in area_as_of.items()
+        ]
 
         row = c.execute(
             "SELECT run_id, mode, status, started_at, finished_at, rows_written "
@@ -102,6 +135,7 @@ class DbSymGateway:
             securities=securities,
             universes=universes,
             priced_securities=priced,
+            priced_at_latest=priced_at_latest,
             latest_session=latest_session,
             freshness=freshness,
             last_run=last_run,

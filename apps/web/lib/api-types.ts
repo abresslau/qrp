@@ -1053,6 +1053,8 @@ export interface components {
             days_behind: number | null;
             /** Status */
             status: string;
+            /** Coverage */
+            coverage?: string | null;
         };
         /** FundamentalsInfo */
         FundamentalsInfo: {
@@ -2054,6 +2056,8 @@ export interface components {
             universes: number;
             /** Priced Securities */
             priced_securities: number;
+            /** Priced At Latest */
+            priced_at_latest: number;
             /** Latest Session */
             latest_session: string | null;
             /** Freshness */

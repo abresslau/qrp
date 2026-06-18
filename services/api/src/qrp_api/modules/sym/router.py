@@ -33,6 +33,7 @@ class FreshnessItem(BaseModel):
     as_of_date: str | None
     days_behind: int | None
     status: str
+    coverage: str | None = None
 
 
 class LastRun(BaseModel):
@@ -48,6 +49,7 @@ class SymOverview(BaseModel):
     securities: int
     universes: int
     priced_securities: int
+    priced_at_latest: int
     latest_session: str | None
     freshness: list[FreshnessItem]
     last_run: LastRun | None
@@ -261,6 +263,7 @@ def overview(gw: DbSymGateway = Depends(_gateway)) -> dict:
         "securities": o.securities,
         "universes": o.universes,
         "priced_securities": o.priced_securities,
+        "priced_at_latest": o.priced_at_latest,
         "latest_session": o.latest_session.isoformat() if o.latest_session else None,
         "freshness": [
             {
@@ -268,6 +271,7 @@ def overview(gw: DbSymGateway = Depends(_gateway)) -> dict:
                 "as_of_date": f.as_of_date.isoformat() if f.as_of_date else None,
                 "days_behind": f.days_behind,
                 "status": f.status,
+                "coverage": f.coverage,
             }
             for f in o.freshness
         ],
