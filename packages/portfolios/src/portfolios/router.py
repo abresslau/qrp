@@ -101,6 +101,8 @@ class PortfolioDetail(BaseModel):
     as_of_dates: list[str]
     latest_as_of_date: str | None
     shown_as_of_date: str | None  # the vector this response carries (Q4.5 as-of picker)
+    net_exposure: float | None  # Σ weight (signed; long − short) over the shown vector; null if none
+    gross_exposure: float | None  # Σ |weight| (long + |short|) over the shown vector; null if none
     weights: list[Weight]
 
 

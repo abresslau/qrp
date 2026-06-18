@@ -97,7 +97,7 @@ export default function PortfolioDetail() {
   return (
     <div className="mx-auto max-w-4xl">
       <Link href="/portfolios" className="text-sm text-muted hover:text-fg">← Portfolios</Link>
-      <div className="mt-2 flex items-baseline justify-between">
+      <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-fg">{p.name}</h1>
           <p className="mt-1 text-sm text-muted">
@@ -108,53 +108,22 @@ export default function PortfolioDetail() {
               : ""}
           </p>
         </div>
+        <div className="flex gap-5 text-right">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-muted">Net exp.</div>
+            <div className="text-lg font-semibold tabular-nums text-fg">{pct(p.net_exposure)}</div>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-wide text-muted">Gross exp.</div>
+            <div className="text-lg font-semibold tabular-nums text-fg">
+              {p.gross_exposure == null ? "—" : `${(p.gross_exposure * 100).toFixed(1)}%`}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Holdings (the Q4.5 as-of picker: any stored historical vector) */}
-      {p.as_of_dates.length > 0 && (
-        <>
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
-              Holdings{p.shown_as_of_date ? ` · ${p.shown_as_of_date}` : ""}
-            </h2>
-            {p.as_of_dates.length > 1 && (
-              <select
-                value={p.shown_as_of_date ?? ""}
-                onChange={(e) => loadPortfolio(e.target.value)}
-                className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
-              >
-                {p.as_of_dates.map((d) => (
-                  <option key={d} value={d}>
-                    as of {d}{d === p.latest_as_of_date ? " (latest)" : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-          <div className="mt-3 overflow-hidden rounded-xl border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-surface text-left text-muted">
-                <tr>
-                  <th className="px-4 py-2 font-medium">Ticker</th>
-                  <th className="px-4 py-2 font-medium">Name</th>
-                  <th className="px-4 py-2 text-right font-medium">Weight</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {p.weights.map((w) => (
-                  <tr key={w.figi} className="hover:bg-fg/5">
-                    <td className="px-4 py-2 font-medium text-fg">{w.ticker}</td>
-                    <td className="px-4 py-2 text-muted">{w.name ?? "—"}</td>
-                    <td className="px-4 py-2 text-right tabular-nums text-fg">
-                      {(w.weight * 100).toFixed(1)}%
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+      {/* Risk & return analytics — top of the book */}
+      <AnalyticsPanel pid={String(id)} />
 
       {/* Snapshot attribution (current holdings × window returns — not TWR) */}
       <div className="mt-6 rounded-xl border border-border bg-surface p-4">
@@ -223,9 +192,6 @@ export default function PortfolioDetail() {
         </>
       )}
 
-      {/* Risk & return analytics */}
-      <AnalyticsPanel pid={String(id)} />
-
       {/* Upload weights */}
       <h2 className="mt-8 text-sm font-medium uppercase tracking-wide text-muted">Upload weights</h2>
       <form onSubmit={upload} className="mt-3 rounded-xl border border-border bg-surface p-4">
@@ -258,6 +224,52 @@ export default function PortfolioDetail() {
           {msg && <span className="text-xs text-muted">{msg}</span>}
         </div>
       </form>
+
+      {/* Holdings — the position list, at the bottom (the Q4.5 as-of picker drives it) */}
+      {p.as_of_dates.length > 0 && (
+        <>
+          <div className="mt-8 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
+              Holdings{p.shown_as_of_date ? ` · ${p.shown_as_of_date}` : ""}
+            </h2>
+            {p.as_of_dates.length > 1 && (
+              <select
+                value={p.shown_as_of_date ?? ""}
+                onChange={(e) => loadPortfolio(e.target.value)}
+                className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+              >
+                {p.as_of_dates.map((d) => (
+                  <option key={d} value={d}>
+                    as of {d}{d === p.latest_as_of_date ? " (latest)" : ""}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div className="mt-3 overflow-hidden rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-surface text-left text-muted">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Ticker</th>
+                  <th className="px-4 py-2 font-medium">Name</th>
+                  <th className="px-4 py-2 text-right font-medium">Weight</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {p.weights.map((w) => (
+                  <tr key={w.figi} className="hover:bg-fg/5">
+                    <td className="px-4 py-2 font-medium text-fg">{w.ticker}</td>
+                    <td className="px-4 py-2 text-muted">{w.name ?? "—"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-fg">
+                      {(w.weight * 100).toFixed(1)}%
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       <p className="mt-6 text-xs text-muted">
         Weights stored in QRP&apos;s own schema; returns weight sym&apos;s EOD returns. Swap in a live

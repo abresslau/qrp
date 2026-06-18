@@ -1547,6 +1547,10 @@ export interface components {
             latest_as_of_date: string | null;
             /** Shown As Of Date */
             shown_as_of_date: string | null;
+            /** Net Exposure */
+            net_exposure: number | null;
+            /** Gross Exposure */
+            gross_exposure: number | null;
             /** Weights */
             weights: components["schemas"]["Weight"][];
         };
