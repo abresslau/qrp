@@ -114,6 +114,22 @@ def test_securities_no_universe_has_no_member_filter():
     assert all("universe_member_resolution" not in s for s in conn.seen)
 
 
+def test_securities_gap_filter_adds_not_exists_for_the_layer():
+    for layer, table in [("prices", "FROM prices_raw p"), ("returns", "FROM fact_returns fr"),
+                         ("fundamentals", "FROM fundamentals f")]:
+        conn = _ListConn(1, [])
+        DbSymGateway(conn).securities(None, 50, 0, universe="sp500", gap=layer)
+        count_sql = next(s for s in conn.seen if "count(*)" in s)
+        assert "NOT EXISTS" in count_sql and table in count_sql, layer
+
+
+def test_securities_gap_ignored_without_universe():
+    # gap is a per-universe drill-down — meaningless (and ignored) without a universe
+    conn = _ListConn(1, [])
+    DbSymGateway(conn).securities(None, 50, 0, gap="prices")
+    assert all("NOT EXISTS" not in s for s in conn.seen)
+
+
 def test_securities_rows_query_places_enrichment_joins_before_where():
     # SQL-validity guard: a search builds a WHERE; every JOIN must precede it (Postgres
     # rejects a JOIN after WHERE). Regression for the enrichment-joins-after-WHERE bug.

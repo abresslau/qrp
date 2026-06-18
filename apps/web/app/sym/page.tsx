@@ -19,16 +19,26 @@ function pill(status: string): string {
   return "bg-rose-500/10 text-rose-700 ring-rose-600/20 dark:text-rose-400 dark:ring-rose-500/30"; // missing
 }
 
-function LayerCell({ layer }: { layer: Layer }) {
+function LayerCell({ layer, universeId, layerKey }: { layer: Layer; universeId: string; layerKey: string }) {
+  const badge = (
+    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ${pill(layer.status)}`}>
+      {layer.status}
+    </span>
+  );
   return (
     <td className="px-4 py-2 text-right">
       <div className="flex items-center justify-end gap-2">
         <span className="tabular-nums text-fg">
           {layer.covered}/{layer.total}
         </span>
-        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ring-1 ${pill(layer.status)}`}>
-          {layer.status}
-        </span>
+        {layer.status === "ok" ? (
+          badge
+        ) : (
+          // partial/missing → drill into the gap names on Explorer
+          <Link href={`/sym/explorer?u=${universeId}&gap=${layerKey}`} title="Show the missing names" className="hover:opacity-80">
+            {badge}
+          </Link>
+        )}
       </div>
       <div className="text-[11px] tabular-nums text-muted">{layer.latest_date ?? "—"}</div>
     </td>
@@ -76,9 +86,9 @@ export default async function UniversesPage() {
                 <td className="px-4 py-2 text-right tabular-nums text-muted">
                   {u.members_resolved.toLocaleString()}
                 </td>
-                <LayerCell layer={u.prices} />
-                <LayerCell layer={u.returns} />
-                <LayerCell layer={u.fundamentals} />
+                <LayerCell layer={u.prices} universeId={u.universe_id} layerKey="prices" />
+                <LayerCell layer={u.returns} universeId={u.universe_id} layerKey="returns" />
+                <LayerCell layer={u.fundamentals} universeId={u.universe_id} layerKey="fundamentals" />
                 <td className="px-4 py-2 text-right">
                   <Link
                     href={`/sym/heatmap?u=${u.universe_id}`}

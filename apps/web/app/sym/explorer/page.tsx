@@ -31,6 +31,7 @@ export default function ExplorerPage() {
   const [loading, setLoading] = useState(true);
   const [universe, setUniverse] = useState("");
   const [universes, setUniverses] = useState<Uni[]>([]);
+  const [gap, setGap] = useState(""); // a layer (prices/returns/fundamentals) to show only the gap names
 
   // universe options for the dropdown + the initial filter from the ?u= deep-link (the
   // Universes landing links here with it). Both are set inside the fetch's async callback —
@@ -41,8 +42,11 @@ export default function ExplorerPage() {
       .then((r) => r.json())
       .then((list: Uni[]) => {
         setUniverses(list);
-        const u = new URLSearchParams(window.location.search).get("u");
+        const params = new URLSearchParams(window.location.search);
+        const u = params.get("u");
         if (u) setUniverse(u);
+        const g = params.get("gap");
+        if (g) setGap(g);
       })
       .catch(() => setUniverses([]));
   }, []);
@@ -54,7 +58,7 @@ export default function ExplorerPage() {
         // setLoading lives in the (deferred) timer callback, not the synchronous effect body
         // (react-hooks/set-state-in-effect); loading shows as the debounced fetch starts.
         setLoading(true);
-        const url = `/api/sym/securities?limit=${LIMIT}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}${universe ? `&universe=${encodeURIComponent(universe)}` : ""}`;
+        const url = `/api/sym/securities?limit=${LIMIT}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}${universe ? `&universe=${encodeURIComponent(universe)}` : ""}${gap && universe ? `&gap=${encodeURIComponent(gap)}` : ""}`;
         fetch(url, { cache: "no-store" })
           .then((r) => r.json())
           .then((d: Resp) => {
@@ -71,7 +75,7 @@ export default function ExplorerPage() {
       alive = false;
       clearTimeout(t);
     };
-  }, [q, offset, universe]);
+  }, [q, offset, universe, gap]);
 
   const total = data?.total ?? 0;
   const from = total === 0 ? 0 : offset + 1;
@@ -87,6 +91,7 @@ export default function ExplorerPage() {
             onChange={(e) => {
               setLoading(true);
               setUniverse(e.target.value);
+              setGap(""); // switching universe clears the layer-gap filter (it was universe-specific)
               setOffset(0);
             }}
             className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-fg/40"
@@ -112,6 +117,24 @@ export default function ExplorerPage() {
           />
         </div>
       </div>
+
+      {gap && universe && (
+        <div className="mb-2 flex items-center gap-2 text-xs">
+          <span className="rounded-full bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-amber-600/20 dark:text-amber-400 dark:ring-amber-500/30">
+            Missing {gap}
+          </span>
+          <button
+            onClick={() => {
+              setLoading(true);
+              setGap("");
+              setOffset(0);
+            }}
+            className="text-muted underline hover:text-fg"
+          >
+            clear
+          </button>
+        </div>
+      )}
 
       <div className="mb-2 text-xs text-muted">
         {loading ? "Loading…" : `${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()}`}
