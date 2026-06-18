@@ -121,8 +121,8 @@ class _DetailConn:
             return _Cur(one=self.f.get("ticker"))
         if "FROM security_names" in sql:
             return _Cur(one=self.f.get("name"))
-        if "DISTINCT ON (source)" in sql:  # must precede the generic gics_scd match
-            return _Cur(rows=self.f.get("by_source", []))
+        if "FROM gics_source_opinion" in sql:  # the multi-source opinion matrix
+            return _Cur(rows=self.f.get("opinions", []))
         if "FROM gics_scd" in sql:
             return _Cur(one=self.f.get("gics"))
         if "FROM exchange WHERE mic" in sql:
@@ -142,9 +142,12 @@ def test_security_detail_enriches_volume_country_source_and_by_source():
         ticker=("AAPL",),
         name=("Apple Inc",),
         gics=("Information Technology", "Tech Hardware", None, "financedatabase"),
-        by_source=[
-            ("financedatabase", "Information Technology", "Tech Hardware", None, True),
-            ("sec_sic", "Information Technology", None, None, False),
+        # the opinion matrix: 3 sources opine; effective is computed by matching the
+        # resolved gics_scd source (financedatabase), NOT stored in the opinion rows
+        opinions=[
+            ("financedatabase", "Information Technology", "Tech Hardware", None),
+            ("sec_sic", "Information Technology", None, None),
+            ("wikidata", "Information Technology", None, None),
         ],
         country=("United States", "US"),
         px=(296.42, 51000000, date(2026, 6, 17)),
@@ -158,10 +161,30 @@ def test_security_detail_enriches_volume_country_source_and_by_source():
     assert d["source"] == "financedatabase"
     assert d["price"]["close"] == 296.42 and d["price"]["volume"] == 51000000
     assert d["price"]["session_date"] == "2026-06-17"
-    # the multi-source breakdown, effective flag carried through
-    assert [c["source"] for c in d["classifications"]] == ["financedatabase", "sec_sic"]
+    # the full multi-source breakdown; effective flag matches the resolved source
+    assert [c["source"] for c in d["classifications"]] == ["financedatabase", "sec_sic", "wikidata"]
     eff = {c["source"]: c["effective"] for c in d["classifications"]}
-    assert eff == {"financedatabase": True, "sec_sic": False}
+    assert eff == {"financedatabase": True, "sec_sic": False, "wikidata": False}
+
+
+def test_security_detail_falls_back_to_resolved_row_when_opinion_matrix_empty():
+    # before `classify-opinions` is run, the matrix is empty — the detail must still show
+    # the resolved gics_scd classification (one row, flagged effective).
+    conn = _DetailConn(
+        master=("F1", "XNAS", "USD", "active", None),
+        ticker=("AAPL",),
+        name=("Apple Inc",),
+        gics=("Information Technology", "Tech Hardware", None, "financedatabase"),
+        opinions=[],  # matrix not populated
+        country=("United States", "US"),
+        px=(296.42, 51000000, date(2026, 6, 17)),
+        fund=None,
+        rets=[],
+    )
+    d = DbSymGateway(conn).security_detail("F1")
+    assert [c["source"] for c in d["classifications"]] == ["financedatabase"]
+    assert d["classifications"][0]["effective"] is True
+    assert d["classifications"][0]["sector"] == "Information Technology"
 
 
 def test_security_detail_null_safe_when_no_enrichment_rows():

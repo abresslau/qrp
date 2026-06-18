@@ -591,21 +591,27 @@ class DbSymGateway:
             "WHERE composite_figi = %s ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
             (figi,),
         ).fetchone()
-        # Per-source breakdown: each source's latest recorded classification (effective row +
-        # any superseded-by-a-different-level source rows still retained in the SCD). Honest
-        # caveat: a same-sector in-place provenance upgrade overwrites the lower source's row,
-        # so this is "as recorded per source", not a full audit of every source consulted.
-        by_source = c.execute(
+        # Per-source breakdown — every source's OWN current opinion from the multi-source
+        # opinion matrix (gics_source_opinion), one effective row per source. `effective`
+        # flags the source that won precedence into the resolved gics_scd (gics[3]). Falls
+        # back to the single resolved gics_scd row when the matrix hasn't been populated yet
+        # (`sym classify-opinions` not run), so the detail still shows the resolved class.
+        resolved_source = gics[3] if gics else None
+        opinions = c.execute(
             """
-            SELECT DISTINCT ON (source)
-                   source, sector_name, industry_name, sub_industry_name,
-                   (valid_to IS NULL) AS effective
-              FROM gics_scd
-             WHERE composite_figi = %s
-             ORDER BY source, (valid_to IS NULL) DESC, valid_from DESC
+            SELECT source, sector_name, industry_name, sub_industry_name
+              FROM gics_source_opinion
+             WHERE composite_figi = %s AND valid_to IS NULL
+             ORDER BY source
             """,
             (figi,),
         ).fetchall()
+        if opinions:
+            by_source = [(src, sec, ind, sub, src == resolved_source) for src, sec, ind, sub in opinions]
+        elif gics:
+            by_source = [(gics[3], gics[0], gics[1], gics[2], True)]  # resolved-row fallback
+        else:
+            by_source = []
         country = c.execute(
             "SELECT country, country_iso FROM exchange WHERE mic = %s",
             (master[1],),

@@ -83,11 +83,11 @@ class _RouterConn:
     ``current`` maps a FIGI to its currently-effective gics_scd row as a 5-tuple:
     the four level names followed by ``valid_from`` (matching the columns
     ``_current_row`` selects). The securities query returns identity-shaped
-    ``(composite_figi, isin, ticker)`` rows.
+    ``(composite_figi, mic, isin, ticker)`` rows.
     """
 
     def __init__(self, active_figis=(), current=None):
-        self._active = [(f, None, None) for f in active_figis]
+        self._active = [(f, None, None, None) for f in active_figis]
         self._current = current or {}
         self.calls: list[tuple[str, tuple]] = []
 
@@ -524,15 +524,17 @@ def test_read_classifiable_scope_lower_sources_by_precedence():
     conn = _CaptureConn()
     read_classifiable_identities(conn, source="sec_sic")
     _sql, params = conn.calls[-1]
-    assert set(params[0]) == {"fmp", "yahoo_profile", "llm"}
+    assert set(params[0]) == {"fmp", "yahoo_profile", "wikidata", "llm", "perplexity", "google"}
 
     conn2 = _CaptureConn()
     read_classifiable_identities(conn2, source="financedatabase")
-    assert set(conn2.calls[-1][1][0]) == {"b3", "sec_sic", "fmp", "yahoo_profile", "llm"}
+    assert set(conn2.calls[-1][1][0]) == {
+        "b3", "sec_sic", "fmp", "yahoo_profile", "wikidata", "llm", "perplexity", "google"
+    }
 
     conn3 = _CaptureConn()
-    read_classifiable_identities(conn3, source="llm")
-    assert conn3.calls[-1][1][0] == []  # nothing ranks below llm → only unclassified in scope
+    read_classifiable_identities(conn3, source="google")
+    assert conn3.calls[-1][1][0] == []  # nothing ranks below google → only unclassified in scope
 
 
 def test_read_classifiable_unknown_source_falls_back_to_unclassified():

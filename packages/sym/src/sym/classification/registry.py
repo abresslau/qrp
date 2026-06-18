@@ -30,10 +30,15 @@ from sym.classification.gics import (
     apply_classifications,
     classify_universe,
     plan_classifications,
+    read_active_identities,
     read_classifiable_identities,
 )
+from sym.classification.google_gemini import GoogleGeminiGicsSource, google_enabled
 from sym.classification.llm import LlmGicsSource
+from sym.classification.opinions import OpinionSummary, apply_source_opinions
+from sym.classification.perplexity import PerplexityGicsSource, perplexity_enabled
 from sym.classification.sec_sic import SecSicGicsSource
+from sym.classification.wikidata import WikidataGicsSource
 from sym.classification.yahoo_profile import MAX_CONSECUTIVE_ERRORS, YahooProfileGicsSource
 
 
@@ -169,11 +174,44 @@ def _render_llm(src, s: ClassificationSummary, n: int) -> list[str]:
     return lines
 
 
+def _render_wikidata(src, s: ClassificationSummary, n: int) -> list[str]:
+    sc = getattr(src, "last_short_circuited", [])
+    extra = (
+        f"{len(src.last_unmatched)} no-entity/no-industry, "
+        f"{len(src.last_unmapped)} unmapped industries, {len(src.last_errors)} batch error(s)"
+    )
+    if sc:
+        extra += f", {len(sc)} not queried (circuit-breaker)"
+    lines = [_header("wikidata fill pass", n, s, extra)]
+    lines += [f"  wikidata batch error: {b}: {m}" for b, m in sorted(src.last_errors.items())]
+    lines += [f"  wikidata write failed: {fail}" for fail in s.failures]
+    return lines
+
+
+def _render_llm_http(label: str):
+    """Renderer factory for the keyed LLM-http sources (perplexity/google) — same shape."""
+
+    def _render(src, s: ClassificationSummary, n: int) -> list[str]:
+        sc = getattr(src, "last_short_circuited", [])
+        extra = (
+            f"{len(src.last_unmapped)} off-taxonomy, {len(src.last_unmatched)} no-answer, "
+            f"{len(src.last_errors)} fetch error(s)"
+        )
+        if sc:
+            extra += f", {len(sc)} not attempted (circuit-breaker)"
+        lines = [_header(f"{label} fill pass (keyed, low-trust)", n, s, extra)]
+        lines += [f"  {label} fetch error: {t}: {m}" for t, m in sorted(src.last_errors.items())]
+        lines += [f"  {label} write failed: {fail}" for fail in s.failures]
+        return lines
+
+    return _render
+
+
 def fill_specs(*, llm_enabled: bool) -> list[FillSpec]:
     """The fill chain in precedence order (financedatabase, the primary, is the CLI anchor).
 
-    ``llm_enabled`` gates the opt-in LLM pass (``sym classify --llm``); the FMP pass is
-    gated on ``$FMP_API_KEY`` (keyed source — dormant without a key).
+    ``llm_enabled`` gates the opt-in LLM pass; FMP/perplexity/google are gated on their API
+    keys (keyed sources — dormant without a key). wikidata is keyless and always runs.
     """
     return [
         FillSpec("b3", B3GicsSource, _render_b3),
@@ -186,7 +224,22 @@ def fill_specs(*, llm_enabled: bool) -> list[FillSpec]:
             skip_line="fmp fill pass: skipped — no FMP_API_KEY (keyed source, dormant until set)",
         ),
         FillSpec("yahoo_profile", YahooProfileGicsSource, _render_yahoo),
+        FillSpec("wikidata", WikidataGicsSource, _render_wikidata),
         FillSpec("llm", LlmGicsSource, _render_llm, gate=lambda: llm_enabled, skip_line=""),
+        FillSpec(
+            "perplexity",
+            PerplexityGicsSource,
+            _render_llm_http("perplexity"),
+            gate=perplexity_enabled,
+            skip_line="perplexity fill pass: skipped — no PERPLEXITY_API_KEY (keyed, dormant)",
+        ),
+        FillSpec(
+            "google",
+            GoogleGeminiGicsSource,
+            _render_llm_http("google"),
+            gate=google_enabled,
+            skip_line="google fill pass: skipped — no GOOGLE_API_KEY/GEMINI_API_KEY (dormant)",
+        ),
     ]
 
 
@@ -253,3 +306,74 @@ def validate_fill_specs(specs: list[FillSpec]) -> None:
 
 
 validate_fill_specs(fill_specs(llm_enabled=True))
+
+
+# ---------------------------------------------------------------------------
+# Multi-source opinion matrix — every source's OWN opinion over ALL companies
+# ---------------------------------------------------------------------------
+# Orthogonal to the fill chain above: the fill chain resolves ONE classification into
+# gics_scd (fill-only, precedence). This runs EVERY source over EVERY active identity and
+# records each opinion in gics_source_opinion (via apply_source_opinions). gics_scd is
+# untouched. Explicit/on-demand (`sym classify-opinions`), NOT the nightly EOD — running
+# yahoo over the whole universe is slow and the LLM sources cost per call.
+
+
+@dataclass
+class OpinionPass:
+    """Outcome of one source's opinion pass, for the CLI to print."""
+
+    name: str
+    summary: OpinionSummary | None = None
+    skipped: bool = False
+    skip_line: str = ""
+    error: str | None = None
+
+
+def _opinion_specs(*, llm_enabled: bool) -> list[tuple]:
+    """(name, factory, gate, skip_line) for ALL sources incl. the financedatabase primary.
+
+    The opinion matrix is precedence-INDEPENDENT — it stores every source's opinion. Keyed/
+    opt-in sources are gated (FMP/perplexity/google on their key; llm on the flag) and skip
+    cleanly when unavailable, exactly as in the resolved chain.
+    """
+    return [
+        ("financedatabase", FinanceDatabaseGicsSource, None, ""),
+        ("b3", B3GicsSource, None, ""),
+        ("sec_sic", SecSicGicsSource, None, ""),
+        ("yahoo_profile", YahooProfileGicsSource, None, ""),
+        ("wikidata", WikidataGicsSource, None, ""),
+        (
+            "fmp",
+            FmpProfileGicsSource,
+            lambda: bool(os.environ.get("FMP_API_KEY")),
+            "fmp opinion: skipped — no FMP_API_KEY",
+        ),
+        ("llm", LlmGicsSource, (lambda: llm_enabled), "llm opinion: skipped — not enabled"),
+        ("perplexity", PerplexityGicsSource, perplexity_enabled,
+         "perplexity opinion: skipped — no PERPLEXITY_API_KEY"),
+        ("google", GoogleGeminiGicsSource, google_enabled,
+         "google opinion: skipped — no GOOGLE_API_KEY/GEMINI_API_KEY"),
+    ]
+
+
+def run_opinion_matrix(conn: psycopg.Connection, *, llm_enabled: bool = False) -> list[OpinionPass]:
+    """Run every (gated) source over ALL active identities → gics_source_opinion.
+
+    Each source's opinion is written independently (apply_source_opinions, SCD per
+    (figi, source)). A source that errors is isolated (recorded, the rest continue) — it can
+    never corrupt gics_scd (this writes only the opinion store). Returns a pass per source.
+    """
+    ids = read_active_identities(conn)
+    results: list[OpinionPass] = []
+    for name, factory, gate, skip_line in _opinion_specs(llm_enabled=llm_enabled):
+        if gate is not None and not gate():
+            results.append(OpinionPass(name, skipped=True, skip_line=skip_line))
+            continue
+        try:
+            source = factory()
+            found = source.fetch(ids)
+            summary = apply_source_opinions(conn, list(found.values()))
+            results.append(OpinionPass(name, summary=summary))
+        except Exception as exc:  # noqa: BLE001 — one source failing must not abort the matrix
+            results.append(OpinionPass(name, error=f"{type(exc).__name__}: {exc}"))
+    return results
