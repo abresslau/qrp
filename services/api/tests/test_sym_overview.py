@@ -48,7 +48,13 @@ class _OverviewConn:
     newest session 2026-06-16 but only 102 names priced there; the universe is broadly
     priced through 2026-06-09 (the coverage session)."""
 
+    def __init__(self):
+        self.seen: list[str] = []
+
     def execute(self, sql, params=None):
+        self.seen.append(sql)
+        if "EXISTS (SELECT 1 FROM prices_raw" in sql:  # priced (must precede the securities count)
+            return _Cur((2145,))
         if "count(*) FROM securities" in sql:
             return _Cur((2145,))
         if "count(*) FROM universe" in sql:
@@ -56,7 +62,7 @@ class _OverviewConn:
         if "WHERE session_date = %s" in sql:  # priced_at_latest (must precede the bare prices count)
             return _Cur((102,))
         if "count(DISTINCT composite_figi) FROM prices_raw" in sql:
-            return _Cur((2145,))  # priced (distinct ever)
+            return _Cur((2145,))  # (no longer used by priced; kept for any other distinct-count)
         if "WITH per_day" in sql:  # broad-coverage session
             return _Cur((date(2026, 6, 9),))
         if "max(session_date) FROM prices_raw" in sql:  # latest_session
@@ -70,6 +76,16 @@ class _OverviewConn:
         if "FROM pipeline_run_log" in sql:
             return _Cur(None)  # no last run
         raise AssertionError(f"unexpected SQL: {sql}")
+
+
+def test_coverage_query_is_bounded_to_recent_history_not_full_table():
+    # perf guard: the per-day count(DISTINCT) coverage scan MUST be date-bounded — over the
+    # full 13M-row prices_raw it took 125s (Overview timed out). Bounding to recent sessions
+    # drops it to ~1.5s. Regression for that.
+    conn = _OverviewConn()
+    DbSymGateway(conn).overview()
+    cov_sql = next(s for s in conn.seen if "WITH per_day" in s)
+    assert "session_date >=" in cov_sql  # bounded, not a full-table aggregate
 
 
 def test_overview_prices_freshness_keys_off_broad_coverage_not_max():
