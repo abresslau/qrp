@@ -360,9 +360,10 @@ def securities(
     q: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    universe: str | None = Query(default=None),
     gw: DbSymGateway = Depends(_gateway),
 ) -> dict:
-    return gw.securities(q, limit, offset)
+    return gw.securities(q, limit, offset, universe)
 
 
 @router.get("/securities/{figi}", response_model=SecurityDetail)

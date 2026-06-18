@@ -68,7 +68,9 @@ export default async function UniversesPage() {
             {rows.map((u) => (
               <tr key={u.universe_id} className="hover:bg-fg/5">
                 <td className="px-4 py-2 text-fg">
-                  {u.name ?? u.universe_id}
+                  <Link href={`/sym/explorer?u=${u.universe_id}`} className="font-medium hover:underline">
+                    {u.name ?? u.universe_id}
+                  </Link>
                   <span className="ml-2 font-mono text-[11px] text-muted">{u.universe_id}</span>
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">

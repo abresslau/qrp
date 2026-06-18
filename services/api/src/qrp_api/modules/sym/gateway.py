@@ -492,14 +492,17 @@ class DbSymGateway:
           ) sn ON TRUE
     """
 
-    def securities(self, q: str | None, limit: int, offset: int) -> dict:
-        """Paged, optionally-searched list of securities (by ticker / name / FIGI)."""
+    def securities(
+        self, q: str | None, limit: int, offset: int, universe: str | None = None
+    ) -> dict:
+        """Paged list of securities — optionally searched (ticker/name/FIGI) and/or filtered
+        to one universe's resolved members. Both filters apply to the count + rows alike."""
         c = self._conn
-        where = ""
+        conds: list[str] = []
         params: list = []
         if q:
-            where = (
-                " WHERE (upper(coalesce(tk.symbol_value, '')) LIKE %s"
+            conds.append(
+                "(upper(coalesce(tk.symbol_value, '')) LIKE %s"
                 " OR upper(coalesce(sn.name, '')) LIKE %s"
                 " OR s.composite_figi LIKE %s)"
             )
@@ -507,7 +510,15 @@ class DbSymGateway:
             # everything and '_' would wildcard single characters.
             esc = q.upper().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             like = f"%{esc}%"
-            params = [like, like, like]
+            params += [like, like, like]
+        if universe:
+            conds.append(
+                "EXISTS (SELECT 1 FROM universe_member_resolution r "
+                "WHERE r.universe_id = %s AND r.composite_figi = s.composite_figi "
+                "AND r.resolution_status = 'resolved')"
+            )
+            params.append(universe)
+        where = (" WHERE " + " AND ".join(conds)) if conds else ""
         total = c.execute(
             f"SELECT count(*) {self._SEC_FROM} {where}", params
         ).fetchone()[0]
