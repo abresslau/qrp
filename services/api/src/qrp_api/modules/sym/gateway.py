@@ -407,12 +407,34 @@ class DbSymGateway:
         total = c.execute(
             f"SELECT count(*) {self._SEC_FROM} {where}", params
         ).fetchone()[0]
+        # Enrichment joins live HERE (the rows query) only — NOT in `_SEC_FROM`, which the
+        # count(*) + search WHERE share. Keeping them off `_SEC_FROM` means the per-row price/
+        # fundamentals/gics laterals run only for the LIMITed page, not for every counted row.
         rows = c.execute(
             f"""
             SELECT s.composite_figi,
                    coalesce(tk.symbol_value, s.composite_figi) AS ticker,
-                   sn.name, s.mic, s.currency_code, s.status
-            {self._SEC_FROM} {where}
+                   sn.name, s.mic, s.currency_code, s.status,
+                   px.close, px.volume, px.session_date,
+                   fu.market_cap_usd, ex.country, ex.country_iso, gx.sector_name
+            {self._SEC_FROM}
+            LEFT JOIN exchange ex ON ex.mic = s.mic
+            LEFT JOIN LATERAL (
+                SELECT close, volume, session_date FROM prices_raw p
+                 WHERE p.composite_figi = s.composite_figi
+                 ORDER BY p.session_date DESC LIMIT 1
+            ) px ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT market_cap_usd FROM fundamentals f
+                 WHERE f.composite_figi = s.composite_figi
+                 ORDER BY f.as_of_date DESC LIMIT 1
+            ) fu ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT sector_name FROM gics_scd g
+                 WHERE g.composite_figi = s.composite_figi
+                 ORDER BY (g.valid_to IS NULL) DESC, g.valid_from DESC LIMIT 1
+            ) gx ON TRUE
+            {where}
             ORDER BY tk.symbol_value NULLS LAST, s.composite_figi
             LIMIT %s OFFSET %s
             """,
@@ -430,8 +452,18 @@ class DbSymGateway:
                     "mic": mic,
                     "currency": currency,
                     "status": status,
+                    "price": float(close) if close is not None else None,
+                    "volume": int(volume) if volume is not None else None,
+                    "session_date": session_date.isoformat() if session_date else None,
+                    "market_cap_usd": float(mcap) if mcap is not None else None,
+                    "country": country,
+                    "country_iso": country_iso,
+                    "sector": sector,
                 }
-                for figi, ticker, name, mic, currency, status in rows
+                for (
+                    figi, ticker, name, mic, currency, status,
+                    close, volume, session_date, mcap, country, country_iso, sector,
+                ) in rows
             ],
         }
 
@@ -521,12 +553,31 @@ class DbSymGateway:
             (figi,),
         )
         gics = c.execute(
-            "SELECT sector_name, industry_name, sub_industry_name FROM gics_scd "
+            "SELECT sector_name, industry_name, sub_industry_name, source FROM gics_scd "
             "WHERE composite_figi = %s ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
             (figi,),
         ).fetchone()
+        # Per-source breakdown: each source's latest recorded classification (effective row +
+        # any superseded-by-a-different-level source rows still retained in the SCD). Honest
+        # caveat: a same-sector in-place provenance upgrade overwrites the lower source's row,
+        # so this is "as recorded per source", not a full audit of every source consulted.
+        by_source = c.execute(
+            """
+            SELECT DISTINCT ON (source)
+                   source, sector_name, industry_name, sub_industry_name,
+                   (valid_to IS NULL) AS effective
+              FROM gics_scd
+             WHERE composite_figi = %s
+             ORDER BY source, (valid_to IS NULL) DESC, valid_from DESC
+            """,
+            (figi,),
+        ).fetchall()
+        country = c.execute(
+            "SELECT country, country_iso FROM exchange WHERE mic = %s",
+            (master[1],),
+        ).fetchone()
         px = c.execute(
-            "SELECT close, session_date FROM prices_raw WHERE composite_figi = %s "
+            "SELECT close, volume, session_date FROM prices_raw WHERE composite_figi = %s "
             "ORDER BY session_date DESC LIMIT 1",
             (figi,),
         ).fetchone()
@@ -552,12 +603,26 @@ class DbSymGateway:
             "currency": master[2],
             "status": master[3],
             "delist_date": master[4].isoformat() if master[4] else None,
+            "country": country[0] if country else None,
+            "country_iso": country[1] if country else None,
             "sector": gics[0] if gics else None,
             "industry": gics[1] if gics else None,
             "sub_industry": gics[2] if gics else None,
+            "source": gics[3] if gics else None,
+            "classifications": [
+                {
+                    "source": src,
+                    "sector": sec,
+                    "industry": ind,
+                    "sub_industry": sub,
+                    "effective": bool(eff),
+                }
+                for src, sec, ind, sub, eff in by_source
+            ],
             "price": {
                 "close": float(px[0]) if px and px[0] is not None else None,
-                "session_date": px[1].isoformat() if px and px[1] else None,
+                "volume": int(px[1]) if px and px[1] is not None else None,
+                "session_date": px[2].isoformat() if px and px[2] else None,
             },
             "fundamentals": {
                 "market_cap_lcy": float(fund[0]) if fund and fund[0] is not None else None,

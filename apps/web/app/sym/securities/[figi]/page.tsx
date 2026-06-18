@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
+import { fmtCompact } from "@/lib/format";
 
 type Ret = { code: string; label: string; pr: number | null; tr: number | null; as_of_date: string | null };
+type ClassBySource = {
+  source: string;
+  sector: string | null;
+  industry: string | null;
+  sub_industry: string | null;
+  effective: boolean;
+};
 type Detail = {
   figi: string;
   ticker: string;
@@ -10,10 +18,14 @@ type Detail = {
   currency: string | null;
   status: string | null;
   delist_date: string | null;
+  country: string | null;
+  country_iso: string | null;
   sector: string | null;
   industry: string | null;
   sub_industry: string | null;
-  price: { close: number | null; session_date: string | null };
+  source: string | null;
+  classifications: ClassBySource[];
+  price: { close: number | null; volume: number | null; session_date: string | null };
   fundamentals: {
     market_cap_lcy: number | null;
     market_cap_usd: number | null;
@@ -31,13 +43,7 @@ function retClass(r: number | null): string {
   if (r == null) return "text-muted";
   return r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
 }
-function fmtCap(v: number | null): string {
-  if (v == null) return "—";
-  if (v >= 1e12) return `${(v / 1e12).toFixed(2)}T`;
-  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
-  return v.toFixed(0);
-}
+const fmtCap = fmtCompact;
 
 export default async function SecurityPage({ params }: { params: Promise<{ figi: string }> }) {
   const { figi } = await params;
@@ -75,22 +81,28 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
           </h1>
           <p className="mt-1 text-sm text-muted">
             {[d.sector, d.industry, d.sub_industry].filter(Boolean).join(" · ") || "Unclassified"}
+            {d.source && <span className="ml-2 text-xs text-muted/70">via {d.source}</span>}
           </p>
         </div>
         <div className="text-right text-sm text-muted">
           <div className="font-mono text-xs">{d.figi}</div>
           <div>
-            {d.mic ?? "—"} · {d.currency ?? "—"} · {d.status ?? "—"}
+            {d.mic ?? "—"} · {d.country ?? d.country_iso ?? "—"} · {d.currency ?? "—"} · {d.status ?? "—"}
           </div>
         </div>
       </div>
 
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <div className="rounded-xl border border-border bg-surface p-4">
           <div className="text-xs uppercase tracking-wide text-muted">Close ({d.currency})</div>
           <div className="mt-1 text-2xl font-semibold tabular-nums text-fg">
             {d.price.close != null ? d.price.close.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
           </div>
+          <div className="mt-1 text-xs text-muted">{d.price.session_date ?? "—"}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="text-xs uppercase tracking-wide text-muted">Volume</div>
+          <div className="mt-1 text-2xl font-semibold tabular-nums text-fg">{fmtCap(d.price.volume)}</div>
           <div className="mt-1 text-xs text-muted">{d.price.session_date ?? "—"}</div>
         </div>
         <div className="rounded-xl border border-border bg-surface p-4">
@@ -113,6 +125,41 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
           </div>
         </div>
       </div>
+
+      {d.classifications.length > 0 && (
+        <>
+          <h2 className="mt-8 text-sm font-medium uppercase tracking-wide text-muted">
+            Classification by source
+          </h2>
+          <div className="mt-3 overflow-hidden rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-surface text-left text-muted">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Source</th>
+                  <th className="px-4 py-2 font-medium">Sector</th>
+                  <th className="px-4 py-2 font-medium">Industry</th>
+                  <th className="px-4 py-2 font-medium">Sub-industry</th>
+                  <th className="px-4 py-2 font-medium">Effective</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {d.classifications.map((c) => (
+                  <tr key={c.source} className="hover:bg-fg/5">
+                    <td className="px-4 py-2 font-mono text-xs text-fg">{c.source}</td>
+                    <td className="px-4 py-2 text-muted">{c.sector ?? "—"}</td>
+                    <td className="px-4 py-2 text-muted">{c.industry ?? "—"}</td>
+                    <td className="px-4 py-2 text-muted">{c.sub_industry ?? "—"}</td>
+                    <td className="px-4 py-2 text-muted">
+                      {c.effective ? <span className="text-emerald-600 dark:text-emerald-400">✓ effective</span> : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-muted">As recorded per source — the effective row wins by precedence.</p>
+        </>
+      )}
 
       <h2 className="mt-8 text-sm font-medium uppercase tracking-wide text-muted">
         Returns across windows

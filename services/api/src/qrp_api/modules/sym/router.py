@@ -119,6 +119,14 @@ class SecurityRow(BaseModel):
     mic: str | None
     currency: str | None
     status: str | None
+    # Enrichment (EOD warehouse reads; all nullable — partial coverage by design).
+    price: float | None
+    session_date: str | None
+    volume: int | None
+    market_cap_usd: float | None
+    country: str | None
+    country_iso: str | None
+    sector: str | None
 
 
 class SecuritiesPage(BaseModel):
@@ -130,6 +138,7 @@ class SecuritiesPage(BaseModel):
 
 class PriceInfo(BaseModel):
     close: float | None
+    volume: int | None
     session_date: str | None
 
 
@@ -149,6 +158,14 @@ class WindowReturn(BaseModel):
     as_of_date: str | None
 
 
+class ClassificationBySource(BaseModel):
+    source: str
+    sector: str | None
+    industry: str | None
+    sub_industry: str | None
+    effective: bool
+
+
 class SecurityDetail(BaseModel):
     figi: str
     ticker: str
@@ -157,9 +174,13 @@ class SecurityDetail(BaseModel):
     currency: str | None
     status: str | None
     delist_date: str | None
+    country: str | None
+    country_iso: str | None
     sector: str | None
     industry: str | None
     sub_industry: str | None
+    source: str | None
+    classifications: list[ClassificationBySource]
     price: PriceInfo
     fundamentals: FundamentalsInfo | None
     returns: list[WindowReturn]

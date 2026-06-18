@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { fmtCompact, fmtPrice } from "@/lib/format";
 
 type Row = {
   figi: string;
@@ -10,6 +11,13 @@ type Row = {
   mic: string | null;
   currency: string | null;
   status: string | null;
+  price: number | null;
+  session_date: string | null;
+  volume: number | null;
+  market_cap_usd: number | null;
+  country: string | null;
+  country_iso: string | null;
+  sector: string | null;
 };
 type Resp = { total: number; limit: number; offset: number; rows: Row[] };
 
@@ -79,8 +87,13 @@ export default function ExplorerPage() {
             <tr>
               <th className="px-4 py-2 font-medium">Ticker</th>
               <th className="px-4 py-2 font-medium">Name</th>
+              <th className="px-4 py-2 font-medium">Sector</th>
+              <th className="px-4 py-2 font-medium">Country</th>
               <th className="px-4 py-2 font-medium">Exchange</th>
               <th className="px-4 py-2 font-medium">Ccy</th>
+              <th className="px-4 py-2 text-right font-medium">Price</th>
+              <th className="px-4 py-2 text-right font-medium">Volume</th>
+              <th className="px-4 py-2 text-right font-medium">Mkt cap</th>
               <th className="px-4 py-2 font-medium">Status</th>
             </tr>
           </thead>
@@ -93,14 +106,23 @@ export default function ExplorerPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-2 text-muted">{r.name ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{r.sector ?? "—"}</td>
+                <td className="px-4 py-2 text-muted">{r.country_iso ?? "—"}</td>
                 <td className="px-4 py-2 tabular-nums text-muted">{r.mic ?? "—"}</td>
                 <td className="px-4 py-2 text-muted">{r.currency ?? "—"}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-fg" title={r.session_date ?? undefined}>
+                  {fmtPrice(r.price)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums text-muted">{fmtCompact(r.volume)}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-muted">
+                  {r.market_cap_usd != null ? `$${fmtCompact(r.market_cap_usd)}` : "—"}
+                </td>
                 <td className="px-4 py-2 text-muted">{r.status ?? "—"}</td>
               </tr>
             ))}
             {!loading && data?.rows.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-muted">
+                <td colSpan={10} className="px-4 py-6 text-center text-muted">
                   No matches.
                 </td>
               </tr>
