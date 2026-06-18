@@ -20,9 +20,9 @@ export type SubnavProvider =
 // sym's subpages — the SAME list drives the in-page tab strip (app/sym/layout.tsx) and the
 // sidebar submenu. Tab active-state is an EXACT pathname match; keep hrefs canonical.
 export const SYM_SUBNAV: SubItem[] = [
-  { href: "/sym", label: "Overview" },
+  { href: "/sym", label: "Universes" },
+  { href: "/sym/overview", label: "Overview" },
   { href: "/sym/explorer", label: "Explorer" },
-  { href: "/sym/universes", label: "Universes" },
   { href: "/sym/heatmap", label: "Heat map" },
   { href: "/sym/attention", label: "Attention" },
   { href: "/sym/validation", label: "Validation" },

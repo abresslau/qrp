@@ -163,6 +163,67 @@ class DbSymGateway:
         ).fetchall()
         return [UniverseRef(uid, name, resolved) for uid, name, resolved in rows]
 
+    def universe_coverage(self) -> list[dict]:
+        """Per-universe coverage of prices / returns / fundamentals, judged by PER-MEMBER
+        recency — not presence at a single global session, because markets close at different
+        times (a member a day behind its market's close is not "missing"). Index-bounded:
+        per-figi max() over a recent window (rides the fact-table PKs), never a full-table
+        count(DISTINCT)/group-by-date over the 13.5M-row prices_raw (the Overview 125s trap).
+        Returns/fundamentals: returns restricted to ONE window_id (fact_returns has ~28 per
+        figi/date); fundamentals judged on a wider window (low cadence — quarterly)."""
+        c = self._conn
+        latest = _scalar(c, "SELECT max(session_date) FROM prices_raw")
+        if latest is None:
+            return []
+        one_win = _scalar(c, "SELECT min(window_id) FROM return_window")
+        rows = c.execute(
+            """
+            WITH members AS (
+                SELECT universe_id, composite_figi FROM universe_member_resolution
+                 WHERE resolution_status = 'resolved'
+            ),
+            px AS (SELECT composite_figi, max(session_date) d FROM prices_raw
+                    WHERE session_date >= %(latest)s - 14 GROUP BY composite_figi),
+            rt AS (SELECT composite_figi, max(as_of_date) d FROM fact_returns
+                    WHERE window_id = %(w)s AND as_of_date >= %(latest)s - 14 GROUP BY composite_figi),
+            fn AS (SELECT composite_figi, max(as_of_date) d FROM fundamentals
+                    WHERE as_of_date >= %(latest)s - 180 GROUP BY composite_figi)
+            SELECT m.universe_id, u.name, count(*) AS total,
+                   count(*) FILTER (WHERE px.d >= %(latest)s - 7) AS px_cov, max(px.d) AS px_latest,
+                   count(*) FILTER (WHERE rt.d >= %(latest)s - 7) AS rt_cov, max(rt.d) AS rt_latest,
+                   count(fn.d) AS fn_cov, max(fn.d) AS fn_latest
+              FROM members m
+              JOIN universe u ON u.universe_id = m.universe_id
+              LEFT JOIN px ON px.composite_figi = m.composite_figi
+              LEFT JOIN rt ON rt.composite_figi = m.composite_figi
+              LEFT JOIN fn ON fn.composite_figi = m.composite_figi
+             GROUP BY m.universe_id, u.name
+             ORDER BY total DESC, m.universe_id
+            """,
+            {"latest": latest, "w": one_win},
+        ).fetchall()
+
+        def _layer(cov: int, total: int, latest_d) -> dict:
+            status = "missing" if cov == 0 else "partial" if cov < total else "ok"
+            return {
+                "covered": cov,
+                "total": total,
+                "latest_date": latest_d.isoformat() if latest_d else None,
+                "status": status,
+            }
+
+        return [
+            {
+                "universe_id": uid,
+                "name": name,
+                "members_resolved": total,
+                "prices": _layer(pxc, total, pxl),
+                "returns": _layer(rtc, total, rtl),
+                "fundamentals": _layer(fnc, total, fnl),
+            }
+            for uid, name, total, pxc, pxl, rtc, rtl, fnc, fnl in rows
+        ]
+
     def return_windows(self) -> list[tuple[str, str]]:
         """Curated (code, label) windows for the heat-map selector, in HEATMAP_WINDOWS order."""
         rows = self._conn.execute(
