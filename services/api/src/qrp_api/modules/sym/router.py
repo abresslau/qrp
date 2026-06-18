@@ -61,6 +61,22 @@ class UniverseSummary(BaseModel):
     members_resolved: int
 
 
+class LayerCoverage(BaseModel):
+    covered: int
+    total: int
+    latest_date: str | None
+    status: str  # ok | partial | missing
+
+
+class UniverseCoverage(BaseModel):
+    universe_id: str
+    name: str | None
+    members_resolved: int
+    prices: LayerCoverage
+    returns: LayerCoverage
+    fundamentals: LayerCoverage
+
+
 class ReturnWindow(BaseModel):
     code: str
     label: str
@@ -298,6 +314,11 @@ def universes(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
         {"universe_id": u.universe_id, "name": u.name, "members_resolved": u.members_resolved}
         for u in gw.universes()
     ]
+
+
+@router.get("/universes/coverage", response_model=list[UniverseCoverage])
+def universes_coverage(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
+    return gw.universe_coverage()
 
 
 @router.get("/return-windows", response_model=list[ReturnWindow])
