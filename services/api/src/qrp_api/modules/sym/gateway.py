@@ -82,7 +82,14 @@ class DbSymGateway:
         c = self._conn
         securities = _scalar(c, "SELECT count(*) FROM securities")
         universes = _scalar(c, "SELECT count(*) FROM universe")
-        priced = _scalar(c, "SELECT count(DISTINCT composite_figi) FROM prices_raw")
+        # securities that have ANY price bar — an index-only EXISTS semi-join (rides the
+        # prices_raw PK), not a count(DISTINCT) over all 13M rows (which took ~5s). Equivalent
+        # because prices_raw.composite_figi is FK'd to securities (no orphan price figis).
+        priced = _scalar(
+            c,
+            "SELECT count(*) FROM securities s "
+            "WHERE EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)",
+        )
         latest_session = _scalar(c, "SELECT max(session_date) FROM prices_raw")
         # How many securities actually have a bar on the newest session — exposes the gap
         # when a recent load only refreshed a sub-universe (e.g. nasdaq100) and the rest lag.
@@ -104,7 +111,9 @@ class DbSymGateway:
             """
             WITH per_day AS (
                 SELECT session_date, count(DISTINCT composite_figi) AS n
-                  FROM prices_raw GROUP BY session_date
+                  FROM prices_raw
+                 WHERE session_date >= (SELECT max(session_date) FROM prices_raw) - 90
+                 GROUP BY session_date
             )
             SELECT max(session_date) FROM per_day
              WHERE n >= 0.9 * (SELECT max(n) FROM per_day)
