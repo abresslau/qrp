@@ -20,6 +20,7 @@ type Row = {
   sector: string | null;
 };
 type Resp = { total: number; limit: number; offset: number; rows: Row[] };
+type Uni = { universe_id: string; name: string | null; members_resolved: number };
 
 const LIMIT = 50;
 
@@ -28,6 +29,23 @@ export default function ExplorerPage() {
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState<Resp | null>(null);
   const [loading, setLoading] = useState(true);
+  const [universe, setUniverse] = useState("");
+  const [universes, setUniverses] = useState<Uni[]>([]);
+
+  // universe options for the dropdown + the initial filter from the ?u= deep-link (the
+  // Universes landing links here with it). Both are set inside the fetch's async callback —
+  // not synchronously in the effect body (react-hooks/set-state-in-effect) — and reading
+  // window there avoids useSearchParams (which would force a Suspense boundary).
+  useEffect(() => {
+    fetch("/api/sym/universes", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((list: Uni[]) => {
+        setUniverses(list);
+        const u = new URLSearchParams(window.location.search).get("u");
+        if (u) setUniverse(u);
+      })
+      .catch(() => setUniverses([]));
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -36,7 +54,7 @@ export default function ExplorerPage() {
         // setLoading lives in the (deferred) timer callback, not the synchronous effect body
         // (react-hooks/set-state-in-effect); loading shows as the debounced fetch starts.
         setLoading(true);
-        const url = `/api/sym/securities?limit=${LIMIT}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
+        const url = `/api/sym/securities?limit=${LIMIT}&offset=${offset}${q ? `&q=${encodeURIComponent(q)}` : ""}${universe ? `&universe=${encodeURIComponent(universe)}` : ""}`;
         fetch(url, { cache: "no-store" })
           .then((r) => r.json())
           .then((d: Resp) => {
@@ -53,7 +71,7 @@ export default function ExplorerPage() {
       alive = false;
       clearTimeout(t);
     };
-  }, [q, offset]);
+  }, [q, offset, universe]);
 
   const total = data?.total ?? 0;
   const from = total === 0 ? 0 : offset + 1;
@@ -63,18 +81,36 @@ export default function ExplorerPage() {
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold tracking-tight text-fg">Securities</h1>
-        <input
-          value={q}
-          onChange={(e) => {
-            // Immediate loading feedback on type (an event handler — lint-safe); the debounced
-            // effect re-affirms it for the offset path. Restores the pre-lint-fix UX.
-            setLoading(true);
-            setQ(e.target.value);
-            setOffset(0);
-          }}
-          placeholder="Search ticker, name, or FIGI…"
-          className="w-72 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg outline-none focus:border-fg/40"
-        />
+        <div className="flex items-center gap-2">
+          <select
+            value={universe}
+            onChange={(e) => {
+              setLoading(true);
+              setUniverse(e.target.value);
+              setOffset(0);
+            }}
+            className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-fg/40"
+          >
+            <option value="">All universes</option>
+            {universes.map((u) => (
+              <option key={u.universe_id} value={u.universe_id}>
+                {u.name ?? u.universe_id} ({u.members_resolved.toLocaleString()})
+              </option>
+            ))}
+          </select>
+          <input
+            value={q}
+            onChange={(e) => {
+              // Immediate loading feedback on type (an event handler — lint-safe); the debounced
+              // effect re-affirms it for the offset path. Restores the pre-lint-fix UX.
+              setLoading(true);
+              setQ(e.target.value);
+              setOffset(0);
+            }}
+            placeholder="Search ticker, name, or FIGI…"
+            className="w-72 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-fg outline-none focus:border-fg/40"
+          />
+        </div>
       </div>
 
       <div className="mb-2 text-xs text-muted">

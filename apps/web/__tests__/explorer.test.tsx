@@ -31,7 +31,11 @@ const RESP = {
 beforeEach(() => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(RESP) })),
+    vi.fn((url: string) => {
+      // the page now also fetches the universe list for the filter dropdown
+      const body = url.includes("/universes") ? [] : RESP;
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+    }),
   );
 });
 afterEach(() => vi.unstubAllGlobals());
@@ -59,5 +63,20 @@ describe("ExplorerPage enrichment", () => {
     // volume, mkt cap = 7 em-dashes from that one row (the populated row contributes none).
     // A count this high fails if any new enrichment cell stopped degrading to "—".
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("renders the universe filter dropdown with options", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const body = url.includes("/universes")
+          ? [{ universe_id: "sp500", name: "S&P 500", members_resolved: 650 }]
+          : RESP;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      }),
+    );
+    render(<ExplorerPage />);
+    expect(await screen.findByText("All universes")).toBeInTheDocument();
+    expect(await screen.findByText("S&P 500 (650)")).toBeInTheDocument();
   });
 });

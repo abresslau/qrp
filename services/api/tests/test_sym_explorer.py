@@ -31,9 +31,12 @@ class _ListConn:
         self._total = total
         self._rows = rows
         self.seen: list[str] = []
+        self.params: list = []
 
     def execute(self, sql, params=None):
         self.seen.append(sql)
+        if params:
+            self.params.append(params)
         if "count(*)" in sql:
             return _Cur(one=(self._total,))
         return _Cur(rows=self._rows)
@@ -91,6 +94,24 @@ def test_securities_count_query_does_not_carry_enrichment_joins():
     assert "prices_raw" not in count_sql
     assert "LEFT JOIN exchange" not in count_sql
     assert "gics_scd" not in count_sql
+
+
+def test_securities_universe_filter_adds_member_exists_to_count_and_rows():
+    conn = _ListConn(1, [])
+    DbSymGateway(conn).securities(None, 50, 0, universe="sp500")
+    count_sql = next(s for s in conn.seen if "count(*)" in s)
+    rows_sql = next(s for s in conn.seen if "px.close" in s)
+    for sql in (count_sql, rows_sql):
+        assert "universe_member_resolution" in sql
+        assert "resolution_status = 'resolved'" in sql
+    # the universe id is bound as a param (not interpolated)
+    assert any("sp500" in (p if isinstance(p, (list, tuple)) else [p]) for p in conn.params)
+
+
+def test_securities_no_universe_has_no_member_filter():
+    conn = _ListConn(1, [])
+    DbSymGateway(conn).securities(None, 50, 0)
+    assert all("universe_member_resolution" not in s for s in conn.seen)
 
 
 def test_securities_rows_query_places_enrichment_joins_before_where():
