@@ -113,6 +113,44 @@ class LivePnl(BaseModel):
     constituents: list[LiveConstituent]
 
 
+class CompositionHolding(BaseModel):
+    figi: str
+    ticker: str | None
+    name: str | None
+    sector: str
+    industry: str | None
+    weight: float          # SIGNED (longs +, shorts −); position size is abs(weight)
+    currency: str | None
+    price: float | None
+    live_return: float | None
+    freshness: str
+
+
+class SectorSlice(BaseModel):
+    sector: str
+    weight: float          # Σ |weight| of the sector's holdings (slice size)
+    n: int
+    live_return: float | None  # |weight|-weighted live return over the sector's PRICED holdings
+
+
+class PortfolioComposition(BaseModel):
+    """Live composition of a portfolio's shown weight vector (the live heat map + sector/position
+    pizza surface). Holdings carry SIGNED weights (size = |weight|) + a live return; `sectors` is
+    the per-sector Σ|weight| rollup. `freshness` is the worst across priced holdings; `as_of` is
+    the oldest priced quote. NOT persisted."""
+
+    portfolio_id: int
+    weights_as_of: str | None
+    as_of: str | None
+    freshness: str
+    n_holdings: int
+    n_priced: int
+    total_weight: float    # Σ |weight| (gross)
+    net_weight: float      # Σ weight (signed/net)
+    holdings: list[CompositionHolding]
+    sectors: list[SectorSlice]
+
+
 @router.get("/benchmarks", response_model=list[Benchmark])
 def list_benchmarks(gw: DbAnalyticsGateway = Depends(_gateway)) -> list[dict]:
     return gw.benchmarks()
@@ -126,6 +164,21 @@ def portfolio_live(pid: int, gw: DbAnalyticsGateway = Depends(_gateway)) -> dict
         return gw.live_pnl(pid)
     except LookupError as exc:  # nonexistent portfolio
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except QuoteSourceUnreachable as exc:
+        raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
+
+
+@router.get("/portfolios/{pid}/composition", response_model=PortfolioComposition)
+def portfolio_composition(pid: int, gw: DbAnalyticsGateway = Depends(_gateway)) -> dict:
+    """Live composition (heat map sized by position size + sector/position pizza) from a swapped
+    (live-quote) price source — fetched at serve time, not persisted. 422 over the holdings cap;
+    the honest 503 envelope when the quote provider is wholly unreachable."""
+    try:
+        return gw.composition(pid)
+    except LookupError as exc:  # nonexistent portfolio
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:  # over the holdings cap
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except QuoteSourceUnreachable as exc:
         raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 

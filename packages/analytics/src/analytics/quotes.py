@@ -13,6 +13,7 @@ import json
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 
 # MIC -> Yahoo suffix — kept in sync with packages/sym/.../sources/yfinance_adapter.py.
@@ -30,6 +31,8 @@ YAHOO_SUFFIX = {
 _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{sym}?interval=1m&range=1d"
 _LIVE_THRESHOLD_S = 120
 _TIMEOUT_S = 8.0
+_BATCH_WORKERS = 24  # bounded concurrency for whole-book fan-out; kept in sync with the sym twin
+_BATCH_BUDGET_S = 20.0  # overall wall-clock budget; symbols not done by then read as unavailable
 
 
 class QuoteSourceUnreachable(Exception):
@@ -107,3 +110,46 @@ def live_return(price: float | None, prev_close: float | None) -> float | None:
 
 def now_epoch() -> float:
     return time.time()
+
+
+def fetch_quotes_batch(
+    yahoo_symbols: list[str],
+    *,
+    timeout: float = _TIMEOUT_S,
+    max_workers: int = _BATCH_WORKERS,
+    budget: float = _BATCH_BUDGET_S,
+) -> dict[str, RawQuote | None]:
+    """Fetch many symbols concurrently with bounded workers + an overall wall-clock budget
+    (the fan-out QH.9 added to the sym twin; ported here for the portfolio composition surface).
+    Returns ``{symbol: RawQuote|None}`` (None = a per-symbol miss OR not finished within the
+    budget). Mirrors the single-fetch two-tier contract: raises ``QuoteSourceUnreachable`` ONLY
+    when every COMPLETED symbol network-errored (a wholly-unreachable provider); a mix is honest
+    partial coverage. Input is de-duplicated.
+    """
+    syms = list(dict.fromkeys(s for s in yahoo_symbols if s))
+    if not syms:
+        return {}
+    results: dict[str, RawQuote | None] = {s: None for s in syms}
+    net_errors = 0
+    # NOT a `with` block: the context-manager exit calls shutdown(wait=True), which would block on
+    # every in-flight request and make the wall-clock `budget` a no-op. We wait() up to the budget,
+    # then shut down WITHOUT waiting (cancelling not-yet-started tasks) so the request returns
+    # promptly; symbols not finished in the budget stay None (= unavailable, honest).
+    ex = ThreadPoolExecutor(max_workers=min(max_workers, len(syms)))
+    try:
+        fut_map = {ex.submit(fetch_raw_quote, s, timeout=timeout): s for s in syms}
+        done, _pending = wait(fut_map, timeout=budget)
+        for fut in done:
+            try:
+                results[fut_map[fut]] = fut.result()
+            except QuoteSourceUnreachable:
+                net_errors += 1  # result stays None
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
+    # Whole-source-unreachable (→503) ONLY when EVERY symbol network-errored — never from a biased
+    # subset that merely happened to complete first under budget pressure.
+    if net_errors == len(syms):
+        raise QuoteSourceUnreachable(
+            f"quote provider unreachable ({net_errors}/{len(syms)} symbols network-errored)"
+        )
+    return results

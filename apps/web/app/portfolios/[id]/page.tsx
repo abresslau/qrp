@@ -96,7 +96,15 @@ export default function PortfolioDetail() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <Link href="/portfolios" className="text-sm text-muted hover:text-fg">← Portfolios</Link>
+      <div className="flex items-center justify-between gap-2">
+        <Link href="/portfolios" className="text-sm text-muted hover:text-fg">← Portfolios</Link>
+        <Link
+          href={`/portfolios/${id}/live`}
+          className="rounded-md border border-border px-2.5 py-1 text-sm font-medium text-fg hover:bg-fg/5"
+        >
+          ● Live view →
+        </Link>
+      </div>
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-fg">{p.name}</h1>

@@ -40,6 +40,11 @@ COVERAGE_FLOOR = 0.99
 # 1D window — a single daily return per as_of_date (see return_window).
 _ONE_DAY_WINDOW = 1
 
+# Soft cap on holdings for a single live composition pull — a Yahoo-rate-limit backstop, not a
+# product limit (operator books are small). Over-cap is a 422 at the router, never an unbounded
+# fan-out. Mirrors the universe heat map's LIVE_HEATMAP_MAX rationale.
+COMPOSITION_MAX = 400
+
 
 # Every window code analytics understands; anything else is a 422 at the router.
 VALID_WINDOWS = ("ALL", "SI", "MAX", "YTD", "1M", "3M", "6M", "1Y", "2Y", "3Y")
@@ -318,6 +323,154 @@ class DbAnalyticsGateway:
             ),
             pnl=(notional * norm) if (notional is not None and norm is not None) else None,
             constituents=constituents,
+        )
+        return result
+
+    def composition(self, pid: int, *, now: float | None = None) -> dict:
+        """Live composition of a portfolio (the live heat map + sector/position pizza surface):
+        the SHOWN (latest) weight vector enriched per holding with GICS sector/industry, name,
+        and a LIVE return (quote price / its own previous close − 1, the QH.2 convention) fetched
+        via the bounded fan-out and NEVER persisted. Position SIZE is |weight| (not market cap).
+        Returns per-holding cells (heat map + position pizza) plus a per-sector rollup (sector
+        pizza). Freshness = worst across PRICED holdings; ``as_of`` = oldest priced quote.
+        Raises LookupError (404) for a missing portfolio, ValueError (422) over COMPOSITION_MAX
+        holdings, QuoteSourceUnreachable (503) only when EVERY mappable holding network-errors.
+        """
+        if not portfolio_exists(self._conn, pid):
+            raise LookupError(f"portfolio {pid} not found")
+        as_of, weights = read_latest_weights(self._conn, pid)
+        # Drop non-finite weights — a stored NaN/Inf (read as Decimal, cast to float) would poison
+        # gross/net and the share percentages and render a blank treemap; a sizeless holding can't
+        # be drawn anyway. (An all-zero finite book is kept; the frontend shows the empty state.)
+        weights = {f: w for f, w in weights.items() if math.isfinite(float(w))}
+        result: dict = {
+            "portfolio_id": pid,
+            "weights_as_of": as_of.isoformat() if as_of else None,
+            "as_of": None, "freshness": "unavailable",
+            "n_holdings": len(weights), "n_priced": 0,
+            "total_weight": 0.0, "net_weight": 0.0,
+            "holdings": [], "sectors": [],
+        }
+        if not weights:
+            return result
+        if len(weights) > COMPOSITION_MAX:
+            raise ValueError(
+                f"portfolio too large for a live composition ({len(weights)} holdings > "
+                f"{COMPOSITION_MAX}); narrow the book or use the EOD analytics view"
+            )
+
+        figis = list(weights)
+        _MISSING = (None, None, "Unclassified", None, None, None)
+        meta = {
+            f: (tk, mic, sector, industry, name, currency)
+            for f, tk, mic, sector, industry, name, currency in self._sym.execute(
+                """
+                SELECT s.composite_figi, tk.symbol_value, s.mic,
+                       coalesce(g.sector_name, 'Unclassified') AS sector,
+                       g.industry_name AS industry,
+                       sn.name AS name,
+                       f.currency_code AS currency
+                  FROM securities s
+                  LEFT JOIN LATERAL (
+                      SELECT symbol_value FROM security_symbology y
+                       WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
+                       ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
+                  ) tk ON TRUE
+                  LEFT JOIN LATERAL (
+                      SELECT sector_name, industry_name FROM gics_scd g2
+                       WHERE g2.composite_figi = s.composite_figi
+                       ORDER BY (g2.valid_to IS NULL) DESC, g2.valid_from DESC LIMIT 1
+                  ) g ON TRUE
+                  LEFT JOIN LATERAL (
+                      SELECT name FROM security_names z
+                       WHERE z.composite_figi = s.composite_figi
+                       ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
+                  ) sn ON TRUE
+                  LEFT JOIN LATERAL (
+                      SELECT currency_code FROM fundamentals f2
+                       WHERE f2.composite_figi = s.composite_figi AND f2.market_cap_usd IS NOT NULL
+                       ORDER BY as_of_date DESC LIMIT 1
+                  ) f ON TRUE
+                 WHERE s.composite_figi = ANY(%s)
+                """,
+                (figis,),
+            ).fetchall()
+        }
+
+        now = quotes.now_epoch() if now is None else now
+        ysym_by_figi = {
+            f: quotes.yahoo_symbol_for(meta.get(f, _MISSING)[0], meta.get(f, _MISSING)[1])
+            for f in figis
+        }
+        symbols = [s for s in ysym_by_figi.values() if s]
+        # The bounded fan-out raises QuoteSourceUnreachable iff EVERY mapped symbol network-errors
+        # (→503); a mix is honest partial coverage. Unmapped holdings never reach it (→unavailable).
+        batch = quotes.fetch_quotes_batch(symbols) if symbols else {}
+
+        total_abs = net = 0.0
+        n_priced = 0
+        any_delayed = False
+        oldest_epoch: int | None = None
+        holdings: list[dict] = []
+        sec_abs: dict[str, float] = {}    # Σ |w| per sector (slice size)
+        sec_cov: dict[str, float] = {}    # Σ |w| over PRICED holdings (rollup-return denominator)
+        sec_rsum: dict[str, float] = {}   # Σ |w|·r over PRICED holdings
+        sec_n: dict[str, int] = {}
+
+        for figi in figis:
+            w = float(weights[figi])
+            aw = abs(w)
+            total_abs += aw
+            net += w
+            tk, mic, sector, industry, name, currency = meta.get(figi, _MISSING)
+            sector = sector or "Unclassified"
+            ysym = ysym_by_figi.get(figi)
+            q = batch.get(ysym) if ysym else None
+            lr = price = None
+            cfresh = "unavailable"
+            if q is not None:
+                lr = quotes.live_return(q.price, q.prev_close)
+                if lr is not None:
+                    price = q.price
+                    # classify_freshness(None) -> 'delayed': a priced-but-timeless quote is never
+                    # silently 'live' (same honesty rule as live_pnl).
+                    cfresh, _ = quotes.classify_freshness(q.quote_epoch, now)
+                    any_delayed = any_delayed or cfresh == "delayed"
+                    if q.quote_epoch is not None:
+                        oldest_epoch = (
+                            q.quote_epoch if oldest_epoch is None
+                            else min(oldest_epoch, q.quote_epoch)
+                        )
+            sec_abs[sector] = sec_abs.get(sector, 0.0) + aw
+            sec_n[sector] = sec_n.get(sector, 0) + 1
+            if lr is not None:
+                n_priced += 1
+                sec_cov[sector] = sec_cov.get(sector, 0.0) + aw
+                sec_rsum[sector] = sec_rsum.get(sector, 0.0) + aw * lr
+            holdings.append(
+                {"figi": figi, "ticker": tk, "name": name,
+                 "sector": sector, "industry": industry,
+                 "weight": w, "currency": currency,
+                 "price": price, "live_return": lr, "freshness": cfresh}
+            )
+
+        holdings.sort(key=lambda h: abs(h["weight"]), reverse=True)
+        sectors = [
+            {"sector": s, "weight": sec_abs[s], "n": sec_n[s],
+             "live_return": (sec_rsum[s] / sec_cov[s]) if sec_cov.get(s) else None}
+            for s in sorted(sec_abs, key=lambda s: sec_abs[s], reverse=True)
+        ]
+        result.update(
+            n_priced=n_priced,
+            total_weight=total_abs,
+            net_weight=net,
+            freshness=("unavailable" if n_priced == 0 else "delayed" if any_delayed else "live"),
+            as_of=(
+                datetime.fromtimestamp(oldest_epoch, tz=timezone.utc).isoformat()
+                if oldest_epoch is not None else None
+            ),
+            holdings=holdings,
+            sectors=sectors,
         )
         return result
 
