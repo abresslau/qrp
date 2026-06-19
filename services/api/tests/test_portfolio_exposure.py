@@ -46,16 +46,20 @@ def test_long_only_net_equals_gross():
     d = _gw([("F1", Decimal("0.5")), ("F2", Decimal("0.3")), ("F3", Decimal("0.2"))]).get(7)
     assert d["net_exposure"] == 1.0
     assert d["gross_exposure"] == 1.0  # no shorts → net == gross
+    assert d["long_exposure"] == 1.0 and d["short_exposure"] == 0.0
 
 
 def test_long_short_gross_exceeds_net():
-    # 130/30-ish: longs 0.6+0.5, short -0.1 → net 1.0, gross 1.2
+    # 130/30-ish: longs 0.6+0.5, short -0.1 → net 1.0, gross 1.2, long 1.1, short 0.1
     d = _gw([("F1", Decimal("0.6")), ("F2", Decimal("0.5")), ("F3", Decimal("-0.1"))]).get(7)
     assert d["net_exposure"] == 1.0
     assert round(d["gross_exposure"], 6) == 1.2  # the |short| adds to gross, not net
+    assert round(d["long_exposure"], 6) == 1.1
+    assert round(d["short_exposure"], 6) == 0.1  # positive magnitude
 
 
 def test_no_vector_exposures_are_null():
     d = _gw([], dates=()).get(7)  # no stored vector
     assert d["shown_as_of_date"] is None
     assert d["net_exposure"] is None and d["gross_exposure"] is None
+    assert d["long_exposure"] is None and d["short_exposure"] is None

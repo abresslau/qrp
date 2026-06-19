@@ -474,6 +474,49 @@ class DbAnalyticsGateway:
         )
         return result
 
+    def pnl_summary(self, pid: int) -> dict:
+        """Focused P&L for the live page: Daily / MTD / YTD return — and PnL in base currency
+        when a notional is set — from the portfolio's EFFECTIVE-DATED EOD TWR series (the same
+        coverage-honest, benchmark-independent series ``analytics`` uses). Daily = the latest
+        completed session; MTD/YTD compound every session from the last close of the prior
+        month/year. Quote-independent (never 503s). Raises LookupError (404) for a missing portfolio.
+        """
+        if not portfolio_exists(self._conn, pid):
+            raise LookupError(f"portfolio {pid} not found")
+        terms = read_portfolio_terms(self._conn, pid)
+        notional = float(terms[0]) if terms and terms[0] is not None else None
+        base_ccy = terms[1] if terms else None
+        _as_of, series, _cov, _ccy, _dead = self._portfolio_daily(pid)
+        result: dict = {
+            "portfolio_id": pid, "as_of_date": None,
+            "base_currency": base_ccy, "notional": notional, "n_days": 0,
+            "daily_return": None, "mtd_return": None, "ytd_return": None,
+            "daily_pnl": None, "mtd_pnl": None, "ytd_pnl": None,
+        }
+        if not series:
+            return result
+        dates = sorted(series)
+        last = dates[-1]
+
+        def compound(ds: list[date]) -> float:
+            growth = 1.0
+            for d in ds:
+                growth *= 1.0 + series[d]
+            return growth - 1.0
+
+        def pnl(r: float | None) -> float | None:
+            return notional * r if (notional is not None and r is not None) else None
+
+        daily = series[last]
+        mtd = compound([d for d in dates if d.year == last.year and d.month == last.month])
+        ytd = compound([d for d in dates if d.year == last.year])
+        result.update(
+            as_of_date=last.isoformat(), n_days=len(dates),
+            daily_return=daily, mtd_return=mtd, ytd_return=ytd,
+            daily_pnl=pnl(daily), mtd_pnl=pnl(mtd), ytd_pnl=pnl(ytd),
+        )
+        return result
+
     def analytics(self, pid: int, benchmark_id: int, window: str) -> dict:
         w = (window or "ALL").upper()
         if w not in VALID_WINDOWS:

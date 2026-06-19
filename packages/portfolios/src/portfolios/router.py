@@ -103,6 +103,8 @@ class PortfolioDetail(BaseModel):
     shown_as_of_date: str | None  # the vector this response carries (Q4.5 as-of picker)
     net_exposure: float | None  # Σ weight (signed; long − short) over the shown vector; null if none
     gross_exposure: float | None  # Σ |weight| (long + |short|) over the shown vector; null if none
+    long_exposure: float | None  # Σ positive weight; null if no vector
+    short_exposure: float | None  # Σ |negative weight| (positive magnitude); null if no vector
     weights: list[Weight]
 
 

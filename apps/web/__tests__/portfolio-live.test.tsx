@@ -12,11 +12,17 @@ const PORTFOLIO = {
   portfolio_id: 7, name: "Long/Short Book", client: "Acme", base_currency: "USD",
   notional: null, created_at: null,
   as_of_dates: ["2026-06-05"], latest_as_of_date: "2026-06-05", shown_as_of_date: "2026-06-05",
-  net_exposure: 0.6, gross_exposure: 1.0,
+  net_exposure: 0.6, gross_exposure: 1.0, long_exposure: 0.8, short_exposure: 0.2,
   weights: [
     { figi: "F1", ticker: "AAPL", name: "Apple", weight: 0.6 },
     { figi: "F2", ticker: "MSFT", name: "Microsoft", weight: 0.4 },
   ],
+};
+
+const PNL = {
+  portfolio_id: 7, as_of_date: "2026-06-18", base_currency: "USD", notional: null, n_days: 7,
+  daily_return: 0.0164, mtd_return: -0.0391, ytd_return: -0.0391,
+  daily_pnl: null, mtd_pnl: null, ytd_pnl: null,
 };
 
 const COMP = {
@@ -42,9 +48,7 @@ function stub(opts: { compOk?: boolean } = {}) {
         return compOk
           ? json(COMP)
           : json({ error: { type: "unavailable", message: "quote provider unreachable" } }, false, 503);
-      if (url.includes("/analytics/benchmarks")) return json([]);
-      if (url.includes("/analytics/portfolios/") && url.includes("/live")) return json({ n_priced: 0, constituents: [] });
-      if (url.includes("/analytics/portfolios/")) return json({ window: "ALL", returns: null, metrics: null, benchmark: null, portfolio_currencies: [], n_days: 0 });
+      if (url.includes("/pnl")) return json(PNL);
       if (url.includes("/api/portfolios/7")) return json(PORTFOLIO);
       return json([]);
     }),
@@ -55,15 +59,20 @@ beforeEach(() => stub());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("PortfolioLive page", () => {
-  it("renders the heat map and the sector/position pizza from one composition fetch", async () => {
+  it("renders Risk & P&L, the heat map, and the sector donut from one composition fetch", async () => {
     render(<PortfolioLive />);
     expect(await screen.findByText(/Long\/Short Book/)).toBeInTheDocument(); // header
-    // pizza sector legend label is exactly "Tech" (heatmap sector header is "Tech  +8.00%")
-    expect(screen.getByText("Tech")).toBeInTheDocument();
-    // tickers appear in the heat-map tiles (and the position legend)
+
+    // Risk & P&L panel (compact)
+    expect(screen.getByText("Daily P&L")).toBeInTheDocument();
+    expect(screen.getByText("Long")).toBeInTheDocument();
+    expect(screen.getByText("L/S")).toBeInTheDocument();
+    expect(screen.getByText("4.00×")).toBeInTheDocument(); // long 0.8 / short 0.2
+
+    // sector donut (in-slice + legend) + heat-map tiles
+    expect(screen.getAllByText("Tech").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/AAPL/).length).toBeGreaterThan(0);
 
-    // exactly one composition fetch drives both visuals
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
     expect(calls.filter((u) => u.includes("/composition")).length).toBe(1);
   });
@@ -72,6 +81,6 @@ describe("PortfolioLive page", () => {
     stub({ compOk: false });
     render(<PortfolioLive />);
     expect(await screen.findByText(/Couldn.t load live composition/)).toBeInTheDocument();
-    expect(screen.getByText(/← Portfolio/)).toBeInTheDocument(); // page chrome intact, recoverable
+    expect(screen.getByText(/← Portfolio/)).toBeInTheDocument(); // page chrome intact
   });
 });

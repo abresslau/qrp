@@ -420,6 +420,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analytics/portfolios/{pid}/pnl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Pnl
+         * @description Daily/MTD/YTD P&L summary for the live page — EOD TWR series, no live quotes.
+         */
+        get: operations["portfolio_pnl"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analytics/portfolios/{pid}/composition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Portfolio Composition
+         * @description Live composition (heat map sized by position size + sector/position pizza) from a swapped
+         *     (live-quote) price source — fetched at serve time, not persisted. 422 over the holdings cap;
+         *     the honest 503 envelope when the quote provider is wholly unreachable.
+         */
+        get: operations["portfolio_composition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analytics/portfolios/{pid}": {
         parameters: {
             query?: never;
@@ -987,6 +1029,29 @@ export interface components {
             created_at: string | null;
             /** N Portfolios */
             n_portfolios: number;
+        };
+        /** CompositionHolding */
+        CompositionHolding: {
+            /** Figi */
+            figi: string;
+            /** Ticker */
+            ticker: string | null;
+            /** Name */
+            name: string | null;
+            /** Sector */
+            sector: string;
+            /** Industry */
+            industry: string | null;
+            /** Weight */
+            weight: number;
+            /** Currency */
+            currency: string | null;
+            /** Price */
+            price: number | null;
+            /** Live Return */
+            live_return: number | null;
+            /** Freshness */
+            freshness: string;
         };
         /** CreateClient */
         CreateClient: {
@@ -1608,6 +1673,65 @@ export interface components {
             /** Modules */
             modules: components["schemas"]["ModuleInfo"][];
         };
+        /**
+         * PnlSummary
+         * @description Daily / MTD / YTD return + PnL (base currency, when a notional is set) from the EOD TWR
+         *     series. Daily = the latest completed session; MTD/YTD compound from the prior month/year close.
+         *     Quote-independent.
+         */
+        PnlSummary: {
+            /** Portfolio Id */
+            portfolio_id: number;
+            /** As Of Date */
+            as_of_date: string | null;
+            /** Base Currency */
+            base_currency: string | null;
+            /** Notional */
+            notional: number | null;
+            /** N Days */
+            n_days: number;
+            /** Daily Return */
+            daily_return: number | null;
+            /** Mtd Return */
+            mtd_return: number | null;
+            /** Ytd Return */
+            ytd_return: number | null;
+            /** Daily Pnl */
+            daily_pnl: number | null;
+            /** Mtd Pnl */
+            mtd_pnl: number | null;
+            /** Ytd Pnl */
+            ytd_pnl: number | null;
+        };
+        /**
+         * PortfolioComposition
+         * @description Live composition of a portfolio's shown weight vector (the live heat map + sector/position
+         *     pizza surface). Holdings carry SIGNED weights (size = |weight|) + a live return; `sectors` is
+         *     the per-sector Σ|weight| rollup. `freshness` is the worst across priced holdings; `as_of` is
+         *     the oldest priced quote. NOT persisted.
+         */
+        PortfolioComposition: {
+            /** Portfolio Id */
+            portfolio_id: number;
+            /** Weights As Of */
+            weights_as_of: string | null;
+            /** As Of */
+            as_of: string | null;
+            /** Freshness */
+            freshness: string;
+            /** N Holdings */
+            n_holdings: number;
+            /** N Priced */
+            n_priced: number;
+            /** Total Weight */
+            total_weight: number;
+            /** Net Weight */
+            net_weight: number;
+            /** Holdings */
+            holdings: components["schemas"]["CompositionHolding"][];
+            /** Sectors */
+            sectors: components["schemas"]["SectorSlice"][];
+        };
         /** PortfolioDetail */
         PortfolioDetail: {
             /** Portfolio Id */
@@ -1632,6 +1756,10 @@ export interface components {
             net_exposure: number | null;
             /** Gross Exposure */
             gross_exposure: number | null;
+            /** Long Exposure */
+            long_exposure: number | null;
+            /** Short Exposure */
+            short_exposure: number | null;
             /** Weights */
             weights: components["schemas"]["Weight"][];
         };
@@ -1913,6 +2041,17 @@ export interface components {
             n_rebalances: number | null;
             summary: components["schemas"]["Summary"] | null;
             spec?: components["schemas"]["StrategySpec"] | null;
+        };
+        /** SectorSlice */
+        SectorSlice: {
+            /** Sector */
+            sector: string;
+            /** Weight */
+            weight: number;
+            /** N */
+            n: number;
+            /** Live Return */
+            live_return: number | null;
         };
         /** SecuritiesPage */
         SecuritiesPage: {
@@ -2965,6 +3104,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LivePnl"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    portfolio_pnl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PnlSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    portfolio_composition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioComposition"];
                 };
             };
             /** @description Validation Error */

@@ -47,7 +47,8 @@ const HEADER = 16;
 const CLAMP = 0.03; // ±3% saturates the diverging scale (matches heatmap-view + the legend)
 
 // Diverging scale: red (neg) -> neutral (~0) -> green (pos); the neutral midpoint follows the theme.
-function rgbFor(ret: number | null, isDark: boolean): [number, number, number] {
+// Exported so the sector donut paints its slices on the SAME ±3% heat scale (a heat map in a ring).
+export function rgbFor(ret: number | null, isDark: boolean): [number, number, number] {
   const mid = isDark ? [42, 42, 48] : [228, 228, 231];
   if (ret == null) return isDark ? [55, 55, 62] : [203, 205, 209]; // no live return -> neutral
   const t = Math.max(-1, Math.min(1, ret / CLAMP));
@@ -59,7 +60,7 @@ function rgbFor(ret: number | null, isDark: boolean): [number, number, number] {
   return [m(mid[0], tgt[0]), m(mid[1], tgt[1]), m(mid[2], tgt[2])];
 }
 
-function useIsDark(): boolean {
+export function useIsDark(): boolean {
   const [dark, setDark] = useState(false);
   useEffect(() => {
     const el = document.documentElement;
@@ -72,7 +73,7 @@ function useIsDark(): boolean {
   return dark;
 }
 
-function textInk([r, g, b]: [number, number, number]): { fill: string; stroke: string } {
+export function textInk([r, g, b]: [number, number, number]): { fill: string; stroke: string } {
   const lum = 0.299 * r + 0.587 * g + 0.114 * b;
   return lum > 150
     ? { fill: "#111827", stroke: "rgba(255,255,255,0.35)" }

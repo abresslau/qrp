@@ -168,6 +168,33 @@ def portfolio_live(pid: int, gw: DbAnalyticsGateway = Depends(_gateway)) -> dict
         raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
+class PnlSummary(BaseModel):
+    """Daily / MTD / YTD return + PnL (base currency, when a notional is set) from the EOD TWR
+    series. Daily = the latest completed session; MTD/YTD compound from the prior month/year close.
+    Quote-independent."""
+
+    portfolio_id: int
+    as_of_date: str | None
+    base_currency: str | None
+    notional: float | None
+    n_days: int
+    daily_return: float | None
+    mtd_return: float | None
+    ytd_return: float | None
+    daily_pnl: float | None
+    mtd_pnl: float | None
+    ytd_pnl: float | None
+
+
+@router.get("/portfolios/{pid}/pnl", response_model=PnlSummary)
+def portfolio_pnl(pid: int, gw: DbAnalyticsGateway = Depends(_gateway)) -> dict:
+    """Daily/MTD/YTD P&L summary for the live page — EOD TWR series, no live quotes."""
+    try:
+        return gw.pnl_summary(pid)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/portfolios/{pid}/composition", response_model=PortfolioComposition)
 def portfolio_composition(pid: int, gw: DbAnalyticsGateway = Depends(_gateway)) -> dict:
     """Live composition (heat map sized by position size + sector/position pizza) from a swapped

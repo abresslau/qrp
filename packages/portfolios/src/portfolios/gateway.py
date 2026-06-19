@@ -250,6 +250,10 @@ class DbPortfolioGateway:
         # None when no vector is in scope (don't fabricate a 0 for an empty portfolio).
         net_exposure = sum(w["weight"] for w in weights) if shown else None
         gross_exposure = sum(abs(w["weight"]) for w in weights) if shown else None
+        # Long = Σ positive weight; short = Σ |negative weight| (a positive magnitude). Net =
+        # long − short; gross = long + short. L/S ratio is the consumer's (long / short).
+        long_exposure = sum(w["weight"] for w in weights if w["weight"] > 0) if shown else None
+        short_exposure = sum(-w["weight"] for w in weights if w["weight"] < 0) if shown else None
         return {
             "portfolio_id": meta[0],
             "name": meta[1],
@@ -262,6 +266,8 @@ class DbPortfolioGateway:
             "shown_as_of_date": shown,
             "net_exposure": net_exposure,
             "gross_exposure": gross_exposure,
+            "long_exposure": long_exposure,
+            "short_exposure": short_exposure,
             "weights": weights,
         }
 

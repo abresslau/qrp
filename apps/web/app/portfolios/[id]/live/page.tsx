@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { AnalyticsPanel } from "@/components/analytics-panel";
 import { PortfolioHeatmap, type Composition } from "@/components/portfolio-heatmap";
+import { PortfolioMovers } from "@/components/portfolio-movers";
 import { PortfolioPizza } from "@/components/portfolio-pizza";
+import { PortfolioRiskPnl } from "@/components/portfolio-risk-pnl";
 import type { Schemas } from "@/lib/api";
 
 type Portfolio = Schemas["PortfolioDetail"];
@@ -18,8 +19,19 @@ const FRESH_STYLE: Record<string, string> = {
   unavailable: "border-border bg-fg/5 text-muted",
 };
 
-function pct(r: number | null | undefined): string {
-  return r == null ? "—" : `${r >= 0 ? "+" : ""}${(r * 100).toFixed(2)}%`;
+// The LIVE portfolio daily return: Σ w·r ÷ Σ|w| over priced holdings (coverage-normalised) — the
+// exact weighted roll-up of the heat-map names and donut sectors, so the top Daily P&L matches them.
+function liveDailyReturn(comp: Composition | null): number | null {
+  if (!comp?.holdings?.length) return null;
+  let num = 0;
+  let den = 0;
+  for (const h of comp.holdings) {
+    if (h.live_return != null) {
+      num += h.weight * h.live_return;
+      den += Math.abs(h.weight);
+    }
+  }
+  return den > 0 ? num / den : null;
 }
 
 export default function PortfolioLive() {
@@ -119,27 +131,13 @@ export default function PortfolioLive() {
             ) : null}
           </p>
         </div>
-        {p && (
-          <div className="flex gap-5 text-right">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-muted">Net exp.</div>
-              <div className="text-lg font-semibold tabular-nums text-fg">{pct(p.net_exposure)}</div>
-            </div>
-            <div>
-              <div className="text-xs uppercase tracking-wide text-muted">Gross exp.</div>
-              <div className="text-lg font-semibold tabular-nums text-fg">
-                {p.gross_exposure == null ? "—" : `${(p.gross_exposure * 100).toFixed(1)}%`}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
-      {/* Live Risk & Analytics */}
-      <AnalyticsPanel pid={String(id)} />
+      {/* Risk & P&L analytics — Daily/MTD/YTD P&L + long/short/net/gross exposure + L/S ratio.
+          Daily comes from the SAME composition that drives the heat map + donut (one live source). */}
+      <PortfolioRiskPnl pid={String(id)} portfolio={p} dailyReturn={liveDailyReturn(comp)} />
 
-      {/* Heat map sized by position size + sector/position pizza. One fetch feeds both; recolored
-          by each holding's live return. Not persisted. */}
+      {/* Composition — heat map (full width), then ONE card split 50/50: sector donut + top movers. */}
       <section className="mt-8">
         <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
           Composition — heat map &amp; breakdown
@@ -151,8 +149,13 @@ export default function PortfolioLive() {
         )}
         {comp ? (
           <div className="mt-3 space-y-4">
+            <div className="grid gap-6 rounded-xl border border-border bg-surface p-4 lg:grid-cols-2">
+              <PortfolioPizza data={comp} />
+              <div className="lg:border-l lg:border-border lg:pl-6">
+                <PortfolioMovers pid={String(id)} composition={comp} />
+              </div>
+            </div>
             <PortfolioHeatmap data={comp} />
-            <PortfolioPizza data={comp} />
           </div>
         ) : !compErr ? (
           <p className="mt-3 text-sm text-muted">Loading live composition…</p>
