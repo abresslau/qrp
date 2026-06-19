@@ -24,26 +24,11 @@ const ROWS = [
   },
 ];
 
-// The page fetches coverage + the universe list (for the map's selector). Return the coverage
-// ROWS for the coverage call and an empty universe list (keeps the map's <select> from
-// duplicating universe names that the table assertions query for).
-function mockApi() {
-  apiGet.mockImplementation((path: string) =>
-    path.endsWith("/coverage") ? Promise.resolve(ROWS) : Promise.resolve([]),
-  );
-  // The map is a client component that fetches by-country via global fetch; stub it to empty so
-  // it mounts cleanly inside this server-page test.
-  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) })));
-}
-
-afterEach(() => {
-  vi.clearAllMocks();
-  vi.unstubAllGlobals();
-});
+afterEach(() => vi.clearAllMocks());
 
 describe("Universes coverage landing", () => {
   it("renders the layer columns incl. Active + per-layer coverage & status", async () => {
-    mockApi();
+    apiGet.mockResolvedValue(ROWS);
     render(await UniversesPage());
 
     for (const h of ["Universe", "Members", "Active", "Prices", "Returns", "Fundamentals"]) {
@@ -60,7 +45,6 @@ describe("Universes coverage landing", () => {
 
   it("degrades to a message when the coverage API is unreachable", async () => {
     apiGet.mockRejectedValue(new Error("down"));
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) })));
     render(await UniversesPage());
     expect(screen.getByText(/No universe coverage/)).toBeInTheDocument();
   });

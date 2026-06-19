@@ -78,17 +78,6 @@ class UniverseCoverage(BaseModel):
     fundamentals: LayerCoverage
 
 
-class CountryCoverage(BaseModel):
-    country_iso: str
-    country: str | None
-    timezone: str | None
-    members: int
-    active_members: int
-    prices: LayerCoverage
-    returns: LayerCoverage
-    fundamentals: LayerCoverage
-
-
 class ReturnWindow(BaseModel):
     code: str
     label: str
@@ -331,16 +320,6 @@ def universes(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
 @router.get("/universes/coverage", response_model=list[UniverseCoverage])
 def universes_coverage(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     return gw.universe_coverage()
-
-
-@router.get("/universes/coverage/by-country", response_model=list[CountryCoverage])
-def coverage_by_country(
-    universe: str | None = Query(default=None),
-    gw: DbSymGateway = Depends(_gateway),
-) -> list[dict]:
-    """Population + per-layer coverage grouped by country (the world-map view). `universe`
-    omitted aggregates the whole tracked population; otherwise one universe."""
-    return gw.coverage_by_country(universe)
 
 
 @router.get("/return-windows", response_model=list[ReturnWindow])

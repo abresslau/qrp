@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
-import { PopulationMap } from "@/components/population-map";
 
 type Layer = { covered: number; total: number; latest_date: string | null; status: string };
 type Cov = {
@@ -12,7 +11,6 @@ type Cov = {
   returns: Layer;
   fundamentals: Layer;
 };
-type UniverseRef = { universe_id: string; name: string | null };
 
 function pill(status: string): string {
   if (status === "ok")
@@ -50,12 +48,8 @@ function LayerCell({ layer, universeId, layerKey }: { layer: Layer; universeId: 
 
 export default async function UniversesPage() {
   let rows: Cov[] = [];
-  let universes: UniverseRef[] = [];
   try {
-    [rows, universes] = await Promise.all([
-      apiGet<Cov[]>("/api/sym/universes/coverage"),
-      apiGet<UniverseRef[]>("/api/sym/universes"),
-    ]);
+    rows = await apiGet<Cov[]>("/api/sym/universes/coverage");
   } catch {
     rows = [];
   }
@@ -64,18 +58,12 @@ export default async function UniversesPage() {
     <div className="mx-auto max-w-5xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">Universes</h1>
       <p className="mt-1 text-sm text-muted">
-        Where the tracked population lives, and how complete each layer is. Coverage is judged per-member
-        (markets close at different times) over <strong>active</strong> members — delisted names aren&apos;t
-        expected to have current data, so they don&apos;t count against coverage.
+        Coverage per universe — Prices, Returns, Fundamentals. Coverage is judged per-member
+        (markets close at different times) over <strong>active</strong> members — delisted names
+        aren&apos;t expected to have current data, so they don&apos;t count against coverage.
       </p>
 
-      {/* World map: population (member count) or coverage (% current), by country. */}
-      <div className="mt-4">
-        <PopulationMap universes={universes} />
-      </div>
-
-      <h2 className="mt-8 text-sm font-semibold text-fg">Coverage by universe</h2>
-      <div className="mt-2 overflow-x-auto rounded-xl border border-border">
+      <div className="mt-4 overflow-x-auto rounded-xl border border-border">
         <table className="w-full text-sm">
           <thead className="bg-surface text-left text-muted">
             <tr>

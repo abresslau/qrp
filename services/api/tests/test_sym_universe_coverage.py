@@ -76,33 +76,3 @@ def test_universe_coverage_empty_when_no_prices():
     out = DbSymGateway(_Conn([])).universe_coverage()
     # max(session_date) returns a date in the fake, so it proceeds; with no member rows → []
     assert out == []
-
-
-# (iso, country, tz, members, active, px_cov, px_latest, rt_cov, rt_latest, fn_cov, fn_latest)
-_BY_COUNTRY = [
-    ("US", "United States", "America/New_York", 1791, 1790, 1778, date(2026, 6, 18),
-     1778, date(2026, 6, 18), 1761, date(2026, 6, 16)),
-    ("BR", "Brazil", "America/Sao_Paulo", 99, 99, 99, date(2026, 6, 18),
-     99, date(2026, 6, 18), 79, date(2026, 6, 12)),
-]
-
-
-def test_coverage_by_country_active_only_and_shape():
-    out = DbSymGateway(_Conn(_BY_COUNTRY)).coverage_by_country()
-    us = next(c for c in out if c["country_iso"] == "US")
-    assert us["country"] == "United States" and us["timezone"] == "America/New_York"
-    assert us["members"] == 1791 and us["active_members"] == 1790  # 1 delisted excluded
-    # coverage denominator is the active count (1790), not all members (1791)
-    assert us["prices"] == {"covered": 1778, "total": 1790, "latest_date": "2026-06-18", "status": "partial"}
-    br = next(c for c in out if c["country_iso"] == "BR")
-    assert br["prices"]["status"] == "ok" and br["fundamentals"]["status"] == "partial"
-
-
-def test_coverage_by_country_universe_filter_is_parameterized_and_bounded():
-    conn = _Conn(_BY_COUNTRY)
-    DbSymGateway(conn).coverage_by_country("sp500")
-    sql = next(s for s in conn.seen if "WITH members" in s).lower()
-    assert "universe_id = %(uni)s" in sql  # universe filter is parameterized (not interpolated)
-    assert "group by ex.country_iso" in sql  # grouped by country
-    assert "join exchange ex" in sql  # country/timezone come from exchange
-    assert "count(distinct" not in sql  # never the full-table distinct trap

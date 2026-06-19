@@ -1,13 +1,22 @@
 # Design Story: World-map view of the universe population & coverage
 
-Status: ✅ BUILT (2026-06-19). Choices made with Andre: map-on-top + table below; color by country.
-Shipped: `GET /api/sym/universes/coverage/by-country` (gateway `coverage_by_country`), a hand-rolled
-equirectangular SVG choropleth (`apps/web/components/population-map.tsx`) over a vendored, pre-projected
-ISO-A2 path lookup (`apps/web/lib/world-geo.ts`, Natural Earth 110m, no runtime dep), on `/sym`.
-Population + Coverage modes, universe + layer selectors, hover tooltip (members/active + per-layer +
-timezone). Coverage validates ACTIVE members only (delisted excluded); the table gained a Members|Active
-split. Tests: API `test_sym_universe_coverage.py` (+by-country), web `population-map.test.tsx`.
-Follow-up not yet done: click-country → Explorer needs a country filter on the securities endpoint.
+Status: ✅ BUILT (2026-06-19). The "population page" is **`macro > population`** (the World Bank
+population category), NOT the sym Universes landing — corrected with Andre mid-build. The map there is
+a world **demographic** choropleth, not securities coverage.
+
+Shipped:
+- `apps/web/lib/world-geo.ts` — vendored, pre-projected ISO-A2 path lookup (Natural Earth 110m, public
+  domain), hand-rolled equirectangular, NO runtime map/geo dependency. (Reusable for any choropleth.)
+- `apps/web/components/macro-population-map.tsx` + `apps/web/app/macro/population/page.tsx` — a static
+  route (overrides `/macro/[category]`) with the world map on top (Total population log-scaled, or
+  Growth diverging) + the existing `MacroBrowser` series list below. Hover → population + growth.
+  Driven by `/api/macro/series` (category=population, geo→ISO-2 for the 14 mapped economies; Euro-area
+  aggregate excluded). Test: `__tests__/macro-population-map.test.tsx`.
+
+Separately (Andre's other ask, kept on sym): coverage now validates ACTIVE members only — delisted
+names are excluded from numerator+denominator — and the Universes table shows a Members|Active split.
+The first-pass securities by-country map (population-map.tsx + a `coverage_by_country` endpoint) was
+REMOVED once "population" landed under macro; only the active-only coverage change stayed.
 
 <!-- Created via bmad overnight 2026-06-19. Operator: "the population page looks terrible, create a
 story to come up with design of worldmap." The "population page" = the Universes coverage landing
