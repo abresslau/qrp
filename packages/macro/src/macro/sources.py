@@ -126,6 +126,76 @@ def fetch_worldbank(
     return out
 
 
+# All-countries bulk endpoint (one indicator, every economy) + the country catalog used to
+# strip the regional / income-group aggregates the bulk endpoint also returns.
+WB_ALL_BASE = (
+    "https://api.worldbank.org/v2/country/all/indicator/{ind}"
+    "?format=json&per_page=20000&date=1990:{end_year}"
+)
+WB_COUNTRIES_URL = "https://api.worldbank.org/v2/country?format=json&per_page=400"
+
+
+def worldbank_country_iso3() -> set[str]:
+    """ISO-A3 codes of real World Bank economies (region != 'Aggregates'). The bulk
+    indicator endpoint returns regional/income aggregates (Africa, Euro area, High income…)
+    alongside countries; this set filters them out so a world map shades only sovereigns."""
+    payload = json.loads(_get(WB_COUNTRIES_URL).decode("utf-8", "replace"))
+    rows = payload[1] if isinstance(payload, list) and len(payload) > 1 else []
+    return {
+        c["id"]
+        for c in rows
+        if c.get("id") and (c.get("region") or {}).get("value") not in (None, "Aggregates")
+    }
+
+
+def fetch_worldbank_all(
+    indicator: str, name: str, unit: str, scale: float = 1.0, keep_iso3: set[str] | None = None
+) -> list[tuple[dict, list]]:
+    """One series per COUNTRY for an indicator via the bulk all-countries endpoint
+    (paginated). ``keep_iso3`` (from ``worldbank_country_iso3``) drops aggregates; None keeps
+    everything with an ISO-3 code. series_id is ``WB:{indicator}:{ISO3}`` so the map can key
+    on the country code directly."""
+    end = date.today().year
+    by_iso: dict[str, dict] = {}
+    page = 1
+    while True:
+        url = WB_ALL_BASE.format(ind=indicator, end_year=end) + f"&page={page}"
+        payload = json.loads(_get(url).decode("utf-8", "replace"))
+        if not isinstance(payload, list) or len(payload) < 2 or payload[1] is None:
+            break
+        meta_pg, rows = payload[0], payload[1]
+        for row in rows:
+            iso3 = row.get("countryiso3code")
+            if not iso3 or (keep_iso3 is not None and iso3 not in keep_iso3):
+                continue
+            rec = by_iso.setdefault(
+                iso3, {"name": (row.get("country") or {}).get("value") or iso3, "obs": []}
+            )
+            val, yr = row.get("value"), row.get("date")
+            if val is None or not yr:
+                continue
+            try:
+                rec["obs"].append((date(int(yr), 12, 31), _finite(val) * scale))
+            except (ValueError, TypeError):
+                continue  # garbled/non-finite cell — skip, never store
+        pages = int(meta_pg.get("pages") or 1)
+        if page >= pages:
+            break
+        page += 1
+    out: list[tuple[dict, list]] = []
+    for iso3, rec in by_iso.items():
+        meta = {
+            "series_id": f"WB:{indicator}:{iso3}",
+            "source": "worldbank",
+            "name": name,
+            "geo": rec["name"],
+            "unit": unit,
+            "frequency": "annual",
+        }
+        out.append((meta, sorted(rec["obs"])))
+    return out
+
+
 # --- SDMX-CSV (shared by the ECB Data Portal and OECD: TIME_PERIOD/OBS_VALUE columns) ---
 
 

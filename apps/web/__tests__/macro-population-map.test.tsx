@@ -9,14 +9,14 @@ function s(series_id: string, geo: string, unit: string, latest: number) {
     category: "population", n_obs: 60, start_date: null, end_date: null, latest };
 }
 
-// US + China population & growth, plus an aggregate (Euro area, unmappable) and an off-topic series.
+// USA + China population & growth (ISO-3 series_ids), plus an off-topic (gdp) series that
+// must be ignored. Codes are 3-letter so they key into the ISO-3 world geometry.
 const SERIES = [
-  s("WB:SP.POP.TOTL:US", "United States", "millions", 340.1),
-  s("WB:SP.POP.GROW:US", "United States", "% per year", 0.98),
+  s("WB:SP.POP.TOTL:USA", "United States", "millions", 340.1),
+  s("WB:SP.POP.GROW:USA", "United States", "% per year", 0.98),
   s("WB:SP.POP.TOTL:CHN", "China", "millions", 1408.9),
   s("WB:SP.POP.GROW:CHN", "China", "% per year", -0.12),
-  s("WB:SP.POP.TOTL:EMU", "Euro area", "millions", 351.1), // aggregate → not shaded
-  { ...s("WB:NY.GDP.MKTP.CD:US", "United States", "USD", 27), category: "gdp" }, // not population
+  { ...s("WB:NY.GDP.MKTP.CD:USA", "United States", "USD", 27), category: "gdp" }, // not population
 ];
 
 beforeEach(() => {
@@ -34,7 +34,7 @@ describe("MacroPopulationMap", () => {
 
     const ocean = container.querySelector("svg rect")?.getAttribute("fill");
     const usFill = Array.from(container.querySelectorAll("path"))
-      .find((p) => p.getAttribute("d") === WORLD_PATHS.US)
+      .find((p) => p.getAttribute("d") === WORLD_PATHS.USA)
       ?.getAttribute("fill");
     expect(usFill).toBeTruthy();
     expect(usFill).not.toBe(ocean); // US carries a population shade
@@ -45,7 +45,7 @@ describe("MacroPopulationMap", () => {
     await screen.findByText(/2 countries/);
 
     const us = Array.from(container.querySelectorAll("path")).find(
-      (p) => p.getAttribute("d") === WORLD_PATHS.US,
+      (p) => p.getAttribute("d") === WORLD_PATHS.USA,
     )!;
     fireEvent.mouseEnter(us);
 

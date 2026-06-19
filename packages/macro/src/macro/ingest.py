@@ -23,6 +23,8 @@ from macro.sources import (
     fetch_sidra,
     fetch_treasury_par_yield,
     fetch_worldbank,
+    fetch_worldbank_all,
+    worldbank_country_iso3,
 )
 
 # Canonical category slugs (lower-case, URL-safe — they appear in console paths and must
@@ -94,8 +96,8 @@ _WB = [
     ("FR.INR.LEND", "Lending interest rate", "%", "rates", 1.0, _WB_GEOS),
     ("SL.UEM.TOTL.ZS", "Unemployment rate", "% of labour force", "employment", 1.0, _WB_GEOS),
     ("GC.DOD.TOTL.GD.ZS", "Central govt debt", "% of GDP", "debt", 1.0, _WB_GEOS),
-    ("SP.POP.TOTL", "Population", "millions", "population", 1e-6, _WB_GEOS),
-    ("SP.POP.GROW", "Population growth", "% per year", "population", 1.0, _WB_GEOS),
+    # Population (SP.POP.TOTL / SP.POP.GROW) is NOT on the 15-country panel — it gets a
+    # dedicated all-countries ingest (ingest_population_all) so the world map shades globally.
     ("BN.CAB.XOKA.GD.ZS", "Current account balance", "% of GDP", "trade", 1.0, _WB_GEOS),
     ("NE.EXP.GNFS.ZS", "Exports of goods & services", "% of GDP", "trade", 1.0, _WB_GEOS),
     ("NE.IMP.GNFS.ZS", "Imports of goods & services", "% of GDP", "trade", 1.0, _WB_GEOS),
@@ -107,6 +109,13 @@ _WB = [
     ("SL.TLF.CACT.ZS", "Labour force participation", "% of population 15+", "employment",
      1.0, _WB_GEOS),
     ("BX.KLT.DINV.WD.GD.ZS", "FDI net inflows", "% of GDP", "external", 1.0, _WB_GEOS),
+]
+
+# Population indicators ingested for EVERY country (not the 15-panel) so the world map has
+# global coverage: (indicator, name, unit, scale).
+_WB_POP_ALL = [
+    ("SP.POP.TOTL", "Population", "millions", 1e-6),
+    ("SP.POP.GROW", "Population growth", "% per year", 1.0),
 ]
 
 # ECB Data Portal series: (key, series_id, name, unit, frequency, category). The three
@@ -305,6 +314,39 @@ def _upsert(conn: psycopg.Connection, meta: dict, obs: list) -> tuple[int, int]:
     return n, restated
 
 
+def ingest_population_all(conn: psycopg.Connection) -> list[dict]:
+    """Ingest population (head-count + growth) for EVERY World Bank economy so the population
+    world map shades globally — not just the 15-country panel. Purges any prior WB:SP.POP.*
+    rows first (the old panel used mixed ISO-2/ISO-3 codes; the all-countries path is ISO-3
+    only), then upserts one series per country. Aggregates (regions/income groups) are
+    excluded. Returns the per-series summary rows."""
+    conn.autocommit = True
+    out: list[dict] = []
+    # Replace the prior population panel wholesale (avoids US/USA-style duplicate codes).
+    conn.execute("DELETE FROM macro.observation WHERE series_id LIKE 'WB:SP.POP.%%'")
+    conn.execute("DELETE FROM macro.series WHERE series_id LIKE 'WB:SP.POP.%%'")
+    try:
+        keep = worldbank_country_iso3()
+    except Exception:  # noqa: BLE001 — fall back to ISO-3-present filter if the catalog fails
+        keep = None
+    for indicator, name, unit, scale in _WB_POP_ALL:
+        try:
+            series = fetch_worldbank_all(indicator, name, unit, scale=scale, keep_iso3=keep)
+        except Exception as exc:  # noqa: BLE001
+            out.append({"series_id": f"WB:{indicator}:ALL", "obs": 0, "restated": 0,
+                        "ok": False, "error": str(exc)[:160]})
+            continue
+        for meta, obs in series:
+            try:
+                n, restated = _upsert(conn, dict(meta, category="population"), obs)
+                out.append({"series_id": meta["series_id"], "obs": n,
+                            "restated": restated, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                out.append({"series_id": meta["series_id"], "obs": 0, "restated": 0,
+                            "ok": False, "error": str(exc)[:160]})
+    return out
+
+
 def run_ingest(conn: psycopg.Connection) -> dict:
     """Fetch + upsert all configured series. Returns a per-series summary (never fabricates)."""
     conn.autocommit = True
@@ -330,6 +372,7 @@ def run_ingest(conn: psycopg.Connection) -> dict:
                     _record(meta["series_id"], (meta, obs), category)
             except Exception as exc:  # noqa: BLE001
                 _failed(f"WB:{indicator}:{geo}", exc)
+    summary.extend(ingest_population_all(conn))  # population for every country (world map)
     for key, sid, name, unit, freq, category in _ECB:
         try:
             _record(sid, fetch_ecb(key, sid, name, unit, freq), category)

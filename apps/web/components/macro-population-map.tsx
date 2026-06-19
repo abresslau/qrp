@@ -5,23 +5,6 @@ import { WORLD_H, WORLD_PATHS, WORLD_W } from "@/lib/world-geo";
 
 // World Bank population series carry a country *name* in `geo`; map the ones we track to ISO-A2
 // (the key WORLD_PATHS uses). "Euro area" is an aggregate, not a country — it has no shape.
-const GEO_TO_ISO2: Record<string, string> = {
-  Australia: "AU",
-  Brazil: "BR",
-  Canada: "CA",
-  China: "CN",
-  France: "FR",
-  Germany: "DE",
-  India: "IN",
-  Italy: "IT",
-  Japan: "JP",
-  "Korea, Rep.": "KR",
-  Mexico: "MX",
-  Spain: "ES",
-  "United Kingdom": "GB",
-  "United States": "US",
-};
-
 type Series = {
   series_id: string;
   category: string | null;
@@ -30,7 +13,7 @@ type Series = {
   latest: number | null;
   name: string;
 };
-type Row = { iso2: string; geo: string; total: number | null; growth: number | null };
+type Row = { iso3: string; geo: string; total: number | null; growth: number | null };
 type Metric = "total" | "growth";
 
 function useIsDark(): boolean {
@@ -80,13 +63,14 @@ export function MacroPopulationMap() {
         const all: Series[] = await r.json();
         const byIso = new Map<string, Row>();
         for (const s of all) {
-          if (s.category !== "population" || !s.geo) continue;
-          const iso2 = GEO_TO_ISO2[s.geo];
-          if (!iso2) continue; // aggregates (Euro area) / untracked geos
-          const row = byIso.get(iso2) ?? { iso2, geo: s.geo, total: null, growth: null };
+          if (s.category !== "population") continue;
+          // series_id is WB:SP.POP.TOTL:<ISO3> / WB:SP.POP.GROW:<ISO3>
+          const iso3 = s.series_id.split(":").pop() ?? "";
+          if (iso3.length !== 3) continue;
+          const row = byIso.get(iso3) ?? { iso3, geo: s.geo ?? iso3, total: null, growth: null };
           if (s.series_id.includes("SP.POP.TOTL")) row.total = s.latest;
           else if (s.series_id.includes("SP.POP.GROW")) row.growth = s.latest;
-          byIso.set(iso2, row);
+          byIso.set(iso3, row);
         }
         if (alive) {
           setRows([...byIso.values()]);
@@ -106,7 +90,7 @@ export function MacroPopulationMap() {
 
   const byIso = useMemo(() => {
     const m = new Map<string, Row>();
-    for (const r of rows ?? []) m.set(r.iso2, r);
+    for (const r of rows ?? []) m.set(r.iso3, r);
     return m;
   }, [rows]);
 
@@ -186,7 +170,7 @@ export function MacroPopulationMap() {
           <rect x={0} y={0} width={WORLD_W} height={WORLD_H} fill={ocean} />
           {Object.entries(WORLD_PATHS).map(([iso, d]) => {
             const r = byIso.get(iso);
-            const active = hover?.iso2 === iso;
+            const active = hover?.iso3 === iso;
             return (
               <path
                 key={iso}
@@ -208,7 +192,7 @@ export function MacroPopulationMap() {
           >
             <div className="mb-1 flex items-baseline justify-between gap-2">
               <span className="text-sm font-semibold text-fg">{hover.geo}</span>
-              <span className="font-mono text-[10px] text-muted">{hover.iso2}</span>
+              <span className="font-mono text-[10px] text-muted">{hover.iso3}</span>
             </div>
             <div className="flex justify-between tabular-nums">
               <span className="text-muted">Population</span>
