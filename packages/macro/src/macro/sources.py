@@ -676,6 +676,47 @@ def fetch_bcb_focus_12m(
     return meta, obs
 
 
+# Focus survey ANNUAL term structure (expectations for a fixed reference YEAR, tracked over
+# time). The monetary-policy chapter of a desk's scenario runs on this: IPCA/Selic/BRL/GDP
+# expectations for the current + next years. ``baseCalculo eq 0`` = the smoothed (last-30-day)
+# median the bank headlines. One series per (indicator, reference year).
+FOCUS_ANNUAL = (
+    "https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/"
+    "ExpectativasMercadoAnuais?$format=json&$select=Data,Mediana&$orderby=Data&$top=20000"
+)
+
+
+def fetch_bcb_focus_annual(
+    indicator: str, series_id: str, name: str, unit: str, ref_year: int, geo: str = "Brazil"
+) -> tuple[dict, list]:
+    """Focus survey: the smoothed median expectation for ``indicator`` at reference year
+    ``ref_year``, as a time series over survey dates. An unknown indicator name simply yields
+    an empty series (stored as nothing by the upsert) — never bad data."""
+    flt = f"Indicador eq '{indicator}' and DataReferencia eq '{ref_year}' and baseCalculo eq 0"
+    # quote spaces + non-ASCII (e.g. the â in "Câmbio"); keep the OData single quotes literal.
+    url = f"{FOCUS_ANNUAL}&$filter={urllib.parse.quote(flt, safe=chr(39))}"
+    payload = json.loads(_get_retry(url, timeout=45).decode("utf-8", "replace"))
+    obs: list[tuple[date, float]] = []
+    for row in payload.get("value", []) if isinstance(payload, dict) else []:
+        d, v = row.get("Data"), row.get("Mediana")
+        if not d or v is None:
+            continue
+        try:
+            obs.append((date.fromisoformat(d[:10]), _finite(v)))
+        except (ValueError, TypeError):
+            continue
+    obs.sort()
+    meta = {
+        "series_id": series_id,
+        "source": "bcb_focus",
+        "name": name,
+        "geo": geo,
+        "unit": unit,
+        "frequency": "daily",
+    }
+    return meta, obs
+
+
 # --- IBGE SIDRA (Brazilian official statistics: IPCA, PNAD unemployment, PIB) ------------
 # Open JSON REST, no key. The response is a FLAT array whose first element is a legend
 # (header) and the rest are data rows; `V` is the value (string; non-numeric sentinels

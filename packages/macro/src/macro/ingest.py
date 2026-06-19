@@ -7,12 +7,15 @@ is omitted, never faked. Run via ``python -m macro.ingest`` or the gateway's ref
 
 from __future__ import annotations
 
+from datetime import date as _date
+
 import psycopg
 
 from macro.db import connect
 from macro.market_sources import fetch_yfinance
 from macro.sources import (
     fetch_bcb_focus_12m,
+    fetch_bcb_focus_annual,
     fetch_bcb_sgs,
     fetch_bls,
     fetch_ecb,
@@ -116,6 +119,20 @@ _WB = [
 _WB_POP_ALL = [
     ("SP.POP.TOTL", "Population", "millions", 1e-6),
     ("SP.POP.GROW", "Population growth", "% per year", 1.0),
+]
+
+# Focus survey term structure (expectations for a fixed reference year, tracked over time) —
+# the monetary-policy anchor a desk lives on. (Olinda indicator, id-prefix, name, unit,
+# category). One series per reference year (current..+3) via ingest_focus_annual. An unknown
+# indicator string yields an empty series (stored as nothing) — never bad data.
+_BCB_FOCUS_ANNUAL = [
+    ("IPCA", "IPCA", "IPCA expectation (Focus)", "% per year", "inflation"),
+    ("Câmbio", "BRL", "BRL/USD eop expectation (Focus)", "BRL per USD", "fx"),
+    ("PIB Total", "PIB", "GDP growth expectation (Focus)", "% per year", "gdp"),
+    ("Dívida bruta do governo geral", "GROSSDEBT",
+     "Gross general govt debt expectation (Focus)", "% of GDP", "debt"),
+    # NOTE: Selic eop expectations live in a separate Olinda endpoint
+    # (ExpectativasMercadoSelic) — wire as a follow-up.
 ]
 
 # ECB Data Portal series: (key, series_id, name, unit, frequency, category). The three
@@ -347,6 +364,25 @@ def ingest_population_all(conn: psycopg.Connection) -> list[dict]:
     return out
 
 
+def ingest_focus_annual(conn: psycopg.Connection) -> list[dict]:
+    """Ingest the Focus survey annual term structure: one series per (indicator, reference
+    year) for the current + next three years. Returns the per-series summary rows."""
+    conn.autocommit = True
+    out: list[dict] = []
+    y0 = _date.today().year
+    for indicator, prefix, name, unit, category in _BCB_FOCUS_ANNUAL:
+        for y in range(y0, y0 + 4):
+            sid = f"BCB:FOCUS:{prefix}:{y}"
+            try:
+                meta, obs = fetch_bcb_focus_annual(indicator, sid, f"{name} ({y})", unit, y)
+                n, restated = _upsert(conn, dict(meta, category=category), obs)
+                out.append({"series_id": sid, "obs": n, "restated": restated, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                out.append({"series_id": sid, "obs": 0, "restated": 0, "ok": False,
+                            "error": str(exc)[:160]})
+    return out
+
+
 def run_ingest(conn: psycopg.Connection) -> dict:
     """Fetch + upsert all configured series. Returns a per-series summary (never fabricates)."""
     conn.autocommit = True
@@ -373,6 +409,7 @@ def run_ingest(conn: psycopg.Connection) -> dict:
             except Exception as exc:  # noqa: BLE001
                 _failed(f"WB:{indicator}:{geo}", exc)
     summary.extend(ingest_population_all(conn))  # population for every country (world map)
+    summary.extend(ingest_focus_annual(conn))  # Focus survey annual term structure
     for key, sid, name, unit, freq, category in _ECB:
         try:
             _record(sid, fetch_ecb(key, sid, name, unit, freq), category)
