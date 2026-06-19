@@ -489,6 +489,10 @@ function ResearchTable({
  *  undefined = the cross-theme cockpit + all sections. An unknown category yields an honest
  *  empty state. Modelled on a sell-side macro dashboard: headline cards, change table,
  *  featured chart. */
+// Max series rows rendered for one category (population spans 200+ countries; the rest are
+// reachable via search + the chart). Keeps the DOM light enough to stay responsive.
+const MAX_LIST_ROWS = 60;
+
 export function MacroBrowser({ category }: { category?: string }) {
   const [series, setSeries] = useState<SeriesSummary[]>([]);
   const [seriesState, setSeriesState] = useState<"loading" | "error" | "ready">("loading");
@@ -620,7 +624,9 @@ export function MacroBrowser({ category }: { category?: string }) {
         return Math.abs(pb) - Math.abs(pa);
       });
     };
-    if (category) return [{ key: category, rows: sortRows(visible) }];
+    // Cap a single category's rendered rows (a global indicator like population has 200+);
+    // the chart/search still reach the rest. Landing sections are small (≤28) — left whole.
+    if (category) return [{ key: category, rows: sortRows(visible).slice(0, MAX_LIST_ROWS) }];
     const by = new Map<string, SeriesSummary[]>();
     for (const s of visible) {
       const k = s.category ?? "other";
@@ -830,7 +836,11 @@ export function MacroBrowser({ category }: { category?: string }) {
       <div className="mt-6 space-y-6">
         {seriesState === "ready" && visible.length > 0 && (
           <div className="flex items-center justify-between gap-1 text-xs">
-            <span className="text-muted/70">↑↓ navigate · click a row to chart</span>
+            <span className="text-muted/70">
+              {category && visible.length > MAX_LIST_ROWS
+                ? `showing ${MAX_LIST_ROWS} of ${visible.length} — search to narrow`
+                : "↑↓ navigate · click a row to chart"}
+            </span>
             <div className="flex items-center gap-1">
             <span className="mr-1 text-muted">Sort</span>
             {(["name", "move"] as const).map((m) => (

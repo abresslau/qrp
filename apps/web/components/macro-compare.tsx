@@ -36,7 +36,13 @@ const PALETTE = [
 type Group = { name: string; unit: string | null; members: SeriesSummary[] };
 type Loaded = { summary: SeriesSummary; detail: SeriesDetail };
 
-/** Same-indicator series (matching name AND unit — one honest axis) with ≥2 members. */
+// A comparison chart caps at the top-N members by latest value (and fetches detail only for
+// those). Keeps a global-coverage indicator like population (217 countries) from drawing
+// hundreds of lines / firing hundreds of detail requests; every existing panel is ≤28.
+const MAX_COMPARE_MEMBERS = 30;
+
+/** Same-indicator series (matching name AND unit — one honest axis) with ≥2 members; each
+ *  group capped to the largest MAX_COMPARE_MEMBERS by latest value. */
 function groupComparable(series: SeriesSummary[]): Group[] {
   const by = new Map<string, Group>();
   for (const s of series) {
@@ -45,7 +51,18 @@ function groupComparable(series: SeriesSummary[]): Group[] {
     g.members.push(s);
     by.set(key, g);
   }
-  return [...by.values()].filter((g) => g.members.length >= 2);
+  return [...by.values()]
+    .filter((g) => g.members.length >= 2)
+    .map((g) =>
+      g.members.length <= MAX_COMPARE_MEMBERS
+        ? g
+        : {
+            ...g,
+            members: [...g.members]
+              .sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity))
+              .slice(0, MAX_COMPARE_MEMBERS),
+          },
+    );
 }
 
 function fmt(v: number, unit?: string | null): string {
