@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { SUBNAV_PROVIDERS, type SubItem } from "@/lib/nav";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ApiStatus } from "@/components/api-status";
@@ -21,6 +21,52 @@ function Chevron({ open }: { open: boolean }) {
       <path d="M6 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
+}
+
+// Collapse/expand the whole rail: a panel glyph with a chevron pointing the way it will go.
+function CollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.5}>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="M6 2.5v11" strokeLinecap="round" />
+      <path
+        d={collapsed ? "M9.5 6l2 2-2 2" : "M11.5 6l-2 2 2 2"}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// Whole-rail collapse lives in localStorage and is read via useSyncExternalStore (like the theme)
+// — no set-state-in-effect, and a stable server snapshot (expanded) so hydration never mismatches.
+const COLLAPSE_KEY = "qrp-sidebar-collapsed";
+const collapseListeners = new Set<() => void>();
+function subscribeCollapse(cb: () => void): () => void {
+  collapseListeners.add(cb);
+  window.addEventListener("storage", cb); // cross-tab
+  return () => {
+    collapseListeners.delete(cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+function getCollapseSnapshot(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function getCollapseServerSnapshot(): boolean {
+  return false;
+}
+function setCollapsedStored(next: boolean): void {
+  try {
+    localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+    collapseListeners.forEach((l) => l()); // notify this tab (storage event is cross-tab only)
+  } catch {
+    /* ignore */
+  }
 }
 
 export function Sidebar({
@@ -80,6 +126,10 @@ export function Sidebar({
   // to expanded until the user says otherwise.
   const [open, setOpen] = useState<Record<string, boolean>>({});
 
+  // Whole-rail collapse, persisted in localStorage (see the external store above).
+  const collapsed = useSyncExternalStore(subscribeCollapse, getCollapseSnapshot, getCollapseServerSnapshot);
+  const toggleCollapsed = useCallback(() => setCollapsedStored(!getCollapseSnapshot()), []);
+
   const subnavFor = (key: string): SubItem[] => {
     const p = SUBNAV_PROVIDERS[key];
     if (!p) return [];
@@ -87,14 +137,69 @@ export function Sidebar({
   };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface px-4 py-6">
-      <div className="mb-8 px-2">
-        <div className="flex items-center gap-2">
-          <div className="text-lg font-semibold tracking-tight text-fg">{name}</div>
-          <ApiStatus />
-        </div>
-        {tagline && <div className="text-xs text-muted">{tagline}</div>}
+    <aside
+      className={[
+        "flex shrink-0 flex-col border-r border-border bg-surface py-6 transition-[width] duration-200 ease-out",
+        collapsed ? "w-16 px-2" : "w-60 px-4",
+      ].join(" ")}
+    >
+      <div className={collapsed ? "mb-6 flex flex-col items-center gap-3" : "mb-8 px-2"}>
+        {collapsed ? (
+          <>
+            <button
+              type="button"
+              onClick={toggleCollapsed}
+              aria-label="Expand sidebar"
+              title="Expand sidebar"
+              className="rounded-md p-2 text-muted hover:bg-fg/5 hover:text-fg"
+            >
+              <CollapseIcon collapsed />
+            </button>
+            <ApiStatus />
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="text-lg font-semibold tracking-tight text-fg">{name}</div>
+              <ApiStatus />
+              <button
+                type="button"
+                onClick={toggleCollapsed}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+                className="ml-auto rounded-md p-1.5 text-muted hover:bg-fg/5 hover:text-fg"
+              >
+                <CollapseIcon collapsed={false} />
+              </button>
+            </div>
+            {tagline && <div className="text-xs text-muted">{tagline}</div>}
+          </>
+        )}
       </div>
+
+      {collapsed ? (
+        // Collapsed rail: module links as single-letter buttons (full name on hover); submenus
+        // and the theme control are only available expanded.
+        <nav className="flex-1 space-y-1">
+          {items.map((it) => {
+            const active = pathname === it.href || pathname.startsWith(`${it.href}/`);
+            return (
+              <Link
+                key={it.key}
+                href={it.href}
+                title={it.name}
+                aria-label={it.name}
+                className={[
+                  "flex h-9 items-center justify-center rounded-md text-sm font-medium uppercase transition",
+                  active ? "bg-fg/10 text-fg" : "text-muted hover:bg-fg/5 hover:text-fg",
+                ].join(" ")}
+              >
+                {it.name.slice(0, 2)}
+              </Link>
+            );
+          })}
+        </nav>
+      ) : (
       <nav className="flex-1 space-y-1 text-sm">
         {items.map((it) => {
           const active = pathname === it.href || pathname.startsWith(`${it.href}/`);
@@ -164,9 +269,12 @@ export function Sidebar({
           );
         })}
       </nav>
-      <div className="mt-4">
-        <ThemeToggle />
-      </div>
+      )}
+      {!collapsed && (
+        <div className="mt-4">
+          <ThemeToggle />
+        </div>
+      )}
     </aside>
   );
 }
