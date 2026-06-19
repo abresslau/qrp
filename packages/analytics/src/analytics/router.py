@@ -119,8 +119,13 @@ class CompositionHolding(BaseModel):
     name: str | None
     sector: str
     industry: str | None
+    mic: str | None
+    country: str | None
+    status: str | None
     weight: float          # SIGNED (longs +, shorts −); position size is abs(weight)
     currency: str | None
+    market_cap_usd: float | None
+    volume: int | None
     price: float | None
     live_return: float | None
     freshness: str

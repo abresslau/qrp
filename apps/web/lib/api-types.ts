@@ -1042,10 +1042,20 @@ export interface components {
             sector: string;
             /** Industry */
             industry: string | null;
+            /** Mic */
+            mic: string | null;
+            /** Country */
+            country: string | null;
+            /** Status */
+            status: string | null;
             /** Weight */
             weight: number;
             /** Currency */
             currency: string | null;
+            /** Market Cap Usd */
+            market_cap_usd: number | null;
+            /** Volume */
+            volume: number | null;
             /** Price */
             price: number | null;
             /** Live Return */

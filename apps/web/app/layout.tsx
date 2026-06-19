@@ -34,7 +34,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="min-h-screen bg-bg text-fg antialiased">
         <div className="flex min-h-screen">
           <Sidebar name={name} tagline={platform?.tagline} modules={platform?.modules ?? []} />
-          <main className="flex-1 px-8 py-7">{children}</main>
+          <main className="min-w-0 flex-1 px-5 py-4">{children}</main>
         </div>
         <CommandPalette modules={platform?.modules ?? []} />
       </body>

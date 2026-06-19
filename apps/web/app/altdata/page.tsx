@@ -77,7 +77,7 @@ export default function AltdataPage() {
   }, [sel]);
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">alt data</h1>
       <p className="mt-1 text-sm text-muted">
         Alternative-data series, mapped to sym securities. Sources: Wikimedia daily pageviews

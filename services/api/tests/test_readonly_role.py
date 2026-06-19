@@ -112,7 +112,7 @@ def test_readonly_role_reads_surface_but_refuses_writes_and_internals():
 
         # (b) a sym-INTERNAL relation is not readable (surface is least-privilege)
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            conn.execute("SELECT 1 FROM prices_raw LIMIT 1")
+            conn.execute("SELECT 1 FROM corporate_actions LIMIT 1")
         conn.rollback()
 
         # (c) writes + DDL are PHYSICALLY refused — for the right reason (permission

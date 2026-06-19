@@ -33,6 +33,8 @@ SYM_READ_SURFACE = {
     "instrument",
     "pipeline_run_log",  # Operate's correlated run history (FR-6/FR-8)
     "gics_scd",  # GICS sector/industry — analytics' live portfolio composition (sector pizza)
+    "exchange",  # exchange→country — the live composition pivot (explorer-style per-stock columns)
+    "prices_raw",  # latest EOD volume — the live composition pivot (explorer-style per-stock columns)
 }
 
 # The known sym public relations OUTSIDE the read surface (kept current by hand from
@@ -40,7 +42,7 @@ SYM_READ_SURFACE = {
 # newer, so an omission here cannot silently widen the contract). The role is NEVER
 # granted SELECT on these.
 SYM_INTERNAL_RELATIONS = {
-    "prices_raw", "prices_review", "exchange", "trading_calendar",
+    "prices_review", "trading_calendar",
     "trading_calendar_version", "universe", "membership_event", "membership_proposal",
     "universe_member_completeness", "universe_accuracy_check", "fx_rate",
     "fx_rate_review", "securities_review_queue", "pipeline_backfill_progress",

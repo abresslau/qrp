@@ -64,7 +64,7 @@ export default function SignalPage() {
   const meta = factors.find((f) => f.factor_key === factor);
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">signal</h1>
       <p className="mt-1 text-sm text-muted">
         Derived cross-sectional factors with inputs across modules — sym returns, macro series,

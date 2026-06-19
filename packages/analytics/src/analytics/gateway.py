@@ -360,17 +360,23 @@ class DbAnalyticsGateway:
             )
 
         figis = list(weights)
-        _MISSING = (None, None, "Unclassified", None, None, None)
+        _MISSING = (None, None, "Unclassified", None, None, None, None, None, None, None)
         meta = {
-            f: (tk, mic, sector, industry, name, currency)
-            for f, tk, mic, sector, industry, name, currency in self._sym.execute(
+            f: (tk, mic, sector, industry, name, currency, status, mcap, country, volume)
+            for f, tk, mic, sector, industry, name, currency, status, mcap, country, volume
+            in self._sym.execute(
                 """
                 SELECT s.composite_figi, tk.symbol_value, s.mic,
                        coalesce(g.sector_name, 'Unclassified') AS sector,
                        g.industry_name AS industry,
                        sn.name AS name,
-                       f.currency_code AS currency
+                       f.currency_code AS currency,
+                       s.status,
+                       f.market_cap_usd,
+                       ex.country,
+                       px.volume
                   FROM securities s
+                  LEFT JOIN exchange ex ON ex.mic = s.mic
                   LEFT JOIN LATERAL (
                       SELECT symbol_value FROM security_symbology y
                        WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
@@ -387,10 +393,15 @@ class DbAnalyticsGateway:
                        ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
                   ) sn ON TRUE
                   LEFT JOIN LATERAL (
-                      SELECT currency_code FROM fundamentals f2
+                      SELECT currency_code, market_cap_usd FROM fundamentals f2
                        WHERE f2.composite_figi = s.composite_figi AND f2.market_cap_usd IS NOT NULL
                        ORDER BY as_of_date DESC LIMIT 1
                   ) f ON TRUE
+                  LEFT JOIN LATERAL (
+                      SELECT volume FROM prices_raw p
+                       WHERE p.composite_figi = s.composite_figi
+                       ORDER BY p.session_date DESC LIMIT 1
+                  ) px ON TRUE
                  WHERE s.composite_figi = ANY(%s)
                 """,
                 (figis,),
@@ -422,7 +433,7 @@ class DbAnalyticsGateway:
             aw = abs(w)
             total_abs += aw
             net += w
-            tk, mic, sector, industry, name, currency = meta.get(figi, _MISSING)
+            tk, mic, sector, industry, name, currency, status, mcap, country, volume = meta.get(figi, _MISSING)
             sector = sector or "Unclassified"
             ysym = ysym_by_figi.get(figi)
             q = batch.get(ysym) if ysym else None
@@ -449,8 +460,11 @@ class DbAnalyticsGateway:
                 sec_rsum[sector] = sec_rsum.get(sector, 0.0) + aw * lr
             holdings.append(
                 {"figi": figi, "ticker": tk, "name": name,
-                 "sector": sector, "industry": industry,
+                 "sector": sector, "industry": industry, "mic": mic,
+                 "country": country, "status": status,
                  "weight": w, "currency": currency,
+                 "market_cap_usd": float(mcap) if mcap is not None else None,
+                 "volume": int(volume) if volume is not None else None,
                  "price": price, "live_return": lr, "freshness": cfresh}
             )
 

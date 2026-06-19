@@ -44,10 +44,11 @@ describe("PortfolioRiskPnl", () => {
     expect(screen.getByText("4.00×")).toBeInTheDocument(); // L/S = 0.8 / 0.2
   });
 
-  it("shows money when a notional is set", async () => {
+  it("always shows P&L in % (even when a notional is set)", async () => {
     stub({ ...PNL_BASE, notional: 1_000_000, daily_pnl: 16_400, mtd_pnl: -39_100, ytd_pnl: 121_200 });
     render(<PortfolioRiskPnl pid="7" portfolio={portfolio({ notional: 1_000_000 })} dailyReturn={0.0164} />);
-    expect(await screen.findByText("+16,400 USD")).toBeInTheDocument(); // notional × live daily
+    expect(await screen.findByText("+1.64%")).toBeInTheDocument(); // % return, not money
+    expect(screen.queryByText(/USD/)).not.toBeInTheDocument();
   });
 
   it("renders a dash for L/S ratio on a long-only book", async () => {

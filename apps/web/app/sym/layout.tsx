@@ -8,7 +8,7 @@ import { SYM_SUBNAV } from "@/lib/nav";
 export default function SymLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="w-full">
       <div className="mb-6 flex gap-1 border-b border-border">
         {SYM_SUBNAV.map((t) => {
           const active = pathname === t.href;

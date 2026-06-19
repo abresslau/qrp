@@ -127,7 +127,7 @@ export default function OptimiserPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">optimiser</h1>
       <p className="mt-1 text-sm text-muted">
         Constrained mean-variance optimisation (long-only, fully invested, optional per-position

@@ -55,7 +55,7 @@ export default async function UniversesPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">Universes</h1>
       <p className="mt-1 text-sm text-muted">
         Coverage per universe — Prices, Returns, Fundamentals. Coverage is judged per-member

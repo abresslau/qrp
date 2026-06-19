@@ -7,16 +7,16 @@ import { type Composition, rgbFor, textInk, useIsDark } from "@/components/portf
 const TOOLTIP_TOP_N = 5; // per side (winners / losers) in the sector hover tooltip
 
 // The sector breakdown is a HEAT MAP in the shape of a donut: each ring segment is a sector,
-// sized by the sector's position size (Σ|weight|) and colored by its daily P&L (live return) on
-// the SAME ±3% diverging scale as the heat-map treemap. Each segment carries an in-slice label —
-// the sector name + its daily P&L — exactly like the treemap tiles (legend has the full list).
+// sized by position size (Σ|weight|), COLORED by the sector's daily move on the ±3% scale, and
+// LABELLED by its daily P&L CONTRIBUTION (Σ w·r ÷ Σ|w| covered) — which sums to the portfolio's
+// Daily P&L (the legend totals it). Hover a slice for that sector's top winners/losers.
 
 function polar(cx: number, cy: number, r: number, ang: number): [number, number] {
   return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)];
 }
 
 // One ring segment path. Angles in radians, clockwise from -90° (top). A near-full segment is
-// nudged just under 2π so a single-slice (100%) donut still renders as a ring (no degenerate arc).
+// nudged just under 2π so a single-slice (100%) donut still renders as a ring.
 function donutArc(cx: number, cy: number, R: number, r: number, a0: number, a1: number): string {
   const span = Math.min(a1 - a0, Math.PI * 2 - 1e-3);
   const end = a0 + span;
@@ -43,9 +43,9 @@ const S = 300;
 const CX = S / 2;
 const CY = S / 2;
 const R = 140; // outer radius
-const RI = 80; // inner radius (62px band — room for two lines of label)
+const RI = 80; // inner radius
 const LABEL_R = (R + RI) / 2;
-const LABEL_MIN_FRAC = 0.06; // smaller slices fall back to the legend (avoid label collisions)
+const LABEL_MIN_FRAC = 0.06; // smaller slices rely on the legend (avoid label collisions)
 
 export function PortfolioPizza({ data }: { data: Composition | null }) {
   const isDark = useIsDark();
@@ -55,6 +55,17 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
     return <p className="text-sm text-muted">No holdings to slice yet — upload a weight vector to see the sector breakdown.</p>;
   }
 
+  // Per-sector daily P&L CONTRIBUTION = Σ w·r ÷ Σ|w| covered. The per-sector values sum to the
+  // portfolio Daily P&L (the same coverage-normalised roll-up the top panel shows).
+  const priced = (data.holdings ?? []).filter((h) => h.live_return != null);
+  const covered = priced.reduce((s, h) => s + Math.abs(h.weight), 0);
+  const contribBySector: Record<string, number | null> = {};
+  for (const s of data.sectors) {
+    const hs = covered > 0 ? priced.filter((h) => h.sector === s.sector) : [];
+    contribBySector[s.sector] = hs.length ? hs.reduce((acc, h) => acc + (h.weight * (h.live_return as number)) / covered, 0) : null;
+  }
+  const totalContrib = Object.values(contribBySector).reduce((acc: number, v) => acc + (v ?? 0), 0);
+
   const total = data.sectors.reduce((s, x) => s + x.weight, 0) || 1;
   const frac = (v: number) => v / total;
   const arcs = data.sectors.map((s, i) => {
@@ -63,31 +74,18 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
     const f = frac(s.weight);
     const a1 = a0 + f * Math.PI * 2;
     const mid = (a0 + a1) / 2;
-    const rgb = rgbFor(s.live_return, isDark);
+    const rgb = rgbFor(s.live_return, isDark); // color = the sector's daily MOVE (vivid heat)
     const [lx, ly] = polar(CX, CY, LABEL_R, mid);
-    return {
-      s,
-      frac: f,
-      rgb,
-      color: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
-      d: donutArc(CX, CY, R, RI, a0, a1),
-      lx,
-      ly,
-    };
+    return { s, frac: f, contrib: contribBySector[s.sector] ?? null, rgb, color: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`, d: donutArc(CX, CY, R, RI, a0, a1), lx, ly };
   });
 
   return (
     <div>
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted">
-        By sector — position size, colored by daily P&amp;L
+        By sector — position size, daily P&amp;L
       </h3>
       <div className="mt-2 flex flex-wrap items-center gap-6">
-        <svg
-          viewBox={`0 0 ${S} ${S}`}
-          className="h-60 w-60 shrink-0"
-          role="img"
-          aria-label="Sector daily P&L donut heat map"
-        >
+        <svg viewBox={`0 0 ${S} ${S}`} className="h-60 w-60 shrink-0" role="img" aria-label="Sector daily P&L donut heat map">
           {arcs.map((a) => (
             <path
               key={a.s.sector}
@@ -107,32 +105,11 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
               const ink = textInk(a.rgb);
               return (
                 <g key={`label-${a.s.sector}`} className="pointer-events-none">
-                  <text
-                    x={a.lx}
-                    y={a.ly - 4}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill={ink.fill}
-                    fontSize={11}
-                    fontWeight={600}
-                    paintOrder="stroke"
-                    stroke={ink.stroke}
-                    strokeWidth={2}
-                  >
+                  <text x={a.lx} y={a.ly - 4} textAnchor="middle" dominantBaseline="middle" fill={ink.fill} fontSize={11} fontWeight={600} paintOrder="stroke" stroke={ink.stroke} strokeWidth={2}>
                     {a.s.sector}
                   </text>
-                  <text
-                    x={a.lx}
-                    y={a.ly + 11}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fill={ink.fill}
-                    fontSize={11}
-                    paintOrder="stroke"
-                    stroke={ink.stroke}
-                    strokeWidth={2}
-                  >
-                    {ret(a.s.live_return)}
+                  <text x={a.lx} y={a.ly + 11} textAnchor="middle" dominantBaseline="middle" fill={ink.fill} fontSize={11} paintOrder="stroke" stroke={ink.stroke} strokeWidth={2}>
+                    {ret(a.contrib)}
                   </text>
                 </g>
               );
@@ -144,26 +121,40 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
             {wpct(data.total_weight)}
           </text>
         </svg>
-        <ul className="min-w-[12rem] flex-1 space-y-1.5 text-xs">
-          {arcs.map((a) => (
-            <li key={a.s.sector} className="flex items-center gap-2">
-              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: a.color }} />
-              <span className="truncate text-fg" title={a.s.sector}>
-                {a.s.sector}
-              </span>
-              <span className="ml-auto shrink-0 tabular-nums text-muted">{wpct(a.frac)}</span>
-              <span className={`w-16 shrink-0 text-right tabular-nums ${retClass(a.s.live_return)}`}>
-                {ret(a.s.live_return)}
-              </span>
-            </li>
-          ))}
-        </ul>
+
+        {/* Legend = a sector attribution table: weight + daily P&L contribution, totaling Daily P&L. */}
+        <div className="min-w-[13rem] flex-1 text-xs">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted">
+            <span className="h-2.5 w-2.5 shrink-0" aria-hidden />
+            <span className="flex-1">Sector</span>
+            <span className="w-12 text-right">Wt</span>
+            <span className="w-16 text-right">P&amp;L</span>
+          </div>
+          <ul className="mt-1 space-y-1">
+            {arcs.map((a) => (
+              <li key={a.s.sector} className="flex items-center gap-2">
+                <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: a.color }} />
+                <span className="flex-1 truncate text-fg" title={a.s.sector}>
+                  {a.s.sector}
+                </span>
+                <span className="w-12 shrink-0 text-right tabular-nums text-muted">{wpct(a.frac)}</span>
+                <span className={`w-16 shrink-0 text-right tabular-nums ${retClass(a.contrib)}`}>{ret(a.contrib)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 flex items-center gap-2 border-t border-border pt-1 font-semibold">
+            <span className="h-2.5 w-2.5 shrink-0" aria-hidden />
+            <span className="flex-1 text-fg">Total</span>
+            <span className="w-12 shrink-0 text-right tabular-nums text-muted">{wpct(1)}</span>
+            <span className={`w-16 shrink-0 text-right tabular-nums ${retClass(totalContrib)}`}>{ret(totalContrib)}</span>
+          </div>
+        </div>
       </div>
 
       {hover &&
         (() => {
-          const hs = (data.holdings ?? []).filter((h) => h.sector === hover.sector && h.live_return != null);
-          const movers = hs.map((h) => ({ t: h.ticker ?? h.figi, c: h.weight * (h.live_return as number) }));
+          const hs = priced.filter((h) => h.sector === hover.sector);
+          const movers = hs.map((h) => ({ t: h.ticker ?? h.figi, c: covered > 0 ? (h.weight * (h.live_return as number)) / covered : 0 }));
           const winners = movers.filter((m) => m.c > 0).sort((a, b) => b.c - a.c).slice(0, TOOLTIP_TOP_N);
           const losers = movers.filter((m) => m.c < 0).sort((a, b) => a.c - b.c).slice(0, TOOLTIP_TOP_N);
           const w = typeof window !== "undefined" ? window.innerWidth : 1200;
@@ -175,9 +166,7 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
               <div className="text-[11px] uppercase tracking-wide text-muted">{hover.sector}</div>
               <div className="mt-2 grid grid-cols-2 gap-3 text-xs">
                 <div>
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                    Winners
-                  </div>
+                  <div className="text-[10px] font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">Winners</div>
                   {winners.length ? (
                     winners.map((m) => (
                       <div key={m.t} className="mt-0.5 flex justify-between gap-2">
@@ -190,9 +179,7 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
                   )}
                 </div>
                 <div>
-                  <div className="text-[10px] font-medium uppercase tracking-wide text-rose-600 dark:text-rose-400">
-                    Losers
-                  </div>
+                  <div className="text-[10px] font-medium uppercase tracking-wide text-rose-600 dark:text-rose-400">Losers</div>
                   {losers.length ? (
                     losers.map((m) => (
                       <div key={m.t} className="mt-0.5 flex justify-between gap-2">

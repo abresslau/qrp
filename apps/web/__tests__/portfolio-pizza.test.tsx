@@ -23,16 +23,24 @@ const COMP: Composition = {
 };
 
 describe("PortfolioPizza — sector donut heat map", () => {
-  it("renders one ring segment per sector with in-slice + legend labels (name, share%, daily P&L)", () => {
+  it("labels each sector by its daily P&L CONTRIBUTION in-slice + legend (sums to Daily P&L)", () => {
     render(<PortfolioPizza data={COMP} />);
-    // name + daily P&L appear BOTH in-slice (like the heat map) and in the legend
+    // covered = 0.5+0.4+0.3 = 1.2. Tech contrib = (0.5·0.1 + 0.4·−0.05)/1.2 = +2.50%; Energy = +0.25%.
     expect(screen.getAllByText("Tech").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Energy").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("+5.00%").length).toBeGreaterThanOrEqual(2); // Tech daily P&L
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2); // Energy uncovered -> neutral
-    // share% is legend-only (one each)
-    expect(screen.getByText("75.0%")).toBeInTheDocument(); // 0.9 / 1.2 share
-    expect(screen.getByText("25.0%")).toBeInTheDocument(); // 0.3 / 1.2 share
+    expect(screen.getAllByText("+2.50%").length).toBeGreaterThanOrEqual(2); // Tech contribution, in-slice + legend
+    expect(screen.getAllByText("+0.25%").length).toBeGreaterThanOrEqual(2); // Energy contribution
+    expect(screen.getByText("75.0%")).toBeInTheDocument(); // Tech weight (0.9 / 1.2)
+    expect(screen.getByText("25.0%")).toBeInTheDocument(); // Energy weight (0.3 / 1.2)
+  });
+
+  it("has column headers and a Total row that sums to Daily P&L", () => {
+    render(<PortfolioPizza data={COMP} />);
+    expect(screen.getByText("Sector")).toBeInTheDocument();
+    expect(screen.getByText("Wt")).toBeInTheDocument();
+    expect(screen.getByText("P&L")).toBeInTheDocument();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+    expect(screen.getByText("+2.75%")).toBeInTheDocument(); // Σ contributions = Daily P&L
   });
 
   it("colors each segment by daily P&L (one <path> per sector) and shows gross in the center", () => {

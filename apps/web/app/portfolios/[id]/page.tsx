@@ -95,7 +95,7 @@ export default function PortfolioDetail() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="w-full">
       <div className="flex items-center justify-between gap-2">
         <Link href="/portfolios" className="text-sm text-muted hover:text-fg">← Portfolios</Link>
         <Link

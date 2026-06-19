@@ -71,7 +71,7 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
 
   const f = d.fundamentals;
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="w-full">
       <Link href="/sym/explorer" className="text-sm text-muted hover:text-fg">
         ← Explorer
       </Link>

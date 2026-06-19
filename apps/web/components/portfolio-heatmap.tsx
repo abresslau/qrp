@@ -13,8 +13,13 @@ export type CompositionHolding = {
   name: string | null;
   sector: string;
   industry: string | null;
+  mic: string | null;
+  country: string | null;
+  status: string | null;
   weight: number; // SIGNED — position size is abs(weight)
   currency: string | null;
+  market_cap_usd: number | null;
+  volume: number | null;
   price: number | null;
   live_return: number | null;
   freshness: string;

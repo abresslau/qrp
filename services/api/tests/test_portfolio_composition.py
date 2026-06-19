@@ -52,9 +52,10 @@ _EPOCH = 1781553601
 def test_composition_assembly_signed_weight_and_sector_rollup(monkeypatch):
     # One long (priced) IT name + one short (uncovered) Energy name.
     _wire(monkeypatch, weights={"F1": Decimal("0.6"), "F2": Decimal("-0.2")})
+    # row shape: figi, ticker, mic, sector, industry, name, currency, status, mcap, country, volume
     sym = _SymConn([
-        ("F1", "AAPL", "XNAS", "Information Technology", "Tech HW", "Apple Inc", "USD"),
-        ("F2", "PETR4", "BVMF", "Energy", "Oil & Gas", "Petrobras", "BRL"),
+        ("F1", "AAPL", "XNAS", "Information Technology", "Tech HW", "Apple Inc", "USD", "active", 3.0e12, "United States", 50_000_000),
+        ("F2", "PETR4", "BVMF", "Energy", "Oil & Gas", "Petrobras", "BRL", "active", 1.0e11, "Brazil", 2_000_000),
     ])
 
     def fake_batch(symbols, **kw):
@@ -78,6 +79,9 @@ def test_composition_assembly_signed_weight_and_sector_rollup(monkeypatch):
     assert h0["weight"] == pytest.approx(0.6) and h0["live_return"] == pytest.approx(0.10)
     assert h0["sector"] == "Information Technology" and h0["name"] == "Apple Inc"
     assert h0["freshness"] == "live" and h0["price"] == pytest.approx(110.0)
+    # explorer-style enrichment fields carried through
+    assert h0["mic"] == "XNAS" and h0["country"] == "United States" and h0["status"] == "active"
+    assert h0["market_cap_usd"] == pytest.approx(3.0e12) and h0["volume"] == 50_000_000
     assert h1["figi"] == "F2"
     assert h1["weight"] == pytest.approx(-0.2)          # SIGN preserved (short)
     assert h1["live_return"] is None and h1["freshness"] == "unavailable"
@@ -95,8 +99,8 @@ def test_composition_sector_return_is_weight_weighted(monkeypatch):
     # Two priced holdings in ONE sector with different returns -> |weight|-weighted rollup.
     _wire(monkeypatch, weights={"F1": Decimal("0.6"), "F3": Decimal("0.4")})
     sym = _SymConn([
-        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD"),
-        ("F3", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD"),
+        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None),
+        ("F3", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None),
     ])
     monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
         "AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH),   # +10%
@@ -110,7 +114,7 @@ def test_composition_sector_return_is_weight_weighted(monkeypatch):
 
 def test_composition_unmapped_mic_is_unavailable(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("1.0")})
-    sym = _SymConn([("F1", "FOO", "XZZZ", "Unclassified", None, "Foo Co", None)])  # XZZZ unmapped
+    sym = _SymConn([("F1", "FOO", "XZZZ", "Unclassified", None, "Foo Co", None, None, None, None, None)])  # XZZZ unmapped
     monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {})
     out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
     assert out["n_priced"] == 0 and out["freshness"] == "unavailable"
@@ -121,8 +125,8 @@ def test_composition_unmapped_mic_is_unavailable(monkeypatch):
 def test_composition_all_unreachable_raises(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("0.5"), "F2": Decimal("0.5")})
     sym = _SymConn([
-        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD"),
-        ("F2", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD"),
+        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None),
+        ("F2", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None),
     ])
 
     def boom(symbols, **kw):
@@ -150,7 +154,7 @@ def test_composition_over_cap_raises_value_error(monkeypatch):
 
 def test_composition_writes_nothing(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("1.0")})
-    sym = _SymConn([("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD")])
+    sym = _SymConn([("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None)])
     monkeypatch.setattr(quotes, "fetch_quotes_batch",
                         lambda s, **kw: {"AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH)})
     DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)

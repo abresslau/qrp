@@ -173,7 +173,7 @@ export default function BacktestPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">backtest</h1>
       <p className="mt-1 text-sm text-muted">
         Walk-forward strategy from a reproducible spec: any signals factor (including

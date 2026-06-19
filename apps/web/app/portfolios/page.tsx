@@ -113,7 +113,7 @@ export default function PortfoliosPage() {
   const shown = filter ? list.filter((p) => p.client === filter) : list;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">Portfolios</h1>
       <p className="mt-1 text-sm text-muted">
         Clients&apos; portfolios as weights over time. Returns are weighted sym returns (EOD now;

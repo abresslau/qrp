@@ -56,7 +56,7 @@ export default function LineagePage() {
   }, [graph]);
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="w-full">
       <h1 className="text-lg font-semibold tracking-tight text-fg">lineage</h1>
       <p className="mt-1 text-sm text-muted">
         Data lineage across the QRP packages — auto-derived from each loader&apos;s SQL plus

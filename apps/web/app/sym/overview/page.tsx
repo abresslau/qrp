@@ -62,7 +62,7 @@ export default async function SymOverviewPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full">
       <div className="flex items-baseline justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-fg">sym — Overview</h1>

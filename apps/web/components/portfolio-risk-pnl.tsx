@@ -16,9 +16,6 @@ function expPct(w: number | null | undefined): string {
 function signedExpPct(w: number | null | undefined): string {
   return w == null ? "—" : `${w >= 0 ? "+" : ""}${(w * 100).toFixed(1)}%`;
 }
-function money(v: number, ccy: string | null): string {
-  return `${v >= 0 ? "+" : ""}${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}${ccy ? ` ${ccy}` : ""}`;
-}
 function tone(r: number | null | undefined): string {
   if (r == null) return "text-fg";
   return r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
@@ -60,24 +57,17 @@ export function PortfolioRiskPnl({
     return () => ac.abort();
   }, [pid]);
 
-  const ccy = pnl?.base_currency ?? portfolio?.base_currency ?? null;
-  const notional = pnl?.notional ?? portfolio?.notional ?? null;
-  const dailyMoney = notional != null && dailyReturn != null ? notional * dailyReturn : null;
   const long = portfolio?.long_exposure ?? null;
   const short = portfolio?.short_exposure ?? null;
   const ls = long != null && short != null && short > 0 ? long / short : null;
 
-  // P&L value: money when a notional is set, else the return %.
-  const pnlVal = (ret: number | null | undefined, mny: number | null | undefined) =>
-    mny != null ? money(mny, ccy) : pct(ret);
-
   return (
-    <div className="mt-6">
+    <div>
       <h2 className="text-sm font-medium uppercase tracking-wide text-muted">Risk &amp; P&amp;L analytics</h2>
       <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-border bg-surface px-4 py-3">
-        <Stat label="Daily P&L" value={pnlVal(dailyReturn, dailyMoney)} cls={tone(dailyMoney ?? dailyReturn)} />
-        <Stat label="MTD P&L" value={pnlVal(pnl?.mtd_return, pnl?.mtd_pnl)} cls={tone(pnl?.mtd_pnl ?? pnl?.mtd_return)} />
-        <Stat label="YTD P&L" value={pnlVal(pnl?.ytd_return, pnl?.ytd_pnl)} cls={tone(pnl?.ytd_pnl ?? pnl?.ytd_return)} />
+        <Stat label="Daily P&L" value={pct(dailyReturn)} cls={tone(dailyReturn)} />
+        <Stat label="MTD P&L" value={pct(pnl?.mtd_return)} cls={tone(pnl?.mtd_return)} />
+        <Stat label="YTD P&L" value={pct(pnl?.ytd_return)} cls={tone(pnl?.ytd_return)} />
         <div className="h-8 w-px self-center bg-border" aria-hidden />
         <Stat label="Long" value={expPct(long)} cls="text-emerald-600 dark:text-emerald-400" />
         <Stat label="Short" value={expPct(short)} cls="text-rose-600 dark:text-rose-400" />
@@ -85,11 +75,6 @@ export function PortfolioRiskPnl({
         <Stat label="Gross" value={expPct(portfolio?.gross_exposure)} />
         <Stat label="L/S" value={ls == null ? "—" : `${ls.toFixed(2)}×`} />
       </div>
-      <p className="mt-1.5 text-[11px] text-muted">
-        Daily = live (the weighted roll-up of the heat map &amp; donut)
-        {pnl ? ` · MTD/YTD from the EOD series (${pnl.n_days} sessions${pnl.as_of_date ? `, through ${pnl.as_of_date}` : ""})` : ""}
-        {notional == null ? " · return-space (no notional set)" : ""}
-      </p>
     </div>
   );
 }

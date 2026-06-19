@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 
 import { PortfolioHeatmap, type Composition } from "@/components/portfolio-heatmap";
 import { PortfolioMovers } from "@/components/portfolio-movers";
+import { PortfolioPivot } from "@/components/portfolio-pivot";
 import { PortfolioPizza } from "@/components/portfolio-pizza";
 import { PortfolioRiskPnl } from "@/components/portfolio-risk-pnl";
 import type { Schemas } from "@/lib/api";
@@ -92,22 +93,9 @@ export default function PortfolioLive() {
   }, [id, nonce]);
 
   return (
-    <div className="mx-auto max-w-5xl">
-      <div className="flex items-center justify-between gap-2">
-        <Link href={`/portfolios/${id}`} className="text-sm text-muted hover:text-fg">
-          ← Portfolio
-        </Link>
-        <button
-          type="button"
-          onClick={() => setNonce((n) => n + 1)}
-          disabled={compLoading}
-          className="rounded-md border border-border px-2.5 py-1 text-sm text-muted hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <span className={`inline-block${compLoading ? " animate-spin" : ""}`}>↻</span> refresh
-        </button>
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
+    <div className="w-full space-y-4">
+      {/* Header — title + nav buttons on the same row */}
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-fg">
             {p?.name ?? "Portfolio"} <span className="text-muted">· Live</span>
@@ -131,36 +119,49 @@ export default function PortfolioLive() {
             ) : null}
           </p>
         </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href={`/portfolios/${id}`}
+            className="rounded-md border border-border px-2.5 py-1 text-sm text-muted hover:bg-fg/5 hover:text-fg"
+          >
+            ← Portfolio
+          </Link>
+          <button
+            type="button"
+            onClick={() => setNonce((n) => n + 1)}
+            disabled={compLoading}
+            className="rounded-md border border-border px-2.5 py-1 text-sm text-muted hover:bg-fg/5 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className={`inline-block${compLoading ? " animate-spin" : ""}`}>↻</span> refresh
+          </button>
+        </div>
       </div>
 
-      {/* Risk & P&L analytics — Daily/MTD/YTD P&L + long/short/net/gross exposure + L/S ratio.
-          Daily comes from the SAME composition that drives the heat map + donut (one live source). */}
       <PortfolioRiskPnl pid={String(id)} portfolio={p} dailyReturn={liveDailyReturn(comp)} />
 
-      {/* Composition — heat map (full width), then ONE card split 50/50: sector donut + top movers. */}
-      <section className="mt-8">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-muted">
-          Composition — heat map &amp; breakdown
-        </h2>
-        {compErr && (
-          <div className="mt-2 rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
-            Couldn&apos;t load live composition: {compErr}
-          </div>
-        )}
-        {comp ? (
-          <div className="mt-3 space-y-4">
-            <div className="grid gap-6 rounded-xl border border-border bg-surface p-4 lg:grid-cols-2">
+      {compErr && (
+        <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+          Couldn&apos;t load live composition: {compErr}
+        </div>
+      )}
+      {comp ? (
+        <>
+          {/* Sector donut + top movers — two separate cards, side by side */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="rounded-xl border border-border bg-surface p-4">
               <PortfolioPizza data={comp} />
-              <div className="lg:border-l lg:border-border lg:pl-6">
-                <PortfolioMovers pid={String(id)} composition={comp} />
-              </div>
             </div>
-            <PortfolioHeatmap data={comp} />
+            <div className="rounded-xl border border-border bg-surface p-4">
+              <PortfolioMovers pid={String(id)} composition={comp} />
+            </div>
           </div>
-        ) : !compErr ? (
-          <p className="mt-3 text-sm text-muted">Loading live composition…</p>
-        ) : null}
-      </section>
+          <PortfolioHeatmap data={comp} />
+          {/* Pivot grid — book grouped by sector with explorer columns + return + P&L */}
+          <PortfolioPivot data={comp} />
+        </>
+      ) : !compErr ? (
+        <p className="text-sm text-muted">Loading live composition…</p>
+      ) : null}
     </div>
   );
 }
