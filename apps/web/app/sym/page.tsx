@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { apiGet } from "@/lib/api";
+import { PopulationMap } from "@/components/population-map";
 
 type Layer = { covered: number; total: number; latest_date: string | null; status: string };
 type Cov = {
   universe_id: string;
   name: string | null;
   members_resolved: number;
+  active_members: number;
   prices: Layer;
   returns: Layer;
   fundamentals: Layer;
 };
+type UniverseRef = { universe_id: string; name: string | null };
 
 function pill(status: string): string {
   if (status === "ok")
@@ -47,8 +50,12 @@ function LayerCell({ layer, universeId, layerKey }: { layer: Layer; universeId: 
 
 export default async function UniversesPage() {
   let rows: Cov[] = [];
+  let universes: UniverseRef[] = [];
   try {
-    rows = await apiGet<Cov[]>("/api/sym/universes/coverage");
+    [rows, universes] = await Promise.all([
+      apiGet<Cov[]>("/api/sym/universes/coverage"),
+      apiGet<UniverseRef[]>("/api/sym/universes"),
+    ]);
   } catch {
     rows = [];
   }
@@ -57,17 +64,24 @@ export default async function UniversesPage() {
     <div className="mx-auto max-w-5xl">
       <h1 className="text-lg font-semibold tracking-tight text-fg">Universes</h1>
       <p className="mt-1 text-sm text-muted">
-        Coverage per universe — Prices, Returns, Fundamentals. <code className="font-mono">covered/total</code>{" "}
-        members with current data + each layer&apos;s latest date. Coverage is judged per-member
-        (markets close at different times), so a name a day behind its market isn&apos;t counted missing.
+        Where the tracked population lives, and how complete each layer is. Coverage is judged per-member
+        (markets close at different times) over <strong>active</strong> members — delisted names aren&apos;t
+        expected to have current data, so they don&apos;t count against coverage.
       </p>
 
-      <div className="mt-4 overflow-x-auto rounded-xl border border-border">
+      {/* World map: population (member count) or coverage (% current), by country. */}
+      <div className="mt-4">
+        <PopulationMap universes={universes} />
+      </div>
+
+      <h2 className="mt-8 text-sm font-semibold text-fg">Coverage by universe</h2>
+      <div className="mt-2 overflow-x-auto rounded-xl border border-border">
         <table className="w-full text-sm">
           <thead className="bg-surface text-left text-muted">
             <tr>
               <th className="px-4 py-2 font-medium">Universe</th>
               <th className="px-4 py-2 text-right font-medium">Members</th>
+              <th className="px-4 py-2 text-right font-medium">Active</th>
               <th className="px-4 py-2 text-right font-medium">Prices</th>
               <th className="px-4 py-2 text-right font-medium">Returns</th>
               <th className="px-4 py-2 text-right font-medium">Fundamentals</th>
@@ -86,6 +100,17 @@ export default async function UniversesPage() {
                 <td className="px-4 py-2 text-right tabular-nums text-muted">
                   {u.members_resolved.toLocaleString()}
                 </td>
+                <td className="px-4 py-2 text-right tabular-nums text-fg">
+                  {u.active_members.toLocaleString()}
+                  {u.members_resolved !== u.active_members && (
+                    <span
+                      className="ml-1 text-[11px] text-muted"
+                      title={`${u.members_resolved - u.active_members} delisted (excluded from coverage)`}
+                    >
+                      −{u.members_resolved - u.active_members}
+                    </span>
+                  )}
+                </td>
                 <LayerCell layer={u.prices} universeId={u.universe_id} layerKey="prices" />
                 <LayerCell layer={u.returns} universeId={u.universe_id} layerKey="returns" />
                 <LayerCell layer={u.fundamentals} universeId={u.universe_id} layerKey="fundamentals" />
@@ -101,7 +126,7 @@ export default async function UniversesPage() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-muted">
+                <td colSpan={7} className="px-4 py-6 text-center text-muted">
                   No universe coverage (API unreachable, or no resolved members).
                 </td>
               </tr>

@@ -106,6 +106,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sym/universes/coverage/by-country": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Coverage By Country
+         * @description Population + per-layer coverage grouped by country (the world-map view). `universe`
+         *     omitted aggregates the whole tracked population; otherwise one universe.
+         */
+        get: operations["coverage_by_country"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sym/return-windows": {
         parameters: {
             query?: never;
@@ -966,6 +987,22 @@ export interface components {
             created_at: string | null;
             /** N Portfolios */
             n_portfolios: number;
+        };
+        /** CountryCoverage */
+        CountryCoverage: {
+            /** Country Iso */
+            country_iso: string;
+            /** Country */
+            country: string | null;
+            /** Timezone */
+            timezone: string | null;
+            /** Members */
+            members: number;
+            /** Active Members */
+            active_members: number;
+            prices: components["schemas"]["LayerCoverage"];
+            returns: components["schemas"]["LayerCoverage"];
+            fundamentals: components["schemas"]["LayerCoverage"];
         };
         /** CreateClient */
         CreateClient: {
@@ -2136,6 +2173,8 @@ export interface components {
             name: string | null;
             /** Members Resolved */
             members_resolved: number;
+            /** Active Members */
+            active_members: number;
             prices: components["schemas"]["LayerCoverage"];
             returns: components["schemas"]["LayerCoverage"];
             fundamentals: components["schemas"]["LayerCoverage"];
@@ -2356,6 +2395,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UniverseCoverage"][];
+                };
+            };
+        };
+    };
+    coverage_by_country: {
+        parameters: {
+            query?: {
+                universe?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CountryCoverage"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

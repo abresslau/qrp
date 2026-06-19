@@ -1,6 +1,13 @@
 # Design Story: World-map view of the universe population & coverage
 
-Status: design (ready-for-dev once design is approved)
+Status: ✅ BUILT (2026-06-19). Choices made with Andre: map-on-top + table below; color by country.
+Shipped: `GET /api/sym/universes/coverage/by-country` (gateway `coverage_by_country`), a hand-rolled
+equirectangular SVG choropleth (`apps/web/components/population-map.tsx`) over a vendored, pre-projected
+ISO-A2 path lookup (`apps/web/lib/world-geo.ts`, Natural Earth 110m, no runtime dep), on `/sym`.
+Population + Coverage modes, universe + layer selectors, hover tooltip (members/active + per-layer +
+timezone). Coverage validates ACTIVE members only (delisted excluded); the table gained a Members|Active
+split. Tests: API `test_sym_universe_coverage.py` (+by-country), web `population-map.test.tsx`.
+Follow-up not yet done: click-country → Explorer needs a country filter on the securities endpoint.
 
 <!-- Created via bmad overnight 2026-06-19. Operator: "the population page looks terrible, create a
 story to come up with design of worldmap." The "population page" = the Universes coverage landing
