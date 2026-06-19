@@ -12,6 +12,7 @@ from datetime import date, datetime, timezone
 
 import psycopg
 
+from qrp_api.modules.sym import news as news_mod
 from qrp_api.modules.sym import quotes as quotes_mod
 from qrp_api.modules.sym.freshness import AreaFreshness, classify
 from qrp_api.modules.sym.quotes import QuoteSourceUnreachable
@@ -231,6 +232,30 @@ class DbSymGateway:
         ).fetchall()
         by_code = {code: label for code, label in rows}
         return [(c, by_code[c]) for c in HEATMAP_WINDOWS if c in by_code]
+
+    def security_news(self, figi: str, *, limit: int = 12) -> list[dict]:
+        """Recent news headlines for a security (Google News RSS, fetched at serve time, not
+        persisted). Resolves the figi to its company name (best news coverage), falling back to
+        ticker. Best-effort: a feed failure returns []."""
+        c = self._conn
+        name = _scalar(
+            c,
+            "SELECT name FROM security_names WHERE composite_figi = %s "
+            "ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
+            (figi,),
+        )
+        ticker = _scalar(
+            c,
+            "SELECT symbol_value FROM security_symbology WHERE composite_figi = %s "
+            "AND symbol_type = 'ticker' ORDER BY (valid_to IS NULL) DESC, valid_from DESC LIMIT 1",
+            (figi,),
+        )
+        query = name or ticker or figi
+        items = news_mod.fetch_news(f"{query} stock", limit=limit)
+        return [
+            {"title": i.title, "link": i.link, "source": i.source, "published": i.published}
+            for i in items
+        ]
 
     def heatmap(self, universe_id: str, window_code: str) -> dict:
         """Universe constituents sized by market cap (USD), colored by return over a window,

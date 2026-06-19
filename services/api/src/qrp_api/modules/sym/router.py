@@ -375,6 +375,20 @@ def security_detail(figi: str, gw: DbSymGateway = Depends(_gateway)) -> dict:
     return detail
 
 
+class NewsItem(BaseModel):
+    title: str
+    link: str
+    source: str | None
+    published: str | None
+
+
+@router.get("/securities/{figi}/news", response_model=list[NewsItem])
+def security_news(figi: str, gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
+    """Recent daily news for a security (Google News RSS, fetched live, not persisted).
+    Best-effort — an unreachable feed returns [] (never errors the page)."""
+    return gw.security_news(figi)
+
+
 @router.get("/quotes", response_model=list[Quote])
 def quotes(
     figis: str = Query(..., description="comma-separated composite FIGIs (1..50)"),
