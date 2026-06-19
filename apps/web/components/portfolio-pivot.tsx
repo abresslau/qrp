@@ -41,7 +41,6 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
     .sort((a, b) => b.wt - a.wt);
 
   const totalPnl = sectors.reduce((s, x) => s + x.pnl, 0);
-  const COLS = 11;
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-surface">
@@ -63,7 +62,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
         </thead>
         <tbody>
           {sectors.map(({ sector, hs, wt, pnl }) => (
-            <SectorGroup key={sector} sector={sector} hs={hs} wt={wt} pnl={pnl} gross={data.total_weight} contrib={contrib} cols={COLS} />
+            <SectorGroup key={sector} sector={sector} hs={hs} wt={wt} pnl={pnl} gross={data.total_weight} contrib={contrib} />
           ))}
         </tbody>
         <tfoot>
@@ -89,7 +88,6 @@ function SectorGroup({
   pnl,
   gross,
   contrib,
-  cols,
 }: {
   sector: string;
   hs: CompositionHolding[];
@@ -97,18 +95,20 @@ function SectorGroup({
   pnl: number;
   gross: number;
   contrib: (h: CompositionHolding) => number | null;
-  cols: number;
 }) {
   return (
     <>
-      {/* sector subtotal row (the pivot grouping) */}
+      {/* sector subtotal row (the pivot grouping) — sums WEIGHT and P&L only; Return is left
+          blank (summing returns is meaningless). Cells align to the Wt / Return / P&L columns. */}
       <tr className="border-y border-border bg-bg/40 text-[11px] uppercase tracking-wide text-muted">
-        <td className="px-3 py-1.5 font-semibold text-fg" colSpan={cols - 2}>
+        <td className="px-3 py-1.5 font-semibold text-fg" colSpan={5}>
           {sector} <span className="font-normal text-muted">· {hs.length}</span>
         </td>
         <td className="px-3 py-1.5 text-right font-semibold tabular-nums text-fg">
           {gross > 0 ? `${((wt / gross) * 100).toFixed(1)}%` : "—"}
         </td>
+        <td colSpan={3} />
+        <td />
         <td className={`px-3 py-1.5 text-right font-semibold tabular-nums ${retClass(pnl)}`}>{pct(pnl)}</td>
       </tr>
       {hs.map((h) => (
