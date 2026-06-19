@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NewsPanel } from "@/components/news-panel";
 import { apiGet } from "@/lib/api";
 import { fmtCompact } from "@/lib/format";
 
@@ -195,6 +196,8 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
           </tbody>
         </table>
       </div>
+
+      <NewsPanel figi={d.figi} />
 
       <p className="mt-6 text-xs text-muted">All figures are live reads of sym — every number ties to the warehouse.</p>
     </div>
