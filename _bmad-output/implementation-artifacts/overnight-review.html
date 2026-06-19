@@ -1,0 +1,119 @@
+<title>QRP — Overnight Review · 2026-06-19</title>
+<style>
+  :root { --bg:#0d0d10; --surface:#16161b; --border:#272730; --fg:#e7e7ea; --muted:#9a9aa6;
+    --green:#3fae5a; --amber:#d9a441; --rose:#e0485a; --accent:#4ea1ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:920px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:26px; margin:0 0 4px; letter-spacing:-0.02em; }
+  .sub { color:var(--muted); margin:0 0 28px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted);
+    margin:34px 0 12px; border-top:1px solid var(--border); padding-top:18px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:16px 18px; margin:10px 0; }
+  .card h3 { margin:0 0 6px; font-size:16px; }
+  .card p { margin:6px 0; color:var(--muted); }
+  .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:999px;
+    vertical-align:middle; margin-left:8px; }
+  .done { background:rgba(63,174,90,.12); color:var(--green); border:1px solid rgba(63,174,90,.3); }
+  .design { background:rgba(78,161,255,.12); color:var(--accent); border:1px solid rgba(78,161,255,.3); }
+  .decide { background:rgba(217,164,65,.12); color:var(--amber); border:1px solid rgba(217,164,65,.3); }
+  code { background:#000; padding:1px 6px; border-radius:5px; font-size:13px; color:#cdd3da; }
+  ul { margin:8px 0; padding-left:22px; } li { margin:4px 0; }
+  .grid { display:grid; gap:10px; }
+  .rank { display:inline-block; width:22px; height:22px; line-height:22px; text-align:center;
+    border-radius:6px; background:#000; color:var(--accent); font-weight:700; font-size:12px; margin-right:8px; }
+  .muted { color:var(--muted); }
+  a { color:var(--accent); }
+  .foot { color:var(--muted); font-size:12px; margin-top:30px; }
+</style>
+
+<div class="wrap">
+  <h1>QRP — Overnight Review</h1>
+  <p class="sub">2026-06-19 · what I shipped, what I designed for your call, and where I'd take QRP next.</p>
+
+  <h2>Shipped &amp; merged tonight</h2>
+  <div class="card">
+    <h3>Daily news on the security detail page <span class="pill done">live · merged</span></h3>
+    <p>Google News RSS → recent headlines per security (source + date, opens in a new tab). Your exact
+    example. <strong>Live-verified:</strong> AAPL → 12 real headlines (Bloomberg, Yahoo, Seeking Alpha,
+    Axios). Structured RSS, not page-scraping — no key, no ToS grey area, fetched live, never stored.
+    5 tests; 121 API + web green.</p>
+    <p class="muted">The principle it sets: to "leverage Google/Perplexity," prefer a <em>structured feed</em>
+    over scraping a rendered page.</p>
+  </div>
+
+  <h2>Designed tonight — ready for your call</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>World-map population view <span class="pill design">design story</span></h3>
+      <p>The "population page" (the Universes coverage landing) is a flat table. Proposed a choropleth
+      world map: countries shaded by <strong>member count</strong> (population) or <strong>coverage</strong>
+      (prices/returns/fundamentals), hover → members + per-layer coverage + <em>timezone</em> (why markets
+      differ), click → Explorer/gap drill-down. Hand-rolled SVG + <code>d3-geo</code>, matching the heatmap.
+      Data is a regroup of the coverage query by <code>country_iso</code> — no new data.
+      <span class="muted">→ <code>worldmap-population-design.md</code></span></p>
+    </div>
+    <div class="card">
+      <h3>Charts → tables evaluation <span class="pill design">evaluation</span></h3>
+      <p>Audited every chart. Honest finding: the chart-vs-table choices are <strong>mostly sound</strong>
+      (all hand-rolled SVG, no library debt) — "looks terrible" is <strong>polish</strong>, not "should be a
+      table." Win = a shared SVG-chart primitive (axes, labels, zero-line, dark-mode, min-height) applied to
+      the 4 real charts, + make the alt-data series adaptive (sparkline+table when &lt;48 pts). One genuine
+      convert: tiny alt-data series. <span class="muted">→ <code>charts-to-tables-evaluation.md</code></span></p>
+    </div>
+    <div class="card">
+      <h3>Google / Perplexity Finance leverage <span class="pill design">strategy + probes</span></h3>
+      <p>Probed everything. <strong>RSS feeds are the win</strong> (news ✅). Google Finance &amp; Perplexity
+      are <strong>JS SPAs</strong> — scraping needs a headless browser (brittle). For the names yfinance 404s
+      (CMA, CADE, TGNA…), I checked Stooq too — <strong>it's JS-bot-walled</strong> (even for AAPL), so there's
+      <em>no clean keyless fallback in-env</em>; default to leaving them as flagged gaps (~8/650).
+      Classification-by-scrape is bot-walled + redundant with the existing Wikidata/LLM sources — recommend
+      against; will build headless-Perplexity behind a flag only if you want it.
+      <span class="muted">→ <code>finance-data-leverage-strategy.md</code></span></p>
+    </div>
+  </div>
+
+  <h2>Overall improvement ideas — prioritized</h2>
+  <div class="grid">
+    <div class="card"><h3><span class="rank">1</span>Chain <code>recompute</code> into the broad load / nightly EOD</h3>
+      <p>The root of this whole week's pain: prices → returns → market-caps drift out of sync because
+      <code>sym load</code> doesn't trigger <code>sym recompute</code>, and the EOD kept only a sub-universe
+      fresh. Make the broad load/EOD recompute returns + market-caps so the layers can't desync. <strong>The
+      single highest-leverage fix</strong> — kills the recurring "why is X stale" class.</p></div>
+    <div class="card"><h3><span class="rank">2</span>Decide on the yfinance-404 names (CMA, CADE, TGNA…)</h3>
+      <p>I probed the keyless fallbacks — <strong>all blocked in-env</strong> (Stooq is JS-bot-walled even for
+      AAPL; Google Finance is a SPA). So recovering these ~8/650 names needs either a <em>keyed</em> provider
+      (you said "don't rely on api") or a <em>headless scraper</em> (brittle). My recommendation: <strong>leave
+      them as flagged gaps</strong> — the coverage view already surfaces them honestly. Your call below.</p></div>
+    <div class="card"><h3><span class="rank">3</span>Build the world-map population view</h3>
+      <p>Per design story. Turns the flat coverage table into a geographic, at-a-glance read of population +
+      cross-market freshness — directly addresses "the population page looks terrible."</p></div>
+    <div class="card"><h3><span class="rank">4</span>Chart polish primitive</h3>
+      <p>One shared SVG <code>&lt;LineChart&gt;</code>/<code>&lt;Sparkline&gt;</code> (axes, labels, zero-line,
+      crosshair, dark-mode, min-height) adopted by the macro/backtest/altdata charts. Fixes "charts look
+      terrible" across the board without a heavy library.</p></div>
+    <div class="card"><h3><span class="rank">5</span>Extend news + "View on ↗" links</h3>
+      <p>Reuse <code>news.py</code> for universe/market + macro news panels; add zero-risk "View on Google
+      Finance / Perplexity ↗" deep-links on the detail page (display, not scrape).</p></div>
+    <div class="card"><h3><span class="rank">6</span>B3 shares-outstanding source</h3>
+      <p>Already-found path: B3's <code>GetListedSupplementCompany</code> gives ON/PN share counts →
+      BPAC11 and B3 units finally get a market cap (Yahoo lacks shares for them). Queued earlier.</p></div>
+    <div class="card"><h3><span class="rank">7</span>A "sources disagree" / coverage-gate signal</h3>
+      <p>Surface where the multi-source classification matrix disagrees, and an "is this universe safe to
+      analyze?" gate (coverage + freshness) before backtests/optimiser run on stale data.</p></div>
+  </div>
+
+  <h2>Decisions I need from you</h2>
+  <ul>
+    <li><strong>Missing-data names:</strong> no keyless source reaches them (Stooq is bot-walled, Google Finance is a SPA). Leave as flagged gaps <em>(recommended)</em>, add a keyed provider, or build a brittle headless scraper?</li>
+    <li><strong>World map:</strong> map-first (table below) or a toggle? Color by <em>country</em> (clean) or <em>exchange</em> (precise)?</li>
+    <li><strong>Classification scrape:</strong> I recommend <em>against</em> scraping Google/Perplexity (brittle, redundant with Wikidata/LLM). Want it anyway behind a flag (headless-Perplexity)?</li>
+    <li><strong>Charts:</strong> approve the shared-primitive polish pass, or convert specific charts to tables you have in mind?</li>
+  </ul>
+
+  <p class="foot">All work merged to local <code>main</code> · dev stack live on :3000/:8001 · design docs in
+  <code>_bmad-output/implementation-artifacts/</code>. Nothing pushed to a remote (none configured).
+  Hard-refresh once for the news panel + any backend changes.</p>
+</div>
