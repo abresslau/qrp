@@ -390,6 +390,26 @@ def security_news(figi: str, gw: DbSymGateway = Depends(_gateway)) -> list[dict]
     return gw.security_news(figi)
 
 
+class PriceBar(BaseModel):
+    session_date: str
+    open: float | None
+    high: float | None
+    low: float | None
+    close: float | None
+    volume: int | None
+
+
+@router.get("/securities/{figi}/prices", response_model=list[PriceBar])
+def security_prices(
+    figi: str,
+    days: int = Query(default=365, ge=5, le=3650),
+    gw: DbSymGateway = Depends(_gateway),
+) -> list[dict]:
+    """Daily close + volume history for the detail-page chart (oldest-first), bounded to the
+    most-recent `days` calendar days."""
+    return gw.security_prices(figi, days=days)
+
+
 @router.get("/quotes", response_model=list[Quote])
 def quotes(
     figis: str = Query(..., description="comma-separated composite FIGIs (1..50)"),

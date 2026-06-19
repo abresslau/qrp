@@ -830,6 +830,33 @@ class DbSymGateway:
             ],
         }
 
+    def security_prices(self, figi: str, *, days: int = 365) -> list[dict]:
+        """Daily OHLC + volume history for a security (for the detail-page chart: line/area/
+        candle), most-recent `days` calendar days, oldest-first. Index-bounded by
+        session_date + composite_figi (rides the prices_raw PK) — bounded scan, not a
+        full-table read."""
+        rows = self._conn.execute(
+            """
+            SELECT session_date, open, high, low, close, volume FROM prices_raw
+             WHERE composite_figi = %s
+               AND session_date >= (SELECT max(session_date) FROM prices_raw
+                                     WHERE composite_figi = %s) - %s
+             ORDER BY session_date
+            """,
+            (figi, figi, days),
+        ).fetchall()
+        return [
+            {
+                "session_date": d.isoformat(),
+                "open": float(o) if o is not None else None,
+                "high": float(h) if h is not None else None,
+                "low": float(low) if low is not None else None,
+                "close": float(close) if close is not None else None,
+                "volume": int(volume) if volume is not None else None,
+            }
+            for d, o, h, low, close, volume in rows
+        ]
+
     def attention(self) -> dict:
         """Open attention items sym flagged: review queue, price gaps, membership proposals.
         Read-only (acting on items is deferred — FR-11). Each surfaces sym's evidence."""

@@ -217,6 +217,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sym/securities/{figi}/prices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Security Prices
+         * @description Daily close + volume history for the detail-page chart (oldest-first), bounded to the
+         *     most-recent `days` calendar days.
+         */
+        get: operations["security_prices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sym/quotes": {
         parameters: {
             query?: never;
@@ -1659,6 +1680,21 @@ export interface components {
             /** Latest As Of Date */
             latest_as_of_date: string | null;
         };
+        /** PriceBar */
+        PriceBar: {
+            /** Session Date */
+            session_date: string;
+            /** Open */
+            open: number | null;
+            /** High */
+            high: number | null;
+            /** Low */
+            low: number | null;
+            /** Close */
+            close: number | null;
+            /** Volume */
+            volume: number | null;
+        };
         /** PriceGap */
         PriceGap: {
             /** Figi */
@@ -2530,6 +2566,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NewsItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    security_prices: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path: {
+                figi: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PriceBar"][];
                 };
             };
             /** @description Validation Error */

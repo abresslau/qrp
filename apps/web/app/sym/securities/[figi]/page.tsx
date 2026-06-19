@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { NewsPanel } from "@/components/news-panel";
+import { PriceVolumeChart } from "@/components/price-volume-chart";
 import { apiGet } from "@/lib/api";
 import { fmtCompact } from "@/lib/format";
 
@@ -91,6 +92,10 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
             {d.mic ?? "—"} · {d.country ?? d.country_iso ?? "—"} · {d.currency ?? "—"} · {d.status ?? "—"}
           </div>
         </div>
+      </div>
+
+      <div className="mt-6">
+        <PriceVolumeChart figi={d.figi} currency={d.currency} />
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
