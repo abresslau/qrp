@@ -45,13 +45,13 @@ describe("PriceVolumeChart", () => {
     });
   });
 
-  it("offers line/area/candle and renders candles when selected", async () => {
+  it("offers area/candle/line and defaults to area", async () => {
     const { container } = render(<PriceVolumeChart figi="BBG1" />);
     await waitFor(() => expect(container.querySelector("svg")).toBeTruthy());
 
-    // default is line → exactly one M-path (the price line)
+    // default is area → filled area path + the line path → 2 M-paths
     const mPaths = () => Array.from(container.querySelectorAll("path")).filter((p) => (p.getAttribute("d") ?? "").startsWith("M"));
-    expect(mPaths().length).toBe(1);
+    expect(mPaths().length).toBe(2);
 
     fireEvent.click(screen.getByRole("button", { name: "candle" }));
     // candles are <g> wick+body groups, not a single line path → no M-path remains
@@ -59,9 +59,9 @@ describe("PriceVolumeChart", () => {
     // bodies (rects) for ~40 bars + 40 volume bars → well over 40 rects
     expect(container.querySelectorAll("rect").length).toBeGreaterThan(40);
 
-    fireEvent.click(screen.getByRole("button", { name: "area" }));
-    // area = filled area path + the line path → 2 M-paths
-    await waitFor(() => expect(mPaths().length).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "line" }));
+    // line only → exactly one M-path
+    await waitFor(() => expect(mPaths().length).toBe(1));
   });
 
   it("YTD fetches ~13 months and clips the view to the latest year (no prior-year labels)", async () => {

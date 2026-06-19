@@ -25,7 +25,7 @@ const RANGES: Range[] = [
   { label: "5Y", days: 1825 },
   { label: "10Y", days: 3650 },
 ];
-const CHART_TYPES: ChartType[] = ["line", "area", "candle"];
+const CHART_TYPES: ChartType[] = ["area", "candle", "line"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // viewBox geometry (scales to container width). Price band on top, volume band below, a
@@ -55,7 +55,7 @@ function useIsDark(): boolean {
 export function PriceVolumeChart({ figi, currency }: { figi: string; currency?: string | null }) {
   const isDark = useIsDark();
   const [rangeLabel, setRangeLabel] = useState("1Y");
-  const [chartType, setChartType] = useState<ChartType>("line");
+  const [chartType, setChartType] = useState<ChartType>("area");
   const range = RANGES.find((r) => r.label === rangeLabel) ?? RANGES[4];
   const days = range.days;
   const [bars, setBars] = useState<Bar[] | null>(null);
