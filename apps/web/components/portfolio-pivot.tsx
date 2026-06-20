@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { type Composition, type CompositionHolding } from "@/components/portfolio-heatmap";
 import { fmtCompact, fmtPrice } from "@/lib/format";
 
@@ -76,7 +78,89 @@ const PNL_COLS = [
   { label: "YTD P&L", win: "YTD" },
 ] as const;
 
+// --- column sorting (within each sector group) ----------------------------------------------
+// The pivot stays grouped by sector (sectors ordered by gross weight); clicking a header sorts
+// the holdings WITHIN each sector by that column. Numeric/range keys sort numerically, text keys
+// lexicographically, and a null/missing value always sinks to the bottom regardless of direction.
+type SortDir = "asc" | "desc";
+type Sort = { key: string; dir: SortDir };
+
+const PnlAccess = (h: CompositionHolding, win: string): number | null => {
+  const r = win === "DAILY" ? h.live_return : (h.window_returns?.[win] ?? null);
+  return r != null ? h.weight * r : null;
+};
+
+function sortValue(h: CompositionHolding, key: string): number | string | null {
+  switch (key) {
+    case "ticker": return h.ticker ?? h.figi;
+    case "name": return h.name ?? null;
+    case "country": return h.country ?? null;
+    case "mic": return h.mic ?? null;
+    case "currency": return h.currency ?? null;
+    case "weight": return Math.abs(h.weight);
+    case "price": return h.price;
+    case "range": return h.range_pct;
+    case "mcap": return h.market_cap_usd;
+    case "volume": return h.volume;
+    default:
+      if (key.startsWith("ret:")) return h.window_returns?.[key.slice(4)] ?? null;
+      if (key.startsWith("pnl:")) return PnlAccess(h, key.slice(4));
+      return null;
+  }
+}
+
+function compareHoldings(a: CompositionHolding, b: CompositionHolding, sort: Sort): number {
+  const va = sortValue(a, sort.key);
+  const vb = sortValue(b, sort.key);
+  if (va == null && vb == null) return 0;
+  if (va == null) return 1; // nulls always last
+  if (vb == null) return -1;
+  const d =
+    typeof va === "string" || typeof vb === "string"
+      ? String(va).localeCompare(String(vb))
+      : (va as number) - (vb as number);
+  return sort.dir === "asc" ? d : -d;
+}
+
+// A clickable column header. `align` mirrors the body cells (text→left, number→right, range→center);
+// the default direction on first click is ascending for text, descending for numeric/range.
+function SortableTh({
+  label,
+  sortKey,
+  align,
+  sort,
+  onSort,
+}: {
+  label: string;
+  sortKey: string;
+  align: "left" | "right" | "center";
+  sort: Sort;
+  onSort: (key: string, defaultDir: SortDir) => void;
+}) {
+  const active = sort.key === sortKey;
+  const alignCls = align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left";
+  const justify = align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start";
+  const defaultDir: SortDir = align === "left" ? "asc" : "desc";
+  return (
+    <th className={`px-2 py-1.5 font-medium ${alignCls}`} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey, defaultDir)}
+        className={`flex w-full items-center gap-1 ${justify} hover:text-fg ${active ? "text-fg" : ""}`}
+      >
+        <span>{label}</span>
+        <span className="w-2 text-[9px] leading-none">{active ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
+      </button>
+    </th>
+  );
+}
+
 export function PortfolioPivot({ data }: { data: Composition | null }) {
+  // Default order = largest positions first (gross weight desc), matching the book convention.
+  const [sort, setSort] = useState<Sort>({ key: "weight", dir: "desc" });
+  const onSort = (key: string, defaultDir: SortDir) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir }));
+
   if (!data?.holdings?.length) {
     return <p className="text-sm text-muted">No holdings yet — upload a weight vector to see the breakdown.</p>;
   }
@@ -89,12 +173,14 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
     return r != null ? h.weight * r : null;
   };
 
-  // Group by sector, sectors ordered by gross weight desc, holdings within by |weight| desc.
+  // Group by sector, sectors ordered by gross weight desc; holdings within each sector ordered by
+  // the active column sort (default |weight| desc). Sorting reorders rows within their sector — the
+  // sector grouping and subtotals are preserved.
   const bySector: Record<string, CompositionHolding[]> = {};
   for (const h of data.holdings) (bySector[h.sector] ||= []).push(h);
   const sectors = Object.entries(bySector)
-    .map(([sector, hs]) => {
-      hs.sort((a, b) => Math.abs(b.weight) - Math.abs(a.weight));
+    .map(([sector, rows]) => {
+      const hs = rows.slice().sort((a, b) => compareHoldings(a, b, sort));
       const wt = hs.reduce((s, h) => s + Math.abs(h.weight), 0);
       const pnls: Record<string, number> = {};
       for (const { win } of PNL_COLS) pnls[win] = hs.reduce((s, h) => s + (pnlOf(h, win) ?? 0), 0);
@@ -110,23 +196,24 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
       <table className="w-full min-w-[72rem] text-xs">
         <thead className="border-b border-border bg-fg/5 text-left text-muted">
           <tr>
-            {/* text columns left, numeric columns right, the 52-week range bar centered */}
-            <th className="px-2 py-1.5 font-medium">Ticker</th>
-            <th className="px-2 py-1.5 font-medium">Name</th>
-            <th className="px-2 py-1.5 font-medium">Country</th>
-            <th className="px-2 py-1.5 font-medium">Exch</th>
-            <th className="px-2 py-1.5 font-medium">Ccy</th>
-            <th className="px-2 py-1.5 text-right font-medium">Wt</th>
-            <th className="px-2 py-1.5 text-right font-medium">Price</th>
+            {/* text columns left, numeric columns right, the 52-week range bar centered; every
+                column is click-to-sort (sorts rows within each sector) */}
+            <SortableTh label="Ticker" sortKey="ticker" align="left" sort={sort} onSort={onSort} />
+            <SortableTh label="Name" sortKey="name" align="left" sort={sort} onSort={onSort} />
+            <SortableTh label="Country" sortKey="country" align="left" sort={sort} onSort={onSort} />
+            <SortableTh label="Exch" sortKey="mic" align="left" sort={sort} onSort={onSort} />
+            <SortableTh label="Ccy" sortKey="currency" align="left" sort={sort} onSort={onSort} />
+            <SortableTh label="Wt" sortKey="weight" align="right" sort={sort} onSort={onSort} />
+            <SortableTh label="Price" sortKey="price" align="right" sort={sort} onSort={onSort} />
             {WINDOWS.map((w) => (
-              <th key={w.key} className="px-2 py-1.5 text-right font-medium">{w.label}</th>
+              <SortableTh key={w.key} label={w.label} sortKey={`ret:${w.key}`} align="right" sort={sort} onSort={onSort} />
             ))}
-            <th className="px-2 py-1.5 text-center font-medium">52-week range</th>
-            <th className="px-2 py-1.5 text-right font-medium">Daily P&amp;L</th>
-            <th className="px-2 py-1.5 text-right font-medium">MTD P&amp;L</th>
-            <th className="px-2 py-1.5 text-right font-medium">YTD P&amp;L</th>
-            <th className="px-2 py-1.5 text-right font-medium">Mkt cap</th>
-            <th className="px-2 py-1.5 text-right font-medium">Volume</th>
+            <SortableTh label="52-week range" sortKey="range" align="center" sort={sort} onSort={onSort} />
+            {PNL_COLS.map(({ label, win }) => (
+              <SortableTh key={win} label={label} sortKey={`pnl:${win}`} align="right" sort={sort} onSort={onSort} />
+            ))}
+            <SortableTh label="Mkt cap" sortKey="mcap" align="right" sort={sort} onSort={onSort} />
+            <SortableTh label="Volume" sortKey="volume" align="right" sort={sort} onSort={onSort} />
           </tr>
         </thead>
         <tbody>

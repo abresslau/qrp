@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { Composition } from "@/components/portfolio-heatmap";
@@ -75,6 +75,24 @@ describe("PortfolioPivot", () => {
     expect(cells[11]).toContain("150"); // shows the 52w high endpoint label
     expect(cells[12]).toBe("+5.00%"); // Daily P&L = 0.5 × live_return 0.1
     expect(cells[13]).toBe("—"); // MTD P&L (no MTD return on F1)
+  });
+
+  it("sorts holdings within a sector when a column header is clicked", () => {
+    render(<PortfolioPivot data={COMP} />);
+    const order = () => screen.getAllByRole("row").map((r) => r.textContent ?? "");
+    const idx = (rows: string[], t: string) => rows.findIndex((x) => x.includes(t));
+    // default: largest position first within Tech → AAPL (0.5) before INTC (0.4)
+    let rows = order();
+    expect(idx(rows, "AAPL")).toBeLessThan(idx(rows, "INTC"));
+    // click the active Wt header → toggles weight to ascending → INTC (0.4) before AAPL (0.5)
+    fireEvent.click(screen.getByRole("button", { name: /Wt/ }));
+    rows = order();
+    expect(idx(rows, "INTC")).toBeLessThan(idx(rows, "AAPL"));
+    // sort by 1D Chg ascending: INTC (0) below AAPL (+1.23%) flips when ascending
+    fireEvent.click(screen.getByRole("button", { name: /1D Chg/ })); // desc first
+    fireEvent.click(screen.getByRole("button", { name: /1D Chg/ })); // → asc
+    rows = order();
+    expect(idx(rows, "INTC")).toBeLessThan(idx(rows, "AAPL")); // 0 < 0.0123
   });
 
   it("shows an empty state with no holdings", () => {
