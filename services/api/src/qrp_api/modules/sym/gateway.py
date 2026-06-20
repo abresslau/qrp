@@ -919,6 +919,88 @@ class DbSymGateway:
             ],
         }
 
+    def indexes(self) -> list[dict]:
+        """Benchmark index instruments that have level data — name, MSCI code+variant (parsed from
+        the `msci` xref `<code>:<VARIANT>`), currency, level count, first/last/latest level."""
+        rows = self._conn.execute(
+            """
+            SELECT i.sym_id, i.name, i.currency_code,
+                   (SELECT value FROM instrument_xref x
+                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1) AS msci_xref,
+                   count(l.session_date)                                       AS n_levels,
+                   min(l.session_date)                                         AS first_date,
+                   max(l.session_date)                                         AS last_date,
+                   (SELECT level FROM index_levels ll
+                     WHERE ll.sym_id = i.sym_id ORDER BY ll.session_date DESC LIMIT 1) AS last_level
+              FROM instrument i
+              JOIN index_levels l ON l.sym_id = i.sym_id
+             WHERE i.kind = 'index'
+             GROUP BY i.sym_id, i.name, i.currency_code
+             ORDER BY i.name NULLS LAST, i.sym_id
+            """
+        ).fetchall()
+        out: list[dict] = []
+        for sym_id, name, ccy, xref, n, first_d, last_d, last_level in rows:
+            code, _, variant = (xref or "").partition(":")
+            out.append(
+                {
+                    "sym_id": sym_id,
+                    "name": name,
+                    "currency": ccy,
+                    "msci_code": code or None,
+                    "variant": variant or None,  # NETR/STRD/GRTR (None for non-MSCI indexes)
+                    "n_levels": n,
+                    "first_date": first_d.isoformat() if first_d else None,
+                    "last_date": last_d.isoformat() if last_d else None,
+                    "last_level": float(last_level) if last_level is not None else None,
+                }
+            )
+        return out
+
+    def index_levels(
+        self, sym_id: int, *, start: str | None = None, end: str | None = None
+    ) -> dict:
+        """The level series for one index instrument (ascending by date), with light metadata +
+        a since-start return. 404-able by the router when the sym_id has no levels."""
+        conds = ["sym_id = %s"]
+        params: list = [sym_id]
+        if start:
+            conds.append("session_date >= %s")
+            params.append(start)
+        if end:
+            conds.append("session_date <= %s")
+            params.append(end)
+        rows = self._conn.execute(
+            f"SELECT session_date, level FROM index_levels WHERE {' AND '.join(conds)} "
+            "ORDER BY session_date",
+            params,
+        ).fetchall()
+        meta = self._conn.execute(
+            """
+            SELECT i.name, i.currency_code,
+                   (SELECT value FROM instrument_xref x
+                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1) AS msci_xref
+              FROM instrument i WHERE i.sym_id = %s
+            """,
+            (sym_id,),
+        ).fetchone()
+        series = [{"date": d.isoformat(), "level": float(lv)} for d, lv in rows]
+        since_start = None
+        if len(series) >= 2 and series[0]["level"]:
+            since_start = series[-1]["level"] / series[0]["level"] - 1.0
+        name, ccy, xref = meta if meta else (None, None, None)
+        code, _, variant = (xref or "").partition(":")
+        return {
+            "sym_id": sym_id,
+            "name": name,
+            "currency": ccy,
+            "msci_code": code or None,
+            "variant": variant or None,
+            "n_levels": len(series),
+            "since_start_return": since_start,
+            "series": series,
+        }
+
     def validation(self) -> list[dict]:
         """Recent validation runs (validation_run_log), newest first."""
         rows = self._conn.execute(

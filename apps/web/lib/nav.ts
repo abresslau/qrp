@@ -24,6 +24,7 @@ export const SYM_SUBNAV: SubItem[] = [
   { href: "/sym/overview", label: "Overview" },
   { href: "/sym/explorer", label: "Explorer" },
   { href: "/sym/heatmap", label: "Heat map" },
+  { href: "/sym/indexes", label: "Indexes" },
   { href: "/sym/attention", label: "Attention" },
   { href: "/sym/validation", label: "Validation" },
   { href: "/sym/operate", label: "Operate" },

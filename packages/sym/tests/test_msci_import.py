@@ -7,7 +7,15 @@ import io
 from datetime import date
 from decimal import Decimal
 
-from sym.benchmarks.msci import parse_msci_rows
+import pytest
+
+from sym.benchmarks.msci import (
+    fetch_msci_levels,
+    msci_xref_value,
+    parse_msci_graph_json,
+    parse_msci_rows,
+    variant_code,
+)
 
 
 def _rows(text: str) -> list[list[str]]:
@@ -49,3 +57,67 @@ def test_no_date_header_yields_empty():
 def test_skips_unparseable_and_nonpositive_levels():
     text = 'Date,Idx\n2024-01-02,\n2024-01-03,0\n2024-01-04,"1,234.5"\n'
     assert parse_msci_rows(_rows(text)) == [(date(2024, 1, 4), Decimal("1234.5"))]
+
+
+# --- direct MSCI EOD pull (getLevelDataForGraph) -------------------------------------------------
+
+def test_variant_code_maps_pr_nr_gr():
+    assert variant_code("PR") == "STRD"
+    assert variant_code("NR") == "NETR"
+    assert variant_code("GR") == "GRTR"
+    assert variant_code("nr") == "NETR"  # case-insensitive
+    with pytest.raises(ValueError):
+        variant_code("TR")
+
+
+def test_msci_xref_value_encodes_variant():
+    # PR/NR/GR of one index must resolve to DISTINCT instruments (variant was dropped from the
+    # row dimension), so the msci xref encodes the variant.
+    assert msci_xref_value("990100", "NR") == "990100:NETR"
+    assert msci_xref_value("990100", "PR") != msci_xref_value("990100", "NR")
+
+
+def test_parse_graph_json_extracts_series():
+    payload = {
+        "msci_index_code": "990100", "index_variant_type": "NETR", "ISO_currency_symbol": "USD",
+        "indexes": {"INDEX_LEVELS": [
+            {"level_eod": 2487.6134344967827, "calc_date": 20001229},
+            {"level_eod": 2448.197151650023, "calc_date": 20010102},
+            {"level_eod": 0, "calc_date": 20010103},  # non-positive -> dropped
+            {"level_eod": None, "calc_date": 20010104},  # missing -> dropped
+        ]},
+    }
+    assert parse_msci_graph_json(payload) == [
+        (date(2000, 12, 29), Decimal("2487.6134344967827")),
+        (date(2001, 1, 2), Decimal("2448.197151650023")),
+    ]
+
+
+def test_parse_graph_json_raises_on_msci_error():
+    # MSCI returns an error_code (e.g. " 100" with a leading space) for bad params.
+    payload = {"error_code": " 100", "error_message": " null Invalid Parameter start_date"}
+    with pytest.raises(ValueError, match="MSCI error 100"):
+        parse_msci_graph_json(payload)
+
+
+def test_parse_graph_json_empty_levels_ok():
+    assert parse_msci_graph_json({"indexes": {"INDEX_LEVELS": []}}) == []
+
+
+def test_fetch_msci_levels_clamps_floor_and_uses_injected_fetcher():
+    captured = {}
+
+    def fake_fetch(url: str) -> dict:
+        captured["url"] = url
+        return {"indexes": {"INDEX_LEVELS": [{"level_eod": 100.0, "calc_date": 20240102}]}}
+
+    out = fetch_msci_levels(
+        msci_code="990100", variant="NR", currency="USD",
+        start_date=date(1969, 1, 1), end_date=date(2024, 1, 2), _fetch_json=fake_fetch,
+    )
+    assert out == [(date(2024, 1, 2), Decimal("100.0"))]
+    # start clamped to the 1997 floor; variant mapped to NETR; daily frequency
+    assert "start_date=19970101" in captured["url"]
+    assert "index_variant=NETR" in captured["url"]
+    assert "index_codes=990100" in captured["url"]
+    assert "data_frequency=DAILY" in captured["url"]

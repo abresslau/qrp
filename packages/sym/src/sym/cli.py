@@ -640,6 +640,48 @@ def _cmd_msci_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_msci_pull(args: argparse.Namespace) -> int:
+    import urllib.error
+
+    import psycopg
+
+    from sym.benchmarks.msci import MSCI_HISTORY_FLOOR, load_msci_pull
+    from sym.benchmarks.returns import recompute_index_returns
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.returns.loader import DEFAULT_LOOKBACK
+
+    load_dotenv()
+    start_date = date.fromisoformat(args.start) if args.start else MSCI_HISTORY_FLOOR
+    end_date = date.fromisoformat(args.end) if args.end else date.today()
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            summary = load_msci_pull(
+                conn, msci_code=args.msci_code, variant=args.variant, currency=args.currency,
+                name=args.name, start_date=start_date, end_date=end_date,
+            )
+            rets = recompute_index_returns(
+                conn, start_date=end_date - DEFAULT_LOOKBACK, end_date=end_date
+            )
+    except ValueError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    except urllib.error.URLError as exc:
+        print(f"MSCI request failed: {exc}", file=sys.stderr)
+        return 1
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"msci pull ({args.msci_code} {args.variant}) -> sym_id {summary.sym_id}: "
+        f"parsed {summary.parsed}, {summary.written} levels written; "
+        f"index returns: {rets.rows:,} rows / {rets.series} series "
+        f"({rets.extreme_rows:,} extreme rows)"
+    )
+    return 0
+
+
 def _cmd_benchmarks(args: argparse.Namespace) -> int:
     import psycopg
 
@@ -1440,6 +1482,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_msci.add_argument("--name", help="Instrument name (to create it on first import).")
     p_msci.add_argument("--currency", help="Instrument currency (ISO-4217, on first import).")
     p_msci.set_defaults(func=_cmd_msci_import)
+
+    p_msci_pull = sub.add_parser(
+        "msci-pull",
+        help="Pull MSCI index levels DIRECTLY from MSCI's free EOD endpoint into index_levels "
+        "(variant PR/NR/GR; from 1997). Polite/low-frequency; licence needed to redistribute.",
+    )
+    p_msci_pull.add_argument(
+        "--msci-code", dest="msci_code", required=True, help="MSCI index code (e.g. 990100)."
+    )
+    p_msci_pull.add_argument(
+        "--variant", required=True, choices=["PR", "NR", "GR"], help="Return variant."
+    )
+    p_msci_pull.add_argument("--currency", default="USD", help="ISO-4217 currency (default USD).")
+    p_msci_pull.add_argument("--name", help="Instrument name (to create it on first pull).")
+    p_msci_pull.add_argument(
+        "--start", help="Start date (ISO; default 1997-01-01, the MSCI floor)."
+    )
+    p_msci_pull.add_argument("--end", help="End date (ISO; default today).")
+    p_msci_pull.set_defaults(func=_cmd_msci_pull)
 
     p_eod = sub.add_parser(
         "eod",

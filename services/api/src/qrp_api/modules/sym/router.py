@@ -437,4 +437,53 @@ def validation(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     return gw.validation()
 
 
-# (attention + validation endpoints added — Q2.4/2.5)
+# ---- benchmark indexes (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----
+class IndexSummary(BaseModel):
+    sym_id: int
+    name: str | None
+    currency: str | None
+    msci_code: str | None
+    variant: str | None  # MSCI variant code (NETR net / STRD price / GRTR gross), if MSCI
+    n_levels: int
+    first_date: str | None
+    last_date: str | None
+    last_level: float | None
+
+
+class IndexLevelPoint(BaseModel):
+    date: str
+    level: float
+
+
+class IndexLevelSeries(BaseModel):
+    sym_id: int
+    name: str | None
+    currency: str | None
+    msci_code: str | None
+    variant: str | None
+    n_levels: int
+    since_start_return: float | None
+    series: list[IndexLevelPoint]
+
+
+@router.get("/indexes", response_model=list[IndexSummary])
+def indexes(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
+    """Benchmark index instruments that carry level data (one per index×variant)."""
+    return gw.indexes()
+
+
+@router.get("/indexes/{sym_id}/levels", response_model=IndexLevelSeries)
+def index_levels(
+    sym_id: int,
+    start: str | None = Query(None, description="ISO start date (inclusive)"),
+    end: str | None = Query(None, description="ISO end date (inclusive)"),
+    gw: DbSymGateway = Depends(_gateway),
+) -> dict:
+    """The level time-series for one index instrument. 404 when it has no levels."""
+    out = gw.index_levels(sym_id, start=start, end=end)
+    if out["n_levels"] == 0:
+        raise HTTPException(status_code=404, detail=f"no index levels for sym_id {sym_id}")
+    return out
+
+
+# (attention + validation endpoints added — Q2.4/2.5; indexes added — MSCI EOD pull story)
