@@ -45,7 +45,8 @@ const CY = S / 2;
 const R = 140; // outer radius
 const RI = 80; // inner radius
 const LABEL_R = (R + RI) / 2;
-const LABEL_MIN_FRAC = 0.06; // smaller slices rely on the legend (avoid label collisions)
+const LABEL_MIN_FRAC = 0.06; // major slices: always labelled in-chart
+const LABEL_MIN_MINOR = 0.035; // minor slices (≥3.5% but <6%): rendered but CSS-gated to wide containers
 
 export function PortfolioPizza({ data }: { data: Composition | null }) {
   const isDark = useIsDark();
@@ -80,12 +81,15 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
   });
 
   return (
-    <div>
+    // @container: the donut sizes to THIS card's width (a container query), not the viewport — so
+    // expanding the sidebar (which narrows the card, not the window) shrinks the donut to keep it
+    // beside the legend and holds the card height, instead of wrapping the legend below.
+    <div className="@container">
       <h3 className="text-xs font-medium uppercase tracking-wide text-muted">
         By sector — position size, daily P&amp;L
       </h3>
       <div className="mt-2 flex flex-wrap items-center gap-6">
-        <svg viewBox={`0 0 ${S} ${S}`} className="h-60 w-60 shrink-0" role="img" aria-label="Sector daily P&L donut heat map">
+        <svg viewBox={`0 0 ${S} ${S}`} className="h-52 w-52 shrink-0 @lg:h-64 @lg:w-64 @xl:h-72 @xl:w-72 @2xl:h-80 @2xl:w-80 @3xl:h-[24rem] @3xl:w-[24rem]" role="img" aria-label="Sector daily P&L donut heat map">
           {arcs.map((a) => (
             <path
               key={a.s.sector}
@@ -100,11 +104,14 @@ export function PortfolioPizza({ data }: { data: Composition | null }) {
             />
           ))}
           {arcs
-            .filter((a) => a.frac >= LABEL_MIN_FRAC)
+            .filter((a) => a.frac >= LABEL_MIN_MINOR)
             .map((a) => {
               const ink = textInk(a.rgb);
+              // Minor slices (3.5–6%) are rendered but CSS-gated: shown only once the container is wide
+              // (@2xl) and the ring has room; major slices (≥6%) are always labelled in-chart.
+              const minor = a.frac < LABEL_MIN_FRAC;
               return (
-                <g key={`label-${a.s.sector}`} className="pointer-events-none">
+                <g key={`label-${a.s.sector}`} className={minor ? "pointer-events-none hidden @2xl:block" : "pointer-events-none"}>
                   <text x={a.lx} y={a.ly - 4} textAnchor="middle" dominantBaseline="middle" fill={ink.fill} fontSize={11} fontWeight={600} paintOrder="stroke" stroke={ink.stroke} strokeWidth={2}>
                     {a.s.sector}
                   </text>

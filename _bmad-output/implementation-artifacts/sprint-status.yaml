@@ -44,7 +44,7 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-20  # portfolios-column-reorder reviewed -> done
+last_updated: 2026-06-20  # both donut stories reviewed -> done (committed together)
 # 2026-06-20: retrospectively enumerated the standalone / cross-cutting stories (delivered OUTSIDE the
 #   epic decompositions) into a new development_status section below (operator: "we can add to status
 #   file retrospectively"). These are the inline-tracked extras the DERIVATION NOTE references; statuses
@@ -309,4 +309,6 @@ development_status:
   portfolios-live-heatmap-and-pizza: done
   portfolios-live-grid-eod-returns: done  # created + implemented + reviewed 2026-06-20 (live-rebased trailing returns in the grid; 2 review patches applied)
   portfolios-multi-column-sort: done  # created + implemented + reviewed 2026-06-20 (Ctrl/Cmd-click adds/toggles secondary sort keys; ordered Sort[] + looped compareHoldings + priority indicators; within-sector grouping preserved). Code-review: 8/8 ACs, no High/Med; 1 decision (keep fresh-single-sort) + 2 patches (indicator separator, test assertion). 6 pivot + 20 portfolio tests green, tsc+eslint clean.
+  portfolios-donut-container-fit: done  # created + implemented + reviewed 2026-06-20 (donut sized by CONTAINER via Tailwind v4 container queries, not viewport; CSS-gated minor labels; matchMedia hook removed). Real-Chrome verified rail-toggle holds card height. Code-review: all ACs met, 2 patches (drop @sm grow step, harden label test). 31 portfolio tests green.
+  portfolios-donut-responsive: done  # 2026-06-20 implemented then SUPERSEDED-and-folded into portfolios-donut-container-fit (viewport->container queries); intent (big donut + more labels on large screens) preserved in the final code. Committed together.
   portfolios-column-reorder: done  # created + implemented + reviewed 2026-06-20 (drag header to reorder grid columns; column-descriptor registry drives header + all body rows; colSpan aggregate rows decomposed; Pointer Events drag — switched from native HTML5 DnD after the user found it didn't fire from inside the header button; no new dep; coexists with click-to-sort). Real-Chrome CDP drag verified. Code-review: 8/8 ACs, no correctness bugs; 1 decision (accept insert-before) + 3 patches (listener unmount cleanup+pointercancel, COLUMN_BY_ID guards, dedupe pnlOf). 10 pivot + 24 portfolio tests green, tsc+eslint clean.
