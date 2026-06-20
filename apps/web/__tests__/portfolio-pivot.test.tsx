@@ -32,19 +32,19 @@ const COMP: Composition = {
 };
 
 describe("PortfolioPivot", () => {
-  it("renders explorer columns, sector groups, per-stock rows and a Daily P&L grand total", () => {
+  it("renders FLAT (ungrouped) by default with a Sector column + Daily P&L grand total", () => {
     render(<PortfolioPivot data={COMP} />);
-    // explorer-style + P&L column headers (no orphan Return / generic P&L columns)
-    for (const h of ["Ticker", "Country", "Exch", "Ccy", "Price", "52-week range", "Daily P&L", "MTD P&L", "YTD P&L", "Mkt cap", "Volume"]) {
+    // explorer-style + P&L column headers, now incl. a draggable Sector column (no orphan Return col)
+    for (const h of ["Ticker", "Sector", "Country", "Exch", "Ccy", "Price", "52-week range", "Daily P&L", "MTD P&L", "YTD P&L", "Mkt cap", "Volume"]) {
       expect(screen.getByText(h)).toBeInTheDocument();
     }
     expect(screen.queryByText("Return")).not.toBeInTheDocument();
-    // sector groups + stock rows
-    expect(screen.getAllByText("Tech").length).toBeGreaterThan(0);
-    expect(screen.getByText("Energy")).toBeInTheDocument();
+    // FLAT by default: no group/subtotal rows — just header + grand total + the 3 holdings = 5 rows.
+    expect(screen.getAllByRole("row")).toHaveLength(5);
+    expect(screen.queryByText(/· 2/)).not.toBeInTheDocument(); // no "Tech · 2" group subtotal row
     expect(screen.getByText("AAPL")).toBeInTheDocument();
     expect(screen.getByText("XOM")).toBeInTheDocument();
-    expect(screen.getAllByText("United States").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Tech").length).toBeGreaterThan(0); // Tech now shows in the Sector column
     // Daily P&L grand total = Σ weight·live_return (FX-hedged, no normalisation):
     // 0.5·0.1 + 0.4·(−0.05) + 0.3·0.01 = +3.30%
     expect(screen.getByText(/Total · 3 holdings/)).toBeInTheDocument();
@@ -60,21 +60,22 @@ describe("PortfolioPivot", () => {
       "Price", "1D Chg", "1M Return", "3M Return", "6M Return", "52-week range",
       "Daily P&L", "MTD P&L", "YTD P&L", "Mkt cap",
     ]);
-    // the header row carries all 17 columns (5 explorer + Wt + Price + 4 windows + 52W Range + 3 P&L + MktCap + Vol)
+    // the header row carries all 18 columns (Ticker/Name/Country/Exch/Ccy/Sector + Wt + Price + 4 windows + 52W Range + 3 P&L + MktCap + Vol)
     const headerCells = screen.getAllByRole("row")[0].querySelectorAll("th");
-    expect(headerCells).toHaveLength(17);
-    // AAPL row, by position: returns render re-based (null 6M -> —); 52W Range bar; Daily P&L = weight·live_return
+    expect(headerCells).toHaveLength(18);
+    // AAPL row, by position (Sector inserted after Ccy shifts the numeric columns +1):
+    // ticker0 name1 country2 mic3 ccy4 sector5 weight6 price7 1D8 1M9 3M10 6M11 range12 daily13 mtd14
     const cells = Array.from(screen.getByText("AAPL").closest("tr")!.querySelectorAll("td")).map(
       (td) => td.textContent,
     );
-    expect(cells[7]).toBe("+1.23%"); // 1D return
-    expect(cells[8]).toBe("+5.00%"); // 1M return
-    expect(cells[9]).toBe("-2.00%"); // 3M return
-    expect(cells[10]).toBe("—"); // 6M null
-    expect(cells[11]).not.toBe("—"); // 52W Range bar present (F1 has extremes)
-    expect(cells[11]).toContain("150"); // shows the 52w high endpoint label
-    expect(cells[12]).toBe("+5.00%"); // Daily P&L = 0.5 × live_return 0.1
-    expect(cells[13]).toBe("—"); // MTD P&L (no MTD return on F1)
+    expect(cells[8]).toBe("+1.23%"); // 1D return
+    expect(cells[9]).toBe("+5.00%"); // 1M return
+    expect(cells[10]).toBe("-2.00%"); // 3M return
+    expect(cells[11]).toBe("—"); // 6M null
+    expect(cells[12]).not.toBe("—"); // 52W Range bar present (F1 has extremes)
+    expect(cells[12]).toContain("150"); // shows the 52w high endpoint label
+    expect(cells[13]).toBe("+5.00%"); // Daily P&L = 0.5 × live_return 0.1
+    expect(cells[14]).toBe("—"); // MTD P&L (no MTD return on F1)
   });
 
   it("sorts holdings within a sector when a column header is clicked", () => {
@@ -176,6 +177,35 @@ describe("PortfolioPivot", () => {
     const idx = (rows: string[], t: string) => rows.findIndex((x) => x.includes(t));
     fireEvent.click(screen.getByRole("button", { name: /Ticker/ })); // sort by ticker asc
     expect(idx(order(), "AAPL")).toBeLessThan(idx(order(), "INTC"));
+  });
+
+  // --- group-by (drag a column header onto the drop zone that appears only while dragging) ------
+  // The group-by zone has NO resting footprint — it appears once a groupable header starts dragging.
+  const dragToZone = (from: HTMLElement) => {
+    fireEvent.pointerDown(from, { button: 0, clientX: 0 });
+    fireEvent.pointerMove(from, { clientX: 40 }); // cross the 5px threshold → the zone appears
+    const z = document.querySelector("[data-groupby-zone]") as HTMLElement;
+    fireEvent.pointerMove(z, { clientX: 40 });
+    fireEvent.pointerUp(z, { clientX: 40 });
+  };
+
+  it("groups the grid when a column header is dragged onto the (drag-only) group-by zone", () => {
+    render(<PortfolioPivot data={COMP} />);
+    expect(document.querySelector("[data-groupby-zone]")).toBeNull(); // no resting zone row
+    expect(screen.getAllByRole("row")).toHaveLength(5); // flat: header + total + 3 holdings
+    dragToZone(th(/Sector/));
+    // grouped by sector: + a "Tech · 2" and an "Energy · 1" subtotal row → 7 rows
+    expect(screen.getAllByRole("row")).toHaveLength(7);
+    expect(screen.getByText(/· 2/)).toBeInTheDocument(); // Tech group has 2 holdings
+    expect(screen.getByRole("button", { name: /clear grouping/i })).toBeInTheDocument(); // ✕ on the grouped header
+  });
+
+  it("returns to flat when the grouped header's ✕ is clicked", () => {
+    render(<PortfolioPivot data={COMP} />);
+    dragToZone(th(/Sector/));
+    expect(screen.getAllByRole("row")).toHaveLength(7);
+    fireEvent.click(screen.getByRole("button", { name: /clear grouping/i }));
+    expect(screen.getAllByRole("row")).toHaveLength(5); // back to flat
   });
 
   it("shows an empty state with no holdings", () => {

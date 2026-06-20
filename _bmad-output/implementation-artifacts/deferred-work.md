@@ -384,3 +384,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of portfolios-live-grid-eod-returns (2026-06-20)
 
 - **"Latest `as_of` per window" is not unit-tested** (`services/api/tests/test_portfolio_composition.py`) — the DB-free fake conn can't exercise the SQL `DISTINCT ON (composite_figi, window_id) … ORDER BY as_of_date DESC`; the unit test feeds pre-deduped rows. The query mirrors the proven Explorer security-detail template, but the "picks the most recent as_of" guarantee rests on code inspection. Add a DB integration test (or a fake conn that honors DISTINCT-ON ordering) to close it.
+
+## Deferred from: code review of portfolios-grid-pivot-grouping (2026-06-20)
+
+- Group weight % uses Σ|weight| over a signed `total_weight` denominator (`portfolio-pivot.tsx:427` group `.map`, `subtotalCell` `wt/gross`). Pre-existing — the old `SectorGroup` aggregated identically. Only diverges for long-short books (gross |weight| vs net signed total); harmless for long-only. Revisit if/when short positions land in the live grid.
