@@ -1,6 +1,6 @@
 "use client";
 
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useRef, useState } from "react";
+import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type Composition, type CompositionHolding } from "@/components/portfolio-heatmap";
 import { fmtCompact, fmtPrice } from "@/lib/format";
@@ -298,6 +298,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const dragRef = useRef<{ id: string; startX: number; started: boolean } | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   const colUnder = (ev: PointerEvent): string | null => {
     const th = (ev.target as HTMLElement | null)?.closest?.("th[data-col-id]") as HTMLElement | null;
@@ -306,7 +307,16 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   const onColPointerDown = (e: ReactPointerEvent, id: string) => {
     if (e.button > 0) return; // ignore right/middle button (left = 0; undefined in jsdom passes)
     dragRef.current = { id, startX: e.clientX, started: false };
-    const onMove = (ev: PointerEvent) => {
+    function teardown() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      dragCleanupRef.current = null;
+      dragRef.current = null;
+      setDraggingId(null);
+      setDragOverId(null);
+    }
+    function onMove(ev: PointerEvent) {
       const st = dragRef.current;
       if (!st) return;
       if (!st.started) {
@@ -316,16 +326,12 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
       }
       ev.preventDefault();
       setDragOverId(colUnder(ev));
-    };
-    const onUp = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
+    }
+    function onUp(ev: PointerEvent) {
       const st = dragRef.current;
-      dragRef.current = null;
-      setDraggingId(null);
-      setDragOverId(null);
-      if (!st || !st.started) return; // it was a click, not a drag → let the sort handler run
       const targetId = colUnder(ev);
+      teardown();
+      if (!st || !st.started) return; // it was a click, not a drag → let the sort handler run
       if (!targetId || targetId === st.id) return;
       suppressClickRef.current = true; // a real drag happened → swallow the trailing click
       window.setTimeout(() => {
@@ -338,10 +344,18 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
         next.splice(ti, 0, st.id); // insert before the drop target
         return next;
       });
-    };
+    }
+    function onCancel() {
+      teardown(); // OS/browser stole the gesture → drop the drag cleanly, no reorder
+    }
+    dragCleanupRef.current = teardown; // so an unmount mid-drag can tear the listeners down
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   };
+  // If the component unmounts mid-drag (e.g. a composition refetch swaps the tree), remove the
+  // window listeners so they don't leak or fire setState on an unmounted component.
+  useEffect(() => () => dragCleanupRef.current?.(), []);
 
   if (!data?.holdings?.length) {
     return <p className="text-sm text-muted">No holdings yet — upload a weight vector to see the breakdown.</p>;
@@ -350,10 +364,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   // P&L contribution = weight × return (FX-hedged: base-currency, no FX translation, no normalisation).
   // Daily uses the live return; the other windows use the re-based trailing returns. Additive → the
   // sector subtotal and grand total are the plain Σ over the group; a missing return contributes nothing.
-  const pnlOf = (h: CompositionHolding, win: string): number | null => {
-    const r = win === "DAILY" ? h.live_return : (h.window_returns?.[win] ?? null);
-    return r != null ? h.weight * r : null;
-  };
+  // (Uses the module-level `PnlAccess` — the single source of the formula, shared with the cell renderers.)
 
   // Group by sector, sectors ordered by gross weight desc; holdings within each sector ordered by
   // the active column sort (default |weight| desc). Sorting reorders rows within their sector — the
@@ -365,7 +376,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
       const hs = rows.slice().sort((a, b) => compareHoldings(a, b, sorts));
       const wt = hs.reduce((s, h) => s + Math.abs(h.weight), 0);
       const pnls: Record<string, number> = {};
-      for (const { win } of PNL_COLS) pnls[win] = hs.reduce((s, h) => s + (pnlOf(h, win) ?? 0), 0);
+      for (const { win } of PNL_COLS) pnls[win] = hs.reduce((s, h) => s + (PnlAccess(h, win) ?? 0), 0);
       return { sector, hs, wt, pnls };
     })
     .sort((a, b) => b.wt - a.wt);
@@ -383,6 +394,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
                 52-week range centered. */}
             {order.map((id) => {
               const col = COLUMN_BY_ID[id];
+              if (!col) return null; // defensive: a stale order id would otherwise crash the table
               return (
                 <SortableTh
                   key={id}
@@ -446,7 +458,7 @@ function SectorGroup({
       </tr>
       {hs.map((h) => (
         <tr key={h.figi} className="border-b border-border/50 hover:bg-fg/5">
-          {order.map((id) => COLUMN_BY_ID[id].cell(h))}
+          {order.map((id) => COLUMN_BY_ID[id]?.cell(h) ?? null)}
         </tr>
       ))}
     </>

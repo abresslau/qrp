@@ -1,6 +1,6 @@
 # Story: Drag-to-reorder columns in the live portfolio grid
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -171,10 +171,25 @@ claude-opus-4-8
 4. **Column show/hide.** Reordering naturally invites hiding columns too (a column chooser). Out of scope here; flag if you want it as a follow-up.
 5. **Keyboard/accessible reorder.** Native DnD is pointer-only. If keyboard reorder matters, it needs a menu ("move left/right") or a DnD lib — a separate story.
 
+## Review Findings (code-review 2026-06-20)
+
+3 adversarial layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor) on commit `0b1f17b`. All 8 ACs
++ critical conventions verified met (incl. amended AC#2 Pointer Events, no DnD dep). No correctness bugs;
+the reorder math, labelSpan/colSpan decomposition (incl. agg-column-first fallback), immutable moves,
+header/body sync, and sort coexistence are all correct. 1 decision, 3 patches, 4 dismissed.
+
+- [x] [Review][Decision→Accepted] Reorder is insert-*before*-target, so a column can't be moved to the LAST slot (RESOLVED: Decision 1 → accept insert-before-only) — Andre chose to keep the simple insert-before model; no change. Drag-past-last to make a column last is a possible future refinement (right-half drop detection).
+- [x] [Review][Patch] Window `pointermove`/`pointerup` listeners leak on unmount-mid-drag; no `pointercancel` (FIXED 2026-06-20) — `onColPointerDown` now stores a `teardown()` in `dragCleanupRef`, removes all three listeners (added `pointercancel`) on every release/cancel path, and a `useEffect(() => () => dragCleanupRef.current?.(), [])` tears down on unmount mid-drag. Real-Chrome CDP drag re-verified PASS after the refactor.
+- [x] [Review][Patch] `COLUMN_BY_ID[id]` dereferenced without an undefined guard (FIXED 2026-06-20) — header map does `if (!col) return null`; body map uses `COLUMN_BY_ID[id]?.cell(h) ?? null`. Guards a table-wide crash from a stale order id.
+- [x] [Review][Patch] `pnlOf`/`PnlAccess` byte-identical duplicates (FIXED 2026-06-20) — removed the in-component `pnlOf`; the subtotal/total math now uses the module-level `PnlAccess` (single source of the FX-hedged formula).
+
+Dismissed (4): `suppressClickRef` same-tick window (self-correcting via `setTimeout(0)`; the only click after `pointerup` in the same task is the drag's own compatibility click — user sort clicks are separate tasks → practically unreachable); one-dimensional (clientX-only) drag threshold (intentional — columns move horizontally); `e.button > 0` relying on `undefined > 0 === false` (works, documented); + ~10 verified-handled edge cases (plain click / sub-threshold / non-header & same-column drop / non-left button / agg-column-first labelSpan width / order survives data refetch / multi-sort indicator position-agnostic / immutable reorder / stable React keys).
+
 ## Change Log
 
 | Date | Change |
 |---|---|
 | 2026-06-20 | Created story: drag-to-reorder columns in the live portfolio grid. Requires refactoring the four positional row renderers to a single column-descriptor registry + `order` state, decomposing the `colSpan` aggregate rows into per-column cells, and native HTML5 drag-and-drop on the headers (no new dependency) coexisting with click-to-sort. Status → ready-for-dev. |
 | 2026-06-20 | Implemented (red-green): `COLUMNS` registry + `order` state driving header + all body rows; colSpan aggregate rows decomposed to per-column cells (`subtotalCell`/`totalCell` + `labelSpan`); native HTML5 DnD on `SortableTh` (no new dep) coexisting with click-to-sort. 4 new tests; 10/10 pivot + 24/24 portfolio green; tsc + eslint clean; default render verified pixel-identical. Status → review. |
-| 2026-06-20 | Bug (user-found): native HTML5 DnD didn't fire from inside the header button in real Chrome. Rewrote to **Pointer Events** (no new dep); AC#2 amended. Verified for real via a CDP-driven mouse drag in headless Chrome (Volume→first column). 10/10 pivot + 24/24 portfolio tests green, tsc + eslint clean. |
+| 2026-06-20 | Bug (user-found): native HTML5 DnD didn't fire from inside the header button in real Chrome. Rewrote to **Pointer Events** (no new dep); AC#2 amended. Verified for real via a CDP-driven mouse drag in headless Chrome (Volume→first column). 10/10 pivot + 24/24 portfolio tests green, tsc + eslint clean. Committed `0b1f17b`. |
+| 2026-06-20 | Code-review (3 adversarial layers): all 8 ACs met, no correctness bugs. Decision 1 → accept insert-before-only (no change). 3 patches applied: drag-listener unmount cleanup + `pointercancel`; `COLUMN_BY_ID` undefined guards; deduped `pnlOf`→`PnlAccess`. Real-Chrome drag re-verified PASS; 10/10 pivot + tsc + eslint clean. Status → done. |
