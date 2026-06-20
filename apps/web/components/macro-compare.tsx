@@ -84,14 +84,48 @@ function valueAt(obs: { obs_date: string; value: number }[], t: number): number 
   return best.value;
 }
 
+const YEAR_MS = 365.25 * 864e5;
+
 function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [hoverT, setHoverT] = useState<number | null>(null);
+  // Comparison defaults to a TABLE — for level indicators like inflation a sortable cross-country
+  // table (latest / 1y-ago / change) reads far clearer than overlaid lines. Chart is one click away.
+  const [view, setView] = useState<"table" | "chart">("table");
 
   const plottable = useMemo(
     () => loaded.filter((l) => l.detail.observations.length >= 2),
     [loaded]
   );
+
+  // Cross-country comparison rows — latest value, the value ~1y earlier (nearest obs, only when the
+  // series actually spans >~10 months so it isn't just the latest point again), and the change.
+  // Sorted by latest descending (the comparison's natural ranking).
+  const tableRows = useMemo(() => {
+    const rows = loaded.map((l) => {
+      const obs = l.detail.observations;
+      const last = obs.at(-1) ?? null;
+      const lastT = last ? new Date(last.obs_date).getTime() : null;
+      const firstT = obs.length ? new Date(obs[0].obs_date).getTime() : null;
+      const yrAgo =
+        last && lastT != null && firstT != null && lastT - firstT > 300 * 864e5
+          ? valueAt(obs, lastT - YEAR_MS)
+          : null;
+      const latest = last?.value ?? null;
+      const change = latest != null && yrAgo != null ? latest - yrAgo : null;
+      return {
+        id: l.summary.series_id,
+        geo: l.summary.geo,
+        latest,
+        yrAgo,
+        change,
+        asOf: last?.obs_date ?? null,
+        short: obs.length < 2,
+      };
+    });
+    rows.sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
+    return rows;
+  }, [loaded]);
   const visible = useMemo(
     () => plottable.filter((l) => !hidden.has(l.summary.series_id)),
     [plottable, hidden]
@@ -163,14 +197,31 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
 
   return (
     <div className="rounded-xl border border-border bg-surface p-4">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-baseline justify-between gap-2">
         <div className="font-medium text-fg">{group.name}</div>
-        <div className="text-xs text-muted">
-          {hoverT != null
-            ? new Date(hoverT).toLocaleDateString("en-US", { year: "numeric", month: "short" })
-            : group.unit}
+        <div className="flex items-center gap-2">
+          <div className="text-xs text-muted">
+            {view === "chart" && hoverT != null
+              ? new Date(hoverT).toLocaleDateString("en-US", { year: "numeric", month: "short" })
+              : group.unit}
+          </div>
+          <div className="inline-flex overflow-hidden rounded-md border border-border text-xs">
+            {(["table", "chart"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`px-2 py-0.5 capitalize ${
+                  view === v ? "bg-fg/10 font-medium text-fg" : "text-muted hover:bg-fg/5"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
+      {view === "chart" && (
       <div className="mt-2 flex flex-wrap gap-1.5">
         {loaded.map((l) => {
           // fetched-but-unplottable (<2 obs) series stay VISIBLE as disabled chips —
@@ -209,6 +260,8 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
           );
         })}
       </div>
+      )}
+      {view === "chart" ? (
       <div className="mt-3">
         <svg
           viewBox="0 0 720 240"
@@ -245,6 +298,44 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
           <span>{x1}</span>
         </div>
       </div>
+      ) : (
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-sm [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+            <thead className="text-left text-xs uppercase tracking-wide text-muted">
+              <tr>
+                <th className="px-2 py-1 font-medium">Country</th>
+                <th className="px-2 py-1 text-right font-medium">Latest</th>
+                <th className="px-2 py-1 text-right font-medium">1y ago</th>
+                <th className="px-2 py-1 text-right font-medium">Δ 1y</th>
+                <th className="px-2 py-1 text-right font-medium">As of</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map((r) => (
+                <tr key={r.id} className="border-t border-border/50">
+                  <td className="px-2 py-1 text-fg">
+                    <span
+                      className="mr-1.5 inline-block h-2 w-2 rounded-full align-middle"
+                      style={{ backgroundColor: colorOf(r.id) }}
+                    />
+                    {r.geo}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums text-fg">
+                    {r.latest != null ? fmt(r.latest, group.unit) : "—"}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums text-muted">
+                    {r.yrAgo != null ? fmt(r.yrAgo, group.unit) : "—"}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums text-muted">
+                    {r.change != null ? `${r.change >= 0 ? "+" : ""}${r.change.toFixed(2)}` : "—"}
+                  </td>
+                  <td className="px-2 py-1 text-right tabular-nums text-muted">{r.asOf ?? "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

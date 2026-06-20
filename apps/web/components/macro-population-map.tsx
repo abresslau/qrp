@@ -34,6 +34,15 @@ function mix(a: RGB, b: RGB, t: number): string {
   const c = (i: number) => Math.round(a[i] + (b[i] - a[i]) * Math.max(0, Math.min(1, t)));
   return `rgb(${c(0)},${c(1)},${c(2)})`;
 }
+// Multi-stop ramp — interpolate t∈[0,1] across N colour stops (more perceptual contrast than a
+// 2-stop mix, so the most-populous countries read as clearly the darkest/brightest, not just
+// "a bit more" than mid-size ones).
+function ramp(stops: RGB[], t: number): string {
+  const x = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x));
+  const f = x - i;
+  return mix(stops[i], stops[i + 1], f);
+}
 function fmtPop(m: number | null): string {
   if (m == null) return "—";
   return m >= 1000 ? `${(m / 1000).toFixed(2)}B` : `${m.toFixed(1)}M`;
@@ -94,17 +103,19 @@ export function MacroPopulationMap() {
     return m;
   }, [rows]);
 
-  // Total population is log-scaled (China & India dwarf the rest); growth is diverging about 0.
-  const maxLogPop = useMemo(
-    () => Math.log(Math.max(1, ...(rows ?? []).map((r) => r.total ?? 0)) + 1),
-    [rows],
-  );
+  // Total population: √-scaled (NOT log). Log compressed the top so China/India barely outranked
+  // mid-size countries; √ keeps mid-tier visible while letting the giants (China ~1.41B, India
+  // ~1.40B) sit at the deepest stop, clearly distinct from everyone else. Growth diverges about 0.
+  const maxPop = useMemo(() => Math.max(1, ...(rows ?? []).map((r) => r.total ?? 0)), [rows]);
   const GROWTH_CAP = 3; // %/yr — saturates the diverging ramp at ±3
 
   const ocean = isDark ? "#0c1118" : "#eaf0f6";
   const empty = isDark ? "#1c2530" : "#dde3ea";
-  const popLo: RGB = isDark ? [22, 49, 46] : [209, 242, 235];
-  const popHi: RGB = isDark ? [45, 212, 191] : [13, 118, 110];
+  // 3-stop sequential ramp (light → saturated → deepest). The deep top stop is what makes the
+  // most-populous countries pop. Dark mode runs dark→bright (more = brighter aqua).
+  const popStops: RGB[] = isDark
+    ? [[18, 42, 40], [20, 148, 136], [125, 240, 218]]
+    : [[224, 242, 241], [13, 148, 136], [4, 47, 55]];
   const negC: RGB = [244, 63, 94]; // rose — shrinking
   const midC: RGB = isDark ? [55, 65, 81] : [229, 231, 235];
   const posC: RGB = [16, 185, 129]; // emerald — growing
@@ -113,7 +124,7 @@ export function MacroPopulationMap() {
     if (!r) return empty;
     if (metric === "total") {
       if (r.total == null) return empty;
-      return mix(popLo, popHi, Math.log(r.total + 1) / maxLogPop);
+      return ramp(popStops, Math.sqrt(r.total) / Math.sqrt(maxPop));
     }
     if (r.growth == null) return empty;
     const t = Math.max(-1, Math.min(1, r.growth / GROWTH_CAP));
@@ -174,6 +185,7 @@ export function MacroPopulationMap() {
             return (
               <path
                 key={iso}
+                data-iso={iso}
                 d={d}
                 fill={fillFor(r)}
                 stroke={isDark ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.7)"}
@@ -221,7 +233,9 @@ export function MacroPopulationMap() {
               <span>fewer</span>
               <span
                 className="h-2 w-24 rounded-full"
-                style={{ background: `linear-gradient(90deg, ${mix(popLo, popHi, 0)}, ${mix(popLo, popHi, 1)})` }}
+                style={{
+                  background: `linear-gradient(90deg, ${ramp(popStops, 0)}, ${ramp(popStops, 0.5)}, ${ramp(popStops, 1)})`,
+                }}
               />
               <span>more people</span>
             </div>
@@ -240,7 +254,7 @@ export function MacroPopulationMap() {
 
       <p className="mt-2 text-xs text-muted">
         Countries shaded by{" "}
-        {metric === "total" ? "total population (log-scaled)" : "annual population growth"} — World Bank
+        {metric === "total" ? "total population (√-scaled — the most populous stand out)" : "annual population growth"} — World Bank
         latest. Hover for the figures. Only the {tracked} tracked economies are shaded; the series are
         listed below.
       </p>
