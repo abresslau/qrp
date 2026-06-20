@@ -13,6 +13,7 @@ const INDEXES = [
 const LEVELS = {
   sym_id: 2210, name: "MSCI World Net (USD)", currency: "USD", msci_code: "990100",
   variant: "NETR", n_levels: 3, since_start_return: 3.715,
+  trailing: { ytd: 0.082, "1y": 0.151, "3y": 0.274, "5y": 0.663 },
   series: [
     { date: "2000-12-29", level: 2487.61 },
     { date: "2013-06-19", level: 5000.0 },
@@ -48,6 +49,10 @@ describe("Indexes page", () => {
     expect(screen.getAllByText("11,731.17").length).toBeGreaterThan(0);
     // since-start return formatted as a percent
     expect(screen.getByText("+371.5%")).toBeInTheDocument();
+    // trailing returns rendered (YTD / 1Y / 3Y / 5Y from the series)
+    expect(screen.getByText("YTD")).toBeInTheDocument();
+    expect(screen.getByText("+8.2%")).toBeInTheDocument(); // ytd 0.082
+    expect(screen.getByText("+66.3%")).toBeInTheDocument(); // 5y 0.663
   });
 
   it("shows an honest empty state with the msci-pull hint when no index data", async () => {

@@ -18,6 +18,7 @@ type IndexSummary = {
   last_level: number | null;
 };
 type LevelPoint = { date: string; level: number };
+type Trailing = { ytd: number | null; "1y": number | null; "3y": number | null; "5y": number | null };
 type LevelSeries = {
   sym_id: number;
   name: string | null;
@@ -26,6 +27,7 @@ type LevelSeries = {
   variant: string | null;
   n_levels: number;
   since_start_return: number | null;
+  trailing: Trailing;
   series: LevelPoint[];
 };
 
@@ -92,6 +94,12 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
       <div className="mt-1 text-right text-xs text-muted">Level{currency ? ` (${currency})` : ""}</div>
     </div>
   );
+}
+
+function Ret({ v }: { v: number | null | undefined }) {
+  if (v == null || !Number.isFinite(v)) return <span className="text-muted">—</span>;
+  const cls = v >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
+  return <span className={cls}>{fmtPct(v)}</span>;
 }
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
@@ -214,11 +222,18 @@ export default function IndexesPage() {
                     </div>
                   </div>
                 </div>
-                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <Stat label="Latest level" value={fmtLevel(data?.series.at(-1)?.level ?? sel.last_level)} />
                   <Stat label="As of" value={sel.last_date ?? "—"} />
                   <Stat label="Since start" value={fmtPct(data?.since_start_return)} />
                   <Stat label="From" value={sel.first_date ?? "—"} />
+                </div>
+                {/* trailing returns (computed from the level series): YTD / 1Y / 3Y / 5Y */}
+                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <Stat label="YTD" value={<Ret v={data?.trailing?.ytd} />} />
+                  <Stat label="1Y" value={<Ret v={data?.trailing?.["1y"]} />} />
+                  <Stat label="3Y" value={<Ret v={data?.trailing?.["3y"]} />} />
+                  <Stat label="5Y" value={<Ret v={data?.trailing?.["5y"]} />} />
                 </div>
                 {dataErr ? (
                   <p className="text-sm text-rose-500">Could not load levels: {dataErr}</p>

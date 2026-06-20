@@ -46,8 +46,14 @@ class _FakeConn:
                      date(2000, 12, 29), date(2026, 6, 19), 11731.17),
                 ]
             )
-        if "SELECT session_date, level FROM index_levels" in s:  # series
-            return _Result([(date(2000, 12, 29), 2487.61), (date(2026, 6, 19), 11731.17)])
+        if "SELECT session_date, level FROM index_levels" in s:  # series (asc by date)
+            return _Result([
+                (date(2000, 12, 29), 2487.61),
+                (date(2021, 6, 19), 8000.0),
+                (date(2023, 6, 19), 9000.0),
+                (date(2025, 6, 19), 10000.0),
+                (date(2026, 6, 19), 11731.17),
+            ])
         if "FROM instrument i WHERE i.sym_id" in s:  # series meta
             return _Result([("MSCI World Net (USD)", "USD", "990100:NETR")])
         return _Result([])
@@ -70,7 +76,18 @@ def test_index_levels_series_and_since_start_return():
     out = gw.index_levels(2210)
     assert out["sym_id"] == 2210
     assert out["msci_code"] == "990100" and out["variant"] == "NETR"
-    assert out["n_levels"] == 2
+    assert out["n_levels"] == 5
     assert out["series"][0] == {"date": "2000-12-29", "level": 2487.61}
     # since-start return = last/first - 1
     assert abs(out["since_start_return"] - (11731.17 / 2487.61 - 1.0)) < 1e-9
+
+
+def test_index_levels_trailing_returns():
+    out = DbSymGateway(_FakeConn()).index_levels(2210)
+    tr = out["trailing"]
+    # latest 2026-06-19 = 11731.17; bases: YTD/1Y -> 2025-06-19 (10000), 3Y -> 2023-06-19 (9000),
+    # 5Y -> 2021-06-19 (8000). Each = latest/base - 1.
+    assert abs(tr["1y"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
+    assert abs(tr["ytd"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
+    assert abs(tr["3y"] - (11731.17 / 9000.0 - 1.0)) < 1e-9
+    assert abs(tr["5y"] - (11731.17 / 8000.0 - 1.0)) < 1e-9

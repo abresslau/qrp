@@ -463,6 +463,7 @@ class IndexLevelSeries(BaseModel):
     variant: str | None
     n_levels: int
     since_start_return: float | None
+    trailing: dict[str, float | None]
     series: list[IndexLevelPoint]
 
 

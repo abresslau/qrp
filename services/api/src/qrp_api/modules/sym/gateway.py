@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import psycopg
 
@@ -61,6 +61,33 @@ class UniverseRef:
     universe_id: str
     name: str
     members_resolved: int
+
+
+def _trailing_returns(series: list[dict]) -> dict:
+    """Trailing returns (YTD/1Y/3Y/5Y) from a date-ascending level series — latest level vs the
+    last observation on-or-before the window-start date. None when the series doesn't reach back
+    far enough. Pure helper (no DB)."""
+    if len(series) < 2:
+        return {"ytd": None, "1y": None, "3y": None, "5y": None}
+    last = series[-1]
+    last_date = date.fromisoformat(last["date"])
+
+    def ret(start_iso: str) -> float | None:
+        base = None
+        for p in series:
+            if p["date"] <= start_iso:
+                base = p
+            else:
+                break
+        # require a real lookback (a base strictly before the latest point) + a positive divisor
+        return last["level"] / base["level"] - 1.0 if base and base["level"] and base["date"] < last["date"] else None
+
+    return {
+        "ytd": ret(f"{last_date.year}-01-01"),
+        "1y": ret((last_date - timedelta(days=365)).isoformat()),
+        "3y": ret((last_date - timedelta(days=3 * 365)).isoformat()),
+        "5y": ret((last_date - timedelta(days=5 * 365)).isoformat()),
+    }
 
 
 def _scalar(conn: psycopg.Connection, sql: str, params: tuple = ()):
@@ -998,6 +1025,7 @@ class DbSymGateway:
             "variant": variant or None,
             "n_levels": len(series),
             "since_start_return": since_start,
+            "trailing": _trailing_returns(series),
             "series": series,
         }
 
