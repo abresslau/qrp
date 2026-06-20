@@ -132,6 +132,52 @@ describe("PortfolioPivot", () => {
     expect(screen.getByRole("button", { name: /Daily P&L/ }).textContent?.trim()).toBe("Daily P&L");
   });
 
+  // --- drag-to-reorder columns (Pointer Events) --------------------------------------------
+  const th = (name: RegExp) => screen.getByRole("button", { name }).closest("th") as HTMLTableCellElement;
+  const headerText = () => screen.getAllByRole("columnheader").map((h) => h.textContent ?? "");
+  // press the source header, move past the 5px threshold onto the target, release on the target
+  const dragColumn = (from: HTMLElement, to: HTMLElement) => {
+    fireEvent.pointerDown(from, { button: 0, clientX: 0 });
+    fireEvent.pointerMove(to, { clientX: 40 });
+    fireEvent.pointerUp(to, { clientX: 40 });
+  };
+
+  it("renders the canonical column order on first render", () => {
+    render(<PortfolioPivot data={COMP} />);
+    const h = headerText();
+    expect(h[0]).toContain("Ticker");
+    expect(h[h.length - 1]).toContain("Volume");
+  });
+
+  it("reorders columns by dragging a header — header and body stay in sync", () => {
+    render(<PortfolioPivot data={COMP} />);
+    // drag Volume (last) and drop it onto Ticker (first) -> Volume becomes the first column
+    dragColumn(th(/Volume/), th(/Ticker/));
+    expect(headerText()[0]).toContain("Volume");
+    // the stock-row cells follow the same order: AAPL row now leads with its volume cell (1.0M), ticker second
+    const cells = Array.from(screen.getByText("AAPL").closest("tr")!.querySelectorAll("td")).map((td) => td.textContent);
+    expect(cells[0]).toBe("1.0M"); // volume (1_000_000) now first
+    expect(cells[1]).toContain("AAPL"); // ticker second
+  });
+
+  it("keeps aggregate totals under their column after a reorder", () => {
+    render(<PortfolioPivot data={COMP} />);
+    // move Wt to the end (drop on Volume); the grand-total weight % (fixture total_weight 1.2 -> 120.0%)
+    // and the Daily P&L total (+3.30%) must still render after the reorder
+    dragColumn(th(/Wt/), th(/Volume/));
+    const totalRow = screen.getByText(/Total · 3 holdings/).closest("tr")!.textContent;
+    expect(totalRow).toContain("120.0%"); // weight total still rendered (its cell followed the Wt column)
+    expect(totalRow).toContain("+3.30%"); // Daily P&L total still rendered
+  });
+
+  it("still sorts on a plain header click after the drag machinery is added", () => {
+    render(<PortfolioPivot data={COMP} />);
+    const order = () => screen.getAllByRole("row").map((r) => r.textContent ?? "");
+    const idx = (rows: string[], t: string) => rows.findIndex((x) => x.includes(t));
+    fireEvent.click(screen.getByRole("button", { name: /Ticker/ })); // sort by ticker asc
+    expect(idx(order(), "AAPL")).toBeLessThan(idx(order(), "INTC"));
+  });
+
   it("shows an empty state with no holdings", () => {
     render(<PortfolioPivot data={{ ...COMP, holdings: [] }} />);
     expect(screen.getByText(/No holdings yet/)).toBeInTheDocument();

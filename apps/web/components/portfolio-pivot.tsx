@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type PointerEvent as ReactPointerEvent, type ReactNode, useRef, useState } from "react";
 
 import { type Composition, type CompositionHolding } from "@/components/portfolio-heatmap";
 import { fmtCompact, fmtPrice } from "@/lib/format";
@@ -142,12 +142,18 @@ function SortableTh({
   align,
   sorts,
   onSort,
+  onColPointerDown,
+  dragging,
+  dragOver,
 }: {
   label: string;
   sortKey: string;
   align: "left" | "right" | "center";
   sorts: Sort[];
   onSort: (key: string, defaultDir: SortDir, additive: boolean) => void;
+  onColPointerDown: (e: ReactPointerEvent, id: string) => void;
+  dragging: boolean;
+  dragOver: boolean;
 }) {
   const i = sorts.findIndex((s) => s.key === sortKey);
   const active = i >= 0;
@@ -158,10 +164,15 @@ function SortableTh({
   const arrow = active ? (dir === "asc" ? "▲" : "▼") : "";
   const priority = active && sorts.length > 1 ? String(i + 1) : ""; // shown only for multi-sort
   return (
-    <th className={`px-2 py-1.5 font-medium ${alignCls}`} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+    <th
+      data-col-id={sortKey}
+      onPointerDown={(e) => onColPointerDown(e, sortKey)}
+      className={`cursor-grab select-none px-2 py-1.5 font-medium ${alignCls} ${dragging ? "opacity-40" : ""} ${dragOver ? "border-l-2 border-fg/70" : ""}`}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+    >
       <button
         type="button"
-        title="Click to sort; Ctrl/Cmd-click to add a secondary sort"
+        title="Click to sort; Ctrl/Cmd-click to add a secondary sort; drag to reorder columns"
         onClick={(e) => onSort(sortKey, defaultDir, e.ctrlKey || e.metaKey)}
         className={`flex w-full items-center gap-1 ${justify} hover:text-fg ${active ? "text-fg" : ""}`}
       >
@@ -172,11 +183,97 @@ function SortableTh({
   );
 }
 
+// --- column registry: one source of column identity + order, driving header + every body row -----
+type ColAlign = "left" | "right" | "center";
+type Column = { id: string; label: string; align: ColAlign; cell: (h: CompositionHolding) => ReactNode };
+
+// `cell` returns the full <td> (keyed by id) so per-column classes + value coloring stay intact.
+const COLUMNS: Column[] = [
+  { id: "ticker", label: "Ticker", align: "left",
+    cell: (h) => <td key="ticker" className="px-2 py-1 font-medium text-fg">{h.ticker ?? h.figi}</td> },
+  { id: "name", label: "Name", align: "left",
+    cell: (h) => <td key="name" className="max-w-[16rem] truncate px-2 py-1 text-muted" title={h.name ?? ""}>{h.name ?? "—"}</td> },
+  { id: "country", label: "Country", align: "left",
+    cell: (h) => <td key="country" className="px-2 py-1 text-muted">{h.country ?? "—"}</td> },
+  { id: "mic", label: "Exch", align: "left",
+    cell: (h) => <td key="mic" className="px-2 py-1 text-muted">{h.mic ?? "—"}</td> },
+  { id: "currency", label: "Ccy", align: "left",
+    cell: (h) => <td key="currency" className="px-2 py-1 text-muted">{h.currency ?? "—"}</td> },
+  { id: "weight", label: "Wt", align: "right",
+    cell: (h) => <td key="weight" className="px-2 py-1 text-right tabular-nums text-fg">{wpct(h.weight)}</td> },
+  { id: "price", label: "Price", align: "right",
+    cell: (h) => <td key="price" className="px-2 py-1 text-right tabular-nums text-fg">{fmtPrice(h.price, h.currency)}</td> },
+  ...WINDOWS.map((w): Column => ({
+    id: `ret:${w.key}`, label: w.label, align: "right",
+    cell: (h) => {
+      const r = h.window_returns?.[w.key] ?? null;
+      return <td key={`ret:${w.key}`} className={`px-2 py-1 text-right tabular-nums ${retClass(r)}`}>{pct(r)}</td>;
+    },
+  })),
+  { id: "range", label: "52-week range", align: "center",
+    cell: (h) => (
+      <td key="range" className="px-2 py-1">
+        <RangeBar low={h.low_52w} high={h.high_52w} pct={h.range_pct} currency={h.currency} />
+      </td>
+    ) },
+  ...PNL_COLS.map(({ label, win }): Column => ({
+    id: `pnl:${win}`, label, align: "right",
+    cell: (h) => {
+      const c = PnlAccess(h, win);
+      return <td key={`pnl:${win}`} className={`px-2 py-1 text-right tabular-nums ${retClass(c)}`}>{pct(c)}</td>;
+    },
+  })),
+  { id: "mcap", label: "Mkt cap", align: "right",
+    cell: (h) => <td key="mcap" className="px-2 py-1 text-right tabular-nums text-muted">{h.market_cap_usd == null ? "—" : `$${fmtCompact(h.market_cap_usd)}`}</td> },
+  { id: "volume", label: "Volume", align: "right",
+    cell: (h) => <td key="volume" className="px-2 py-1 text-right tabular-nums text-muted">{fmtCompact(h.volume)}</td> },
+];
+const DEFAULT_COLUMN_ORDER = COLUMNS.map((c) => c.id);
+const COLUMN_BY_ID: Record<string, Column> = Object.fromEntries(COLUMNS.map((c) => [c.id, c]));
+// The aggregate rows (grand-total, sector subtotal) carry a value ONLY for weight + the P&L columns.
+const isAggCol = (id: string) => id === "weight" || id.startsWith("pnl:");
+
+// Per-column cell for the sector-subtotal row (weight % of the book + Σ P&L; blank otherwise).
+function subtotalCell(id: string, wt: number, gross: number, pnls: Record<string, number>): ReactNode {
+  if (id === "weight")
+    return (
+      <td key="weight" className="px-2 py-1 text-right font-semibold tabular-nums text-fg">
+        {gross > 0 ? `${((wt / gross) * 100).toFixed(1)}%` : "—"}
+      </td>
+    );
+  if (id.startsWith("pnl:")) {
+    const v = pnls[id.slice(4)];
+    return <td key={id} className={`px-2 py-1 text-right font-semibold tabular-nums ${retClass(v)}`}>{pct(v)}</td>;
+  }
+  return <td key={id} className="px-2 py-1" />;
+}
+
+// Per-column cell for the grand-total row (total book weight + Σ P&L; blank otherwise).
+function totalCell(id: string, totalWeight: number, totalPnls: Record<string, number>): ReactNode {
+  if (id === "weight")
+    return <td key="weight" className="px-2 py-1.5 text-right tabular-nums">{wpct(totalWeight)}</td>;
+  if (id.startsWith("pnl:")) {
+    const v = totalPnls[id.slice(4)];
+    return <td key={id} className={`px-2 py-1.5 text-right tabular-nums ${retClass(v)}`}>{pct(v)}</td>;
+  }
+  return <td key={id} className="px-2 py-1.5" />;
+}
+
+// The group/total label spans the leading non-aggregated columns; if an aggregated column was dragged
+// to the front it falls back to a single leading cell (its aggregate value yields to the label there).
+function labelSpan(order: string[]): number {
+  const firstAgg = order.findIndex(isAggCol);
+  return firstAgg > 0 ? firstAgg : 1;
+}
+
 export function PortfolioPivot({ data }: { data: Composition | null }) {
   // Ordered list of sort keys (index 0 = primary). Default = largest positions first (gross weight
   // desc), matching the book convention. Plain click sets a single sort; Ctrl/Cmd-click adds/toggles.
   const [sorts, setSorts] = useState<Sort[]>([{ key: "weight", dir: "desc" }]);
-  const onSort = (key: string, defaultDir: SortDir, additive: boolean) =>
+  // Set true while a column-drag is resolving so the trailing click doesn't also trigger a sort.
+  const suppressClickRef = useRef(false);
+  const onSort = (key: string, defaultDir: SortDir, additive: boolean) => {
+    if (suppressClickRef.current) return;
     setSorts((prev) => {
       const i = prev.findIndex((s) => s.key === key);
       if (additive) {
@@ -190,6 +287,61 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
         ? [{ key, dir: prev[0].dir === "asc" ? "desc" : "asc" }]
         : [{ key, dir: defaultDir }];
     });
+  };
+
+  // Column order (in-memory) + drag-to-reorder. `order` drives the header AND every body row, so they
+  // can never diverge. We use Pointer Events (not the native HTML5 drag API, which doesn't reliably
+  // start a drag from inside the header's <button>): press a header and move past a small threshold to
+  // begin dragging; the column under the pointer is the drop target; releasing inserts the dragged
+  // column before it. A drag suppresses the trailing click so it doesn't also sort.
+  const [order, setOrder] = useState<string[]>(DEFAULT_COLUMN_ORDER);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const dragRef = useRef<{ id: string; startX: number; started: boolean } | null>(null);
+
+  const colUnder = (ev: PointerEvent): string | null => {
+    const th = (ev.target as HTMLElement | null)?.closest?.("th[data-col-id]") as HTMLElement | null;
+    return th?.dataset.colId ?? null;
+  };
+  const onColPointerDown = (e: ReactPointerEvent, id: string) => {
+    if (e.button > 0) return; // ignore right/middle button (left = 0; undefined in jsdom passes)
+    dragRef.current = { id, startX: e.clientX, started: false };
+    const onMove = (ev: PointerEvent) => {
+      const st = dragRef.current;
+      if (!st) return;
+      if (!st.started) {
+        if (Math.abs(ev.clientX - st.startX) < 5) return; // movement threshold separates click from drag
+        st.started = true;
+        setDraggingId(st.id);
+      }
+      ev.preventDefault();
+      setDragOverId(colUnder(ev));
+    };
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      const st = dragRef.current;
+      dragRef.current = null;
+      setDraggingId(null);
+      setDragOverId(null);
+      if (!st || !st.started) return; // it was a click, not a drag → let the sort handler run
+      const targetId = colUnder(ev);
+      if (!targetId || targetId === st.id) return;
+      suppressClickRef.current = true; // a real drag happened → swallow the trailing click
+      window.setTimeout(() => {
+        suppressClickRef.current = false;
+      }, 0);
+      setOrder((prev) => {
+        const next = prev.filter((x) => x !== st.id);
+        const ti = next.indexOf(targetId);
+        if (ti < 0) return prev;
+        next.splice(ti, 0, st.id); // insert before the drop target
+        return next;
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   if (!data?.holdings?.length) {
     return <p className="text-sm text-muted">No holdings yet — upload a weight vector to see the breakdown.</p>;
@@ -226,46 +378,38 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
       <table className="w-full min-w-[72rem] text-xs">
         <thead className="border-b border-border bg-fg/5 text-left text-muted">
           <tr>
-            {/* text columns left, numeric columns right, the 52-week range bar centered; every
-                column is click-to-sort (sorts rows within each sector) */}
-            <SortableTh label="Ticker" sortKey="ticker" align="left" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Name" sortKey="name" align="left" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Country" sortKey="country" align="left" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Exch" sortKey="mic" align="left" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Ccy" sortKey="currency" align="left" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Wt" sortKey="weight" align="right" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Price" sortKey="price" align="right" sorts={sorts} onSort={onSort} />
-            {WINDOWS.map((w) => (
-              <SortableTh key={w.key} label={w.label} sortKey={`ret:${w.key}`} align="right" sorts={sorts} onSort={onSort} />
-            ))}
-            <SortableTh label="52-week range" sortKey="range" align="center" sorts={sorts} onSort={onSort} />
-            {PNL_COLS.map(({ label, win }) => (
-              <SortableTh key={win} label={label} sortKey={`pnl:${win}`} align="right" sorts={sorts} onSort={onSort} />
-            ))}
-            <SortableTh label="Mkt cap" sortKey="mcap" align="right" sorts={sorts} onSort={onSort} />
-            <SortableTh label="Volume" sortKey="volume" align="right" sorts={sorts} onSort={onSort} />
+            {/* Columns are rendered in `order` (drag a header to reorder). Each is click-to-sort
+                (sorts rows within each sector) and draggable. Alignment: text left, numeric right,
+                52-week range centered. */}
+            {order.map((id) => {
+              const col = COLUMN_BY_ID[id];
+              return (
+                <SortableTh
+                  key={id}
+                  label={col.label}
+                  sortKey={col.id}
+                  align={col.align}
+                  sorts={sorts}
+                  onSort={onSort}
+                  onColPointerDown={onColPointerDown}
+                  dragging={draggingId === id}
+                  dragOver={dragOverId === id}
+                />
+              );
+            })}
           </tr>
         </thead>
         <tbody>
           {/* Grand total pinned at the TOP of the grid (above the sector groups) so the book's
               weight + Daily/MTD/YTD P&L read first, before scrolling the per-name rows. */}
           <tr className="border-b-2 border-border bg-fg/5 font-semibold">
-            <td className="px-2 py-1.5" colSpan={5}>
+            <td className="px-2 py-1.5" colSpan={labelSpan(order)}>
               Total · {data.n_holdings} holdings
             </td>
-            <td className="px-2 py-1.5 text-right tabular-nums">{wpct(data.total_weight)}</td>
-            {/* blank span over Price + 1D/1M/3M/6M + 52W Range (none aggregate) */}
-            <td className="px-2 py-1.5" colSpan={6} />
-            {PNL_COLS.map(({ win }) => (
-              <td key={win} className={`px-2 py-1.5 text-right tabular-nums ${retClass(totalPnls[win])}`}>
-                {pct(totalPnls[win])}
-              </td>
-            ))}
-            {/* blank span over Mkt cap + Volume */}
-            <td className="px-2 py-1.5" colSpan={2} />
+            {order.slice(labelSpan(order)).map((id) => totalCell(id, data.total_weight, totalPnls))}
           </tr>
           {sectors.map(({ sector, hs, wt, pnls }) => (
-            <SectorGroup key={sector} sector={sector} hs={hs} wt={wt} pnls={pnls} gross={data.total_weight} pnlOf={pnlOf} />
+            <SectorGroup key={sector} sector={sector} hs={hs} wt={wt} pnls={pnls} gross={data.total_weight} order={order} />
           ))}
         </tbody>
       </table>
@@ -279,66 +423,30 @@ function SectorGroup({
   wt,
   pnls,
   gross,
-  pnlOf,
+  order,
 }: {
   sector: string;
   hs: CompositionHolding[];
   wt: number;
   pnls: Record<string, number>;
   gross: number;
-  pnlOf: (h: CompositionHolding, win: string) => number | null;
+  order: string[];
 }) {
+  const span = labelSpan(order);
   return (
     <>
       {/* sector subtotal row (the pivot grouping) — sums WEIGHT and the P&L contributions only; the
-          return windows are left blank (summing returns is meaningless). */}
+          return windows are left blank (summing returns is meaningless). Per-column cells follow the
+          live column order; the label spans the leading non-aggregated columns. */}
       <tr className="border-y border-border bg-bg/40 text-[11px] uppercase tracking-wide text-muted">
-        <td className="px-2 py-1 font-semibold text-fg" colSpan={5}>
+        <td className="px-2 py-1 font-semibold text-fg" colSpan={span}>
           {sector} <span className="font-normal text-muted">· {hs.length}</span>
         </td>
-        <td className="px-2 py-1 text-right font-semibold tabular-nums text-fg">
-          {gross > 0 ? `${((wt / gross) * 100).toFixed(1)}%` : "—"}
-        </td>
-        {/* blank span over Price + 1D/1M/3M/6M + 52W Range */}
-        <td colSpan={6} />
-        {PNL_COLS.map(({ win }) => (
-          <td key={win} className={`px-2 py-1 text-right font-semibold tabular-nums ${retClass(pnls[win])}`}>
-            {pct(pnls[win])}
-          </td>
-        ))}
-        {/* blank span over Mkt cap + Volume */}
-        <td colSpan={2} />
+        {order.slice(span).map((id) => subtotalCell(id, wt, gross, pnls))}
       </tr>
       {hs.map((h) => (
         <tr key={h.figi} className="border-b border-border/50 hover:bg-fg/5">
-          <td className="px-2 py-1 font-medium text-fg">{h.ticker ?? h.figi}</td>
-          <td className="max-w-[16rem] truncate px-2 py-1 text-muted" title={h.name ?? ""}>{h.name ?? "—"}</td>
-          <td className="px-2 py-1 text-muted">{h.country ?? "—"}</td>
-          <td className="px-2 py-1 text-muted">{h.mic ?? "—"}</td>
-          <td className="px-2 py-1 text-muted">{h.currency ?? "—"}</td>
-          <td className="px-2 py-1 text-right tabular-nums text-fg">{wpct(h.weight)}</td>
-          <td className="px-2 py-1 text-right tabular-nums text-fg">{fmtPrice(h.price, h.currency)}</td>
-          {WINDOWS.map((w) => {
-            const r = h.window_returns?.[w.key] ?? null;
-            return (
-              <td key={w.key} className={`px-2 py-1 text-right tabular-nums ${retClass(r)}`}>
-                {pct(r)}
-              </td>
-            );
-          })}
-          <td className="px-2 py-1">
-            <RangeBar low={h.low_52w} high={h.high_52w} pct={h.range_pct} currency={h.currency} />
-          </td>
-          {PNL_COLS.map(({ win }) => {
-            const c = pnlOf(h, win);
-            return (
-              <td key={win} className={`px-2 py-1 text-right tabular-nums ${retClass(c)}`}>
-                {pct(c)}
-              </td>
-            );
-          })}
-          <td className="px-2 py-1 text-right tabular-nums text-muted">{h.market_cap_usd == null ? "—" : `$${fmtCompact(h.market_cap_usd)}`}</td>
-          <td className="px-2 py-1 text-right tabular-nums text-muted">{fmtCompact(h.volume)}</td>
+          {order.map((id) => COLUMN_BY_ID[id].cell(h))}
         </tr>
       ))}
     </>
