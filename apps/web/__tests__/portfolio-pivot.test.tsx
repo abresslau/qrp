@@ -31,6 +31,23 @@ const COMP: Composition = {
   ],
 };
 
+// A multi-country book so nested grouping has ≥2 DISTINCT inner siblings under one parent (and the
+// same inner label — "United States" — repeats across parents, exercising the path-keyed rows).
+const COMP_MULTI: Composition = {
+  portfolio_id: 2, weights_as_of: "2026-06-05", as_of: null, freshness: "live",
+  n_holdings: 4, n_priced: 4, total_weight: 1.0, net_weight: 1.0,
+  holdings: [
+    holding({ figi: "M1", ticker: "AAPL", sector: "Tech", country: "United States", weight: 0.4 }),
+    holding({ figi: "M2", ticker: "SAP", sector: "Tech", country: "Germany", weight: 0.3 }),
+    holding({ figi: "M3", ticker: "XOM", sector: "Energy", country: "United States", weight: 0.2 }),
+    holding({ figi: "M4", ticker: "EQNR", sector: "Energy", country: "Norway", weight: 0.1 }),
+  ],
+  sectors: [
+    { sector: "Tech", weight: 0.7, n: 2, live_return: 0 },
+    { sector: "Energy", weight: 0.3, n: 2, live_return: 0 },
+  ],
+};
+
 describe("PortfolioPivot", () => {
   it("renders FLAT (ungrouped) by default with a Sector column + Daily P&L grand total", () => {
     render(<PortfolioPivot data={COMP} />);
@@ -197,7 +214,9 @@ describe("PortfolioPivot", () => {
     // grouped by sector: + a "Tech · 2" and an "Energy · 1" subtotal row → 7 rows
     expect(screen.getAllByRole("row")).toHaveLength(7);
     expect(screen.getByText(/· 2/)).toBeInTheDocument(); // Tech group has 2 holdings
-    expect(screen.getByRole("button", { name: /clear grouping/i })).toBeInTheDocument(); // ✕ on the grouped header
+    expect(screen.getByRole("button", { name: /clear grouping/i })).toBeInTheDocument(); // ✕ chip in the breadcrumb
+    // the grouped Sector column is now HIDDEN from the grid (shown in the breadcrumb instead)
+    expect(screen.queryByRole("columnheader", { name: /Sector/ })).toBeNull();
   });
 
   it("returns to flat when the grouped header's ✕ is clicked", () => {
@@ -206,6 +225,74 @@ describe("PortfolioPivot", () => {
     expect(screen.getAllByRole("row")).toHaveLength(7);
     fireEvent.click(screen.getByRole("button", { name: /clear grouping/i }));
     expect(screen.getAllByRole("row")).toHaveLength(5); // back to flat
+  });
+
+  // --- multi-level (nested) grouping: drag a 2nd column onto the strip to add a nesting level ----
+  it("nests when a SECOND column header is dragged onto the zone (Sector → Country)", () => {
+    render(<PortfolioPivot data={COMP} />);
+    dragToZone(th(/Sector/)); // level 1: by sector → header+total+Tech·2+AAPL+INTC+Energy·1+XOM = 7 rows
+    expect(screen.getAllByRole("row")).toHaveLength(7);
+    dragToZone(th(/Country/)); // level 2: Country nested within Sector → +2 country subtotals = 9 rows
+    expect(screen.getAllByRole("row")).toHaveLength(9);
+    // 4 subtotal rows now: Tech·2 + (US·2 under Tech) + Energy·1 + (US·1 under Energy)
+    expect(screen.getAllByText(/· 2/)).toHaveLength(2); // Tech subtree + United-States-under-Tech
+    expect(screen.getAllByText(/· 1/)).toHaveLength(2); // Energy subtree + United-States-under-Energy
+    // both grouped headers carry an ✕
+    expect(screen.getAllByRole("button", { name: /clear grouping/i })).toHaveLength(2);
+  });
+
+  it("removes ONE nesting level when a breadcrumb chip's ✕ is clicked (outer level)", () => {
+    render(<PortfolioPivot data={COMP} />);
+    dragToZone(th(/Sector/));
+    dragToZone(th(/Country/));
+    expect(screen.getAllByRole("row")).toHaveLength(9);
+    // grouped columns are hidden from the grid; ungroup lives in the breadcrumb chips.
+    // the Sector chip's ✕ removes ONLY the sector level → single-level by Country
+    fireEvent.click(screen.getByRole("button", { name: /clear grouping Sector/i }));
+    // grouped by country alone: all 3 holdings are "United States" → 1 subtotal + 3 holdings + header + total = 6
+    expect(screen.getAllByRole("row")).toHaveLength(6);
+    expect(screen.getAllByRole("button", { name: /clear grouping/i })).toHaveLength(1); // only the Country chip now
+    expect(screen.queryByRole("button", { name: /clear grouping Country/i })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /clear grouping Sector/i })).toBeNull();
+    // Country (still grouped) is hidden; Sector (ungrouped) is visible again
+    expect(screen.queryByRole("columnheader", { name: /Country/ })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /Sector/ })).not.toBeNull();
+  });
+
+  it("nests DISTINCT inner groups under a parent, ordered by gross weight desc (Sector → Country)", () => {
+    render(<PortfolioPivot data={COMP_MULTI} />);
+    dragToZone(th(/Sector/));
+    dragToZone(th(/Country/));
+    // 6 subtotal rows: Tech·2 → [US·1, Germany·1]; Energy·2 → [US·1, Norway·1]
+    // + header + total + 4 holdings = 12 rows
+    expect(screen.getAllByRole("row")).toHaveLength(12);
+    // grouped columns hidden → these labels appear ONLY in subtotal rows (unambiguous)
+    const rows = screen.getAllByRole("row").map((r) => r.textContent ?? "");
+    const idx = (t: string) => rows.findIndex((x) => x.includes(t));
+    // outer order: Tech subtree (0.7) before Energy subtree (0.3)
+    expect(idx("Tech")).toBeLessThan(idx("Energy"));
+    // INNER order within Tech: United States (0.4) before Germany (0.3) — proves per-level weight-desc sort
+    expect(idx("United States")).toBeLessThan(idx("Germany"));
+    expect(idx("Germany")).toBeLessThan(idx("Energy")); // Germany still inside the Tech subtree
+    expect(idx("Norway")).toBeGreaterThan(idx("Energy")); // Norway nested under Energy
+    // both distinct inner siblings rendered under Tech
+    expect(screen.getByText("Germany")).toBeInTheDocument();
+    expect(screen.getByText("Norway")).toBeInTheDocument();
+  });
+
+  it("removes the INNER nesting level when its breadcrumb chip ✕ is clicked", () => {
+    render(<PortfolioPivot data={COMP} />);
+    dragToZone(th(/Sector/));
+    dragToZone(th(/Country/));
+    expect(screen.getAllByRole("row")).toHaveLength(9);
+    // the Country chip's ✕ removes ONLY the inner level → single-level by Sector
+    fireEvent.click(screen.getByRole("button", { name: /clear grouping Country/i }));
+    expect(screen.getAllByRole("row")).toHaveLength(7); // single-level by Sector (Tech·2 + Energy·1)
+    expect(screen.queryByRole("button", { name: /clear grouping Sector/i })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: /clear grouping Country/i })).toBeNull();
+    // Sector (still grouped) hidden; Country (ungrouped) visible again
+    expect(screen.queryByRole("columnheader", { name: /Sector/ })).toBeNull();
+    expect(screen.queryByRole("columnheader", { name: /Country/ })).not.toBeNull();
   });
 
   it("shows an empty state with no holdings", () => {

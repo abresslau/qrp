@@ -388,3 +388,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of portfolios-grid-pivot-grouping (2026-06-20)
 
 - Group weight % uses Σ|weight| over a signed `total_weight` denominator (`portfolio-pivot.tsx:427` group `.map`, `subtotalCell` `wt/gross`). Pre-existing — the old `SectorGroup` aggregated identically. Only diverges for long-short books (gross |weight| vs net signed total); harmless for long-only. Revisit if/when short positions land in the live grid.
+
+## Deferred from: code review of portfolios-nested-grouping (2026-06-20)
+
+- `labelSpan` floors at 1 (`portfolio-pivot.tsx`): when ALL leading non-aggregate columns are grouped (≥6-level nesting) — or an aggregate column is reordered to the front — the subtotal/grand-total WEIGHT % is subsumed under the label cell and not displayed. Column count stays aligned (colSpan preserves the other columns), and it matches the documented labelSpan fallback for "aggregate dragged to front". Only triggers at contrived deep nesting; realistic 2–3-level grouping (sector→country→ccy) keeps ticker/name/mic leading and is unaffected. Revisit if deep nesting becomes common — e.g. clamp the label to a visible non-agg column or render the weight total in a pinned cell.

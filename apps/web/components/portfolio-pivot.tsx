@@ -1,6 +1,6 @@
 "use client";
 
-import { type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { Fragment, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type Composition, type CompositionHolding } from "@/components/portfolio-heatmap";
 import { fmtCompact, fmtPrice } from "@/lib/format";
@@ -147,8 +147,6 @@ function SortableTh({
   onColPointerDown,
   dragging,
   dragOver,
-  grouped,
-  onClearGroup,
 }: {
   label: string;
   sortKey: string;
@@ -158,8 +156,6 @@ function SortableTh({
   onColPointerDown: (e: ReactPointerEvent, id: string) => void;
   dragging: boolean;
   dragOver: boolean;
-  grouped: boolean;
-  onClearGroup: () => void;
 }) {
   const i = sorts.findIndex((s) => s.key === sortKey);
   const active = i >= 0;
@@ -173,7 +169,7 @@ function SortableTh({
     <th
       data-col-id={sortKey}
       onPointerDown={(e) => onColPointerDown(e, sortKey)}
-      className={`cursor-grab select-none px-2 py-1.5 font-medium ${alignCls} ${dragging ? "opacity-40" : ""} ${dragOver ? "border-l-2 border-fg/70" : ""} ${grouped ? "bg-fg/10" : ""}`}
+      className={`cursor-grab select-none px-2 py-1.5 font-medium ${alignCls} ${dragging ? "opacity-40" : ""} ${dragOver ? "border-l-2 border-fg/70" : ""}`}
       aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
     >
       <div className="flex w-full items-center gap-1">
@@ -186,20 +182,6 @@ function SortableTh({
         <span>{label}</span>
         <span className="text-[9px] leading-none tabular-nums">{arrow}{priority ? ` ${priority}` : ""}</span>
         </button>
-        {grouped ? (
-          <button
-            type="button"
-            aria-label="clear grouping"
-            title={`Grouped by ${label} — click to ungroup`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onClearGroup();
-            }}
-            className="shrink-0 leading-none text-fg hover:text-rose-500"
-          >
-            ✕
-          </button>
-        ) : null}
       </div>
     </th>
   );
@@ -290,6 +272,46 @@ function labelSpan(order: string[]): number {
   return firstAgg > 0 ? firstAgg : 1;
 }
 
+// A node in the (possibly nested) grouping tree. Internal nodes carry `children`; leaf nodes (deepest
+// level) carry the sorted `hs`. `count` = total holdings in the subtree; `wt`/`pnls` = Σ over them.
+type GroupNode = {
+  label: string;
+  wt: number;
+  pnls: Record<string, number>;
+  count: number;
+  children: GroupNode[] | null;
+  hs: CompositionHolding[] | null;
+};
+
+// Recursively group `holdings` by the ordered `keys` (column ids). Level 0 partitions by keys[0]
+// (null value → the "—" bucket), each bucket recurses on the remaining keys; at keys.length===0 the
+// node is a leaf holding the holdings sorted by `sorts`. Siblings at every level ordered by gross
+// weight desc (the book convention). The group key reuses `sortValue` — the single per-column accessor.
+function buildGroups(holdings: CompositionHolding[], keys: string[], sorts: Sort[]): GroupNode[] {
+  const [key, ...rest] = keys;
+  const buckets: Record<string, CompositionHolding[]> = {};
+  for (const h of holdings) {
+    const k = String(sortValue(h, key) ?? "—");
+    (buckets[k] ||= []).push(h);
+  }
+  const isLeaf = rest.length === 0;
+  return Object.entries(buckets)
+    .map(([label, rows]) => {
+      const wt = rows.reduce((s, h) => s + Math.abs(h.weight), 0);
+      const pnls: Record<string, number> = {};
+      for (const { win } of PNL_COLS) pnls[win] = rows.reduce((s, h) => s + (PnlAccess(h, win) ?? 0), 0);
+      return {
+        label,
+        wt,
+        pnls,
+        count: rows.length,
+        children: isLeaf ? null : buildGroups(rows, rest, sorts),
+        hs: isLeaf ? rows.slice().sort((a, b) => compareHoldings(a, b, sorts)) : null,
+      };
+    })
+    .sort((a, b) => b.wt - a.wt);
+}
+
 export function PortfolioPivot({ data }: { data: Composition | null }) {
   // Ordered list of sort keys (index 0 = primary). Default = largest positions first (gross weight
   // desc), matching the book convention. Plain click sets a single sort; Ctrl/Cmd-click adds/toggles.
@@ -321,8 +343,9 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   const [order, setOrder] = useState<string[]>(DEFAULT_COLUMN_ORDER);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
-  // Grouping: null = FLAT (default). A column id groups the rows by that column's value (a pivot).
-  const [groupBy, setGroupBy] = useState<string | null>(null);
+  // Grouping: an ORDERED list of column ids (a nested pivot). [] = FLAT (default). Index 0 = outermost
+  // level; each later id nests within the previous (e.g. ["sector","country"] = Country within Sector).
+  const [groupBy, setGroupBy] = useState<string[]>([]);
   const [dragOverZone, setDragOverZone] = useState(false); // header being dragged over the group-by zone
   const dragRef = useRef<{ id: string; startX: number; started: boolean } | null>(null);
   const dragCleanupRef = useRef<(() => void) | null>(null);
@@ -373,10 +396,11 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
         }, 0);
       };
       if (overZone) {
-        // Dropped on the group-by zone → group by this column (no-op for non-categorical columns).
+        // Dropped on the group-by zone → ADD this column as a nesting level (no-op for non-categorical
+        // columns, or if it's already a level). Appending nests it within the existing levels.
         if (isGroupable(st.id)) {
           swallowClick();
-          setGroupBy(st.id);
+          setGroupBy((prev) => (prev.includes(st.id) ? prev : [...prev, st.id]));
         }
         return; // a zone drop never reorders
       }
@@ -411,27 +435,15 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   // sector subtotal and grand total are the plain Σ over the group; a missing return contributes nothing.
   // (Uses the module-level `PnlAccess` — the single source of the formula, shared with the cell renderers.)
 
-  // FLAT by default; if `groupBy` is set, group rows by that column's value (a pivot), groups ordered
-  // by gross weight desc, holdings within each group by the active sort. Grouping by `sector`
-  // reproduces the original sector view. The group key reuses `sortValue` (the per-column accessor).
+  // FLAT by default; if `groupBy` has ≥1 level, build the (nested) grouping tree — groups ordered by
+  // gross weight desc at every level, leaf holdings by the active sort. ["sector"] reproduces the
+  // original single-level sector view; ["sector","country"] nests Country within Sector; etc.
   const sortedFlat = data.holdings.slice().sort((a, b) => compareHoldings(a, b, sorts));
-  const groups = groupBy
-    ? Object.entries(
-        data.holdings.reduce<Record<string, CompositionHolding[]>>((acc, h) => {
-          const k = String(sortValue(h, groupBy) ?? "—");
-          (acc[k] ||= []).push(h);
-          return acc;
-        }, {}),
-      )
-        .map(([label, rows]) => {
-          const hs = rows.slice().sort((a, b) => compareHoldings(a, b, sorts));
-          const wt = hs.reduce((s, h) => s + Math.abs(h.weight), 0);
-          const pnls: Record<string, number> = {};
-          for (const { win } of PNL_COLS) pnls[win] = hs.reduce((s, h) => s + (PnlAccess(h, win) ?? 0), 0);
-          return { label, hs, wt, pnls };
-        })
-        .sort((a, b) => b.wt - a.wt)
-    : null;
+  const groups = groupBy.length > 0 ? buildGroups(data.holdings, groupBy, sorts) : null;
+  // Grouped columns are HIDDEN from the grid body (their value is shown in the subtotal labels +
+  // the grouping breadcrumb); `visibleOrder` drives the header AND every body/subtotal/total row so
+  // they stay column-aligned. Flat → visibleOrder === order (nothing hidden).
+  const visibleOrder = groupBy.length > 0 ? order.filter((id) => !groupBy.includes(id)) : order;
 
   const totalPnls: Record<string, number> = {};
   for (const { win } of PNL_COLS) {
@@ -442,24 +454,51 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
     <div className="relative rounded-xl border border-border bg-surface">
       {/* Group-by zone: a floating overlay shown ONLY while a groupable column header is being dragged
           (no resting row, no reflow). Anchored just ABOVE the card (bottom-full) so it never pushes the
-          table down or covers the header row — drag a header UP onto it to group; drop on another header
-          to reorder. The grouped column's header carries an ✕ to ungroup. */}
+          table down or covers the header row — drag a header UP onto it to add a grouping level; drop on
+          another header to reorder. Grouped columns are hidden, so only ungrouped columns can be dragged. */}
       {draggingId && isGroupable(draggingId) ? (
         <div
           data-groupby-zone
           className={`absolute bottom-full left-0 right-0 z-20 mb-1 flex items-center justify-center gap-2 rounded-lg border border-dashed px-3 py-2 text-xs shadow-lg ${dragOverZone ? "border-fg/60 bg-fg/10 text-fg" : "border-border bg-surface text-muted"}`}
         >
-          ⤓ Drop here to group by {COLUMN_BY_ID[draggingId]?.label ?? draggingId}
+          {groupBy.length === 0
+            ? `⤓ Drop here to group by ${COLUMN_BY_ID[draggingId]?.label ?? draggingId}`
+            : `⤓ Drop here to add ${COLUMN_BY_ID[draggingId]?.label ?? draggingId} as a nesting level`}
+        </div>
+      ) : null}
+      {/* Grouping breadcrumb: shows the active nesting order (outer › inner); each chip's ✕ removes that
+          level. Appears only while grouped — it's where ungroup lives now that grouped columns are hidden. */}
+      {groupBy.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-1.5 text-xs text-muted">
+          <span className="font-medium uppercase tracking-wide">Grouped</span>
+          {groupBy.map((id, i) => (
+            <Fragment key={id}>
+              {i > 0 ? <span className="text-muted/60">›</span> : null}
+              <span className="inline-flex items-center gap-1 rounded-md bg-fg/10 px-2 py-0.5 text-fg">
+                {COLUMN_BY_ID[id]?.label ?? id}
+                <button
+                  type="button"
+                  aria-label={`clear grouping ${COLUMN_BY_ID[id]?.label ?? id}`}
+                  title={`Stop grouping by ${COLUMN_BY_ID[id]?.label ?? id}`}
+                  onClick={() => setGroupBy((prev) => prev.filter((x) => x !== id))}
+                  className="leading-none text-muted hover:text-rose-500"
+                >
+                  ✕
+                </button>
+              </span>
+            </Fragment>
+          ))}
         </div>
       ) : null}
       <div className="overflow-x-auto">
       <table className="w-full min-w-[72rem] text-xs [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
         <thead className="border-b border-border bg-fg/5 text-left text-muted">
           <tr>
-            {/* Columns are rendered in `order` (drag a header to reorder). Each is click-to-sort
-                (orders the flat list, or rows within each group when grouped) and draggable.
-                Alignment: text left, numeric right, 52-week range centered. */}
-            {order.map((id) => {
+            {/* Columns rendered in `visibleOrder` (= `order` minus the grouped columns, which are hidden
+                and shown in the breadcrumb instead). Each is click-to-sort (orders the flat list, or rows
+                within each leaf group when grouped) and draggable. Alignment: text left, numeric right,
+                52-week range centered. */}
+            {visibleOrder.map((id) => {
               const col = COLUMN_BY_ID[id];
               if (!col) return null; // defensive: a stale order id would otherwise crash the table
               return (
@@ -473,8 +512,6 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
                   onColPointerDown={onColPointerDown}
                   dragging={draggingId === id}
                   dragOver={dragOverId === id}
-                  grouped={groupBy === id}
-                  onClearGroup={() => setGroupBy(null)}
                 />
               );
             })}
@@ -484,19 +521,19 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
           {/* Grand total pinned at the TOP of the grid (above the sector groups) so the book's
               weight + Daily/MTD/YTD P&L read first, before scrolling the per-name rows. */}
           <tr className="border-b-2 border-border bg-fg/5 font-semibold">
-            <td className="px-2 py-1.5" colSpan={labelSpan(order)}>
+            <td className="px-2 py-1.5" colSpan={labelSpan(visibleOrder)}>
               Total · {data.n_holdings} holdings
             </td>
-            {order.slice(labelSpan(order)).map((id) => totalCell(id, data.total_weight, totalPnls))}
+            {visibleOrder.slice(labelSpan(visibleOrder)).map((id) => totalCell(id, data.total_weight, totalPnls))}
           </tr>
           {groups
-            ? groups.map(({ label, hs, wt, pnls }) => (
-                <RowGroup key={label} label={label} hs={hs} wt={wt} pnls={pnls} gross={data.total_weight} order={order} />
-              ))
+            ? /* NESTED (pivot): depth-first — a subtotal row per group node at every level (indented
+                 by depth), then its children or, at the leaf, the holding rows. Grouped columns hidden. */
+              renderGroupRows(groups, visibleOrder, data.total_weight, 0, "")
             : /* FLAT (ungrouped): the holdings directly, sorted by the active sort, no group rows. */
               sortedFlat.map((h) => (
                 <tr key={h.figi} className="border-b border-border/50 hover:bg-fg/5">
-                  {order.map((id) => COLUMN_BY_ID[id]?.cell(h) ?? null)}
+                  {visibleOrder.map((id) => COLUMN_BY_ID[id]?.cell(h) ?? null)}
                 </tr>
               ))}
         </tbody>
@@ -506,38 +543,48 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   );
 }
 
-function RowGroup({
-  label,
-  hs,
-  wt,
-  pnls,
-  gross,
-  order,
-}: {
-  label: string;
-  hs: CompositionHolding[];
-  wt: number;
-  pnls: Record<string, number>;
-  gross: number;
-  order: string[];
-}) {
+// Render the (possibly nested) grouping tree depth-first into a flat list of <tr>s: for each node, a
+// subtotal row (label indented by `depth`, + Σweight%/ΣP&L via the existing labelSpan/subtotalCell),
+// then either its child group rows (deeper subtotals) or, at the leaf, the holding rows. React keys
+// encode the FULL ancestor path (`pathKey`) so sibling labels that repeat under different parents
+// (e.g. "United States" under both Tech and Energy) never collide.
+function renderGroupRows(
+  nodes: GroupNode[],
+  order: string[],
+  gross: number,
+  depth: number,
+  pathKey: string,
+): ReactNode[] {
   const span = labelSpan(order);
-  return (
-    <>
-      {/* group subtotal row (the pivot grouping) — sums WEIGHT and the P&L contributions only; the
-          return windows are left blank (summing returns is meaningless). Per-column cells follow the
-          live column order; the label spans the leading non-aggregated columns. */}
-      <tr className="border-y border-border bg-bg/40 text-[11px] uppercase tracking-wide text-muted">
-        <td className="px-2 py-1 font-semibold text-fg" colSpan={span}>
-          {label} <span className="font-normal text-muted">· {hs.length}</span>
+  const rows: ReactNode[] = [];
+  for (const node of nodes) {
+    const path = `${pathKey}/${node.label}`;
+    rows.push(
+      // group subtotal row — sums WEIGHT and the P&L contributions only; the return windows are left
+      // blank (summing returns is meaningless). The label spans the leading non-aggregated columns and
+      // is indented by nesting depth so the hierarchy reads clearly.
+      <tr key={`g:${path}`} className="border-y border-border bg-bg/40 text-[11px] uppercase tracking-wide text-muted">
+        <td
+          className="px-2 py-1 font-semibold text-fg"
+          colSpan={span}
+          style={{ paddingLeft: `${0.5 + depth * 1.25}rem` }}
+        >
+          {node.label} <span className="font-normal text-muted">· {node.count}</span>
         </td>
-        {order.slice(span).map((id) => subtotalCell(id, wt, gross, pnls))}
-      </tr>
-      {hs.map((h) => (
-        <tr key={h.figi} className="border-b border-border/50 hover:bg-fg/5">
-          {order.map((id) => COLUMN_BY_ID[id]?.cell(h) ?? null)}
-        </tr>
-      ))}
-    </>
-  );
+        {order.slice(span).map((id) => subtotalCell(id, node.wt, gross, node.pnls))}
+      </tr>,
+    );
+    if (node.children) {
+      rows.push(...renderGroupRows(node.children, order, gross, depth + 1, path));
+    } else if (node.hs) {
+      for (const h of node.hs) {
+        rows.push(
+          <tr key={`h:${path}/${h.figi}`} className="border-b border-border/50 hover:bg-fg/5">
+            {order.map((id) => COLUMN_BY_ID[id]?.cell(h) ?? null)}
+          </tr>,
+        );
+      }
+    }
+  }
+  return rows;
 }
