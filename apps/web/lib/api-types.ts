@@ -1060,6 +1060,16 @@ export interface components {
             price: number | null;
             /** Live Return */
             live_return: number | null;
+            /** Window Returns */
+            window_returns: {
+                [key: string]: number | null;
+            };
+            /** Low 52W */
+            low_52w: number | null;
+            /** High 52W */
+            high_52w: number | null;
+            /** Range Pct */
+            range_pct: number | null;
             /** Freshness */
             freshness: string;
         };
@@ -1815,6 +1825,10 @@ export interface components {
             created_at: string | null;
             /** N Weights */
             n_weights: number;
+            /** N Snapshots */
+            n_snapshots: number;
+            /** N Holdings */
+            n_holdings: number;
             /** Latest As Of Date */
             latest_as_of_date: string | null;
         };

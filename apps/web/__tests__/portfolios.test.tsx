@@ -20,7 +20,7 @@ function stub() {
       if (url.includes("/api/portfolios"))
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve([{ portfolio_id: 1, name: "Growth", client: "", n_weights: 3, latest_as_of_date: "2026-06-01" }]),
+          json: () => Promise.resolve([{ portfolio_id: 1, name: "Growth", client: "", n_weights: 3, n_snapshots: 1, n_holdings: 3, latest_as_of_date: "2026-06-01" }]),
         });
       return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
     }),
@@ -103,7 +103,7 @@ describe("PortfoliosPage create + race hardening (console hardening)", () => {
           if (pcall === 1) return new Promise((_res, rej) => { rejectMount = rej; }); // mount GET: slow, will fail
           return Promise.resolve({
             ok: true,
-            json: () => Promise.resolve([{ portfolio_id: 1, name: "Growth", client: "", n_weights: 1, latest_as_of_date: "2026-06-01" }]),
+            json: () => Promise.resolve([{ portfolio_id: 1, name: "Growth", client: "", n_weights: 1, n_snapshots: 1, n_holdings: 1, latest_as_of_date: "2026-06-01" }]),
           });
         }
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });

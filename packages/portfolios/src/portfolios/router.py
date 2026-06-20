@@ -61,7 +61,9 @@ class PortfolioSummary(BaseModel):
     client: str
     base_currency: str
     created_at: str | None
-    n_weights: int
+    n_weights: int  # total stored weight rows across all history
+    n_snapshots: int  # distinct as_of dates (weight vectors stored over time)
+    n_holdings: int  # positions in the latest snapshot (what the book holds now)
     latest_as_of_date: str | None
 
 

@@ -221,7 +221,12 @@ export default function PortfoliosPage() {
                   </Link>
                 </td>
                 <td className="px-4 py-2 text-muted">{p.client || "—"}</td>
-                <td className="px-4 py-2 text-right tabular-nums text-muted">{p.n_weights}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-muted">
+                  {p.n_holdings}
+                  {p.n_snapshots > 1 ? (
+                    <span className="text-[11px] opacity-70"> · {p.n_snapshots} snapshots</span>
+                  ) : null}
+                </td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">
                   {p.latest_as_of_date ?? "—"}
                 </td>

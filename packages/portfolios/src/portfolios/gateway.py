@@ -184,6 +184,13 @@ class DbPortfolioGateway:
             SELECT p.portfolio_id, p.name, coalesce(c.name, '') AS client, p.base_currency,
                    p.created_at,
                    count(w.composite_figi) AS n_weights,
+                   count(DISTINCT w.as_of_date) AS n_snapshots,
+                   count(w.composite_figi) FILTER (
+                       WHERE w.as_of_date = (
+                           SELECT max(as_of_date) FROM portfolios.portfolio_weight w2
+                            WHERE w2.portfolio_id = p.portfolio_id
+                       )
+                   ) AS n_holdings,
                    max(w.as_of_date) AS latest_as_of_date
               FROM portfolios.portfolio p
               LEFT JOIN portfolios.client c ON c.client_id = p.client_id
@@ -192,6 +199,9 @@ class DbPortfolioGateway:
              ORDER BY p.created_at DESC
             """
         ).fetchall()
+        # n_weights = total stored weight rows across all history; n_holdings = positions at the
+        # latest snapshot; n_snapshots = distinct as_of dates. The UI shows holdings-at-latest so the
+        # count isn't conflated with history (a 100-name backtest over 12 months has n_weights=1200).
         return [
             {
                 "portfolio_id": pid,
@@ -200,9 +210,11 @@ class DbPortfolioGateway:
                 "base_currency": ccy,
                 "created_at": ca.isoformat() if ca else None,
                 "n_weights": n,
+                "n_snapshots": ns,
+                "n_holdings": nh,
                 "latest_as_of_date": la.isoformat() if la else None,
             }
-            for pid, name, client, ccy, ca, n, la in rows
+            for pid, name, client, ccy, ca, n, ns, nh, la in rows
         ]
 
     def get(self, pid: int, as_of_date: date | None = None) -> dict | None:
