@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Composition } from "@/components/portfolio-heatmap";
+import { fmtPrice } from "@/lib/format";
 
 // Top 10 winners / losers ranked by P&L CONTRIBUTION (weight × return) over the chosen window.
 // Daily = the live composition (Σ contribution rolls up to the top Daily P&L — same source as the
@@ -23,9 +24,6 @@ function pct(r: number | null): string {
 }
 function tone(r: number): string {
   return r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
-}
-function fmtPrice(v: number | null | undefined): string {
-  return v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 function dailyMovers(comp: Composition | null): Mover[] {
@@ -285,7 +283,7 @@ export function PortfolioMovers({ pid, composition }: { pid: string; composition
           <div className="flex items-baseline justify-between">
             <span className="font-semibold">{hover.m.ticker}</span>
             <span className="text-xs tabular-nums text-muted">
-              {hover.m.currency ?? ""} {fmtPrice(lastClose)}
+              {hover.m.currency ?? ""} {fmtPrice(lastClose, hover.m.currency)}
             </span>
           </div>
           {hoverBars === undefined ? (

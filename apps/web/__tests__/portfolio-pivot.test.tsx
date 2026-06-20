@@ -35,7 +35,7 @@ describe("PortfolioPivot", () => {
   it("renders explorer columns, sector groups, per-stock rows and a Daily P&L grand total", () => {
     render(<PortfolioPivot data={COMP} />);
     // explorer-style + P&L column headers (no orphan Return / generic P&L columns)
-    for (const h of ["Ticker", "Country", "Exch", "Ccy", "Price", "52W Range", "Daily P&L", "MTD P&L", "YTD P&L", "Mkt cap", "Volume"]) {
+    for (const h of ["Ticker", "Country", "Exch", "Ccy", "Price", "52-week range", "Daily P&L", "MTD P&L", "YTD P&L", "Mkt cap", "Volume"]) {
       expect(screen.getByText(h)).toBeInTheDocument();
     }
     expect(screen.queryByText("Return")).not.toBeInTheDocument();
@@ -57,7 +57,7 @@ describe("PortfolioPivot", () => {
     const headers = screen.getAllByRole("columnheader").map((th) => th.textContent);
     const i = headers.indexOf("Price");
     expect(headers.slice(i, i + 10)).toEqual([
-      "Price", "1D Chg", "1M Return", "3M Return", "6M Return", "52W Range",
+      "Price", "1D Chg", "1M Return", "3M Return", "6M Return", "52-week range",
       "Daily P&L", "MTD P&L", "YTD P&L", "Mkt cap",
     ]);
     // the header row carries all 17 columns (5 explorer + Wt + Price + 4 windows + 52W Range + 3 P&L + MktCap + Vol)

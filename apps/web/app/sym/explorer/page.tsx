@@ -170,7 +170,7 @@ export default function ExplorerPage() {
                 <td className="px-4 py-2 tabular-nums text-muted">{r.mic ?? "—"}</td>
                 <td className="px-4 py-2 text-muted">{r.currency ?? "—"}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-fg" title={r.session_date ?? undefined}>
-                  {fmtPrice(r.price)}
+                  {fmtPrice(r.price, r.currency)}
                 </td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">{fmtCompact(r.volume)}</td>
                 <td className="px-4 py-2 text-right tabular-nums text-muted">

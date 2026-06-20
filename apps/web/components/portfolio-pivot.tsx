@@ -27,7 +27,17 @@ function retClass(r: number | null): string {
 // `pct` of the way from the 52w low to the 52w high (0 = at the low, 1 = at the high); its colour
 // signals proximity (near-high green, near-low red, mid amber). Renders "—" when the API has no
 // extremes row or a degenerate range. fmtPrice keeps the endpoint labels consistent with the Price column.
-function RangeBar({ low, high, pct: p }: { low: number | null; high: number | null; pct: number | null }) {
+function RangeBar({
+  low,
+  high,
+  pct: p,
+  currency,
+}: {
+  low: number | null;
+  high: number | null;
+  pct: number | null;
+  currency?: string | null;
+}) {
   if (low == null || high == null || p == null || !Number.isFinite(p)) {
     return <span className="text-muted">—</span>;
   }
@@ -35,17 +45,17 @@ function RangeBar({ low, high, pct: p }: { low: number | null; high: number | nu
   const tone = p >= 0.66 ? "bg-emerald-500" : p <= 0.34 ? "bg-rose-500" : "bg-amber-500";
   return (
     <div
-      className="flex items-center justify-end gap-1.5"
-      title={`52W ${fmtPrice(low)} – ${fmtPrice(high)} · ${pos.toFixed(0)}% of range`}
+      className="flex w-full items-center gap-1"
+      title={`52-week ${fmtPrice(low, currency)} – ${fmtPrice(high, currency)} · ${pos.toFixed(0)}% of range`}
     >
-      <span className="tabular-nums text-[10px] text-muted">{fmtPrice(low)}</span>
-      <div className="relative h-1.5 w-16 rounded-full bg-fg/15">
+      <span className="w-10 shrink-0 text-right tabular-nums text-[10px] text-muted">{fmtPrice(low, currency)}</span>
+      <div className="relative h-1.5 min-w-[2rem] flex-1 rounded-full bg-fg/15">
         <div
           className={`absolute top-1/2 h-2.5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-sm ${tone}`}
           style={{ left: `${pos}%` }}
         />
       </div>
-      <span className="tabular-nums text-[10px] text-muted">{fmtPrice(high)}</span>
+      <span className="w-10 shrink-0 text-left tabular-nums text-[10px] text-muted">{fmtPrice(high, currency)}</span>
     </div>
   );
 }
@@ -100,6 +110,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
       <table className="w-full min-w-[72rem] text-xs">
         <thead className="border-b border-border bg-fg/5 text-left text-muted">
           <tr>
+            {/* text columns left, numeric columns right, the 52-week range bar centered */}
             <th className="px-2 py-1.5 font-medium">Ticker</th>
             <th className="px-2 py-1.5 font-medium">Name</th>
             <th className="px-2 py-1.5 font-medium">Country</th>
@@ -110,7 +121,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
             {WINDOWS.map((w) => (
               <th key={w.key} className="px-2 py-1.5 text-right font-medium">{w.label}</th>
             ))}
-            <th className="px-2 py-1.5 text-right font-medium">52W Range</th>
+            <th className="px-2 py-1.5 text-center font-medium">52-week range</th>
             <th className="px-2 py-1.5 text-right font-medium">Daily P&amp;L</th>
             <th className="px-2 py-1.5 text-right font-medium">MTD P&amp;L</th>
             <th className="px-2 py-1.5 text-right font-medium">YTD P&amp;L</th>
@@ -189,7 +200,7 @@ function SectorGroup({
           <td className="px-2 py-1 text-muted">{h.mic ?? "—"}</td>
           <td className="px-2 py-1 text-muted">{h.currency ?? "—"}</td>
           <td className="px-2 py-1 text-right tabular-nums text-fg">{wpct(h.weight)}</td>
-          <td className="px-2 py-1 text-right tabular-nums text-fg">{fmtPrice(h.price)}</td>
+          <td className="px-2 py-1 text-right tabular-nums text-fg">{fmtPrice(h.price, h.currency)}</td>
           {WINDOWS.map((w) => {
             const r = h.window_returns?.[w.key] ?? null;
             return (
@@ -199,7 +210,7 @@ function SectorGroup({
             );
           })}
           <td className="px-2 py-1">
-            <RangeBar low={h.low_52w} high={h.high_52w} pct={h.range_pct} />
+            <RangeBar low={h.low_52w} high={h.high_52w} pct={h.range_pct} currency={h.currency} />
           </td>
           {PNL_COLS.map(({ win }) => {
             const c = pnlOf(h, win);

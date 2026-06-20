@@ -258,7 +258,7 @@ export function PriceVolumeChart({ figi, currency }: { figi: string; currency?: 
               <g key={k}>
                 <line x1={PAD_L} x2={W - PAD_R} y1={yPrice(t)} y2={yPrice(t)} stroke={grid} strokeWidth={1} />
                 <text x={PAD_L - 6} y={yPrice(t) + 3} textAnchor="end" fontSize={10} fill={axis}>
-                  {fmtPrice(t)}
+                  {fmtPrice(t, currency)}
                 </text>
               </g>
             ))}
@@ -331,12 +331,12 @@ export function PriceVolumeChart({ figi, currency }: { figi: string; currency?: 
               ] as [string, number | null][]).map(([k, v]) => (
                 <div key={k} className="flex justify-between tabular-nums">
                   <span className="text-muted">{k}</span>
-                  <span className="text-fg">{fmtPrice(v)}</span>
+                  <span className="text-fg">{fmtPrice(v, currency)}</span>
                 </div>
               ))}
             <div className="flex justify-between tabular-nums">
               <span className="text-muted">Close</span>
-              <span className="text-fg">{fmtPrice(hover.close)}</span>
+              <span className="text-fg">{fmtPrice(hover.close, currency)}</span>
             </div>
             <div className="flex justify-between tabular-nums">
               <span className="text-muted">Volume</span>

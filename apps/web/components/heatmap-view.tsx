@@ -4,6 +4,7 @@ import { hierarchy, treemap, treemapSquarify } from "d3-hierarchy";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useOnline } from "@/lib/connection";
+import { fmtPrice } from "@/lib/format";
 
 type Cell = {
   ticker: string;
@@ -98,10 +99,6 @@ function fmtCap(v: number | null): string {
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
   if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
   return v.toFixed(0);
-}
-
-function fmtPrice(v: number | null): string {
-  return v == null ? "—" : v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 export function HeatmapView({
@@ -402,7 +399,7 @@ export function HeatmapView({
             </div>
             <div className="mt-1 flex items-baseline gap-2 text-sm">
               <span className="font-medium tabular-nums">
-                {hover.currency ?? ""} {fmtPrice(hover.price)}
+                {hover.currency ?? ""} {fmtPrice(hover.price, hover.currency)}
               </span>
               <span
                 className={

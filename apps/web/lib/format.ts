@@ -10,8 +10,24 @@ export function fmtCompact(v: number | null | undefined): string {
   return v.toFixed(0);
 }
 
-/** Price with up to 2 decimals, locale-grouped. NULL → "—". */
-export function fmtPrice(v: number | null | undefined): string {
+/** Price standardised to its currency's natural precision — exactly 2 dp for decimal currencies
+ *  (USD/EUR/BRL/…), the currency's own precision for zero-decimal ones (JPY/KRW/…). Locale-grouped.
+ *  `currency` is optional; without it (or for an unknown code) a decimal currency is assumed → 2 dp.
+ *  NULL → "—". */
+export function fmtPrice(v: number | null | undefined, currency?: string | null): string {
   if (v == null) return "—";
-  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  let digits = 2;
+  if (currency) {
+    try {
+      // ICU knows each currency's minor-unit count (JPY→0, USD→2); read it without the symbol.
+      digits =
+        new Intl.NumberFormat(undefined, {
+          style: "currency",
+          currency,
+        }).resolvedOptions().maximumFractionDigits ?? 2;
+    } catch {
+      digits = 2; // unknown/invalid code → treat as a decimal currency
+    }
+  }
+  return v.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
