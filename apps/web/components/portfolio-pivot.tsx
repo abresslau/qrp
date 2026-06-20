@@ -109,11 +109,11 @@ function sortValue(h: CompositionHolding, key: string): number | string | null {
   }
 }
 
-function compareHoldings(a: CompositionHolding, b: CompositionHolding, sort: Sort): number {
+function compareByKey(a: CompositionHolding, b: CompositionHolding, sort: Sort): number {
   const va = sortValue(a, sort.key);
   const vb = sortValue(b, sort.key);
   if (va == null && vb == null) return 0;
-  if (va == null) return 1; // nulls always last
+  if (va == null) return 1; // nulls always last (per key)
   if (vb == null) return -1;
   const d =
     typeof va === "string" || typeof vb === "string"
@@ -122,44 +122,74 @@ function compareHoldings(a: CompositionHolding, b: CompositionHolding, sort: Sor
   return sort.dir === "asc" ? d : -d;
 }
 
+// Ordered multi-key compare: first key decides, ties fall through to the next key, and so on
+// (Array.sort is stable, so an all-equal row keeps its original relative position).
+function compareHoldings(a: CompositionHolding, b: CompositionHolding, sorts: Sort[]): number {
+  for (const s of sorts) {
+    const d = compareByKey(a, b, s);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 // A clickable column header. `align` mirrors the body cells (text→left, number→right, range→center);
-// the default direction on first click is ascending for text, descending for numeric/range.
+// the default direction on first click is ascending for text, descending for numeric/range. Plain
+// click = single sort on this column; Ctrl/Cmd-click adds it as a secondary sort (or toggles its
+// direction if already active). When ≥2 columns sort, each active header shows its 1-based priority.
 function SortableTh({
   label,
   sortKey,
   align,
-  sort,
+  sorts,
   onSort,
 }: {
   label: string;
   sortKey: string;
   align: "left" | "right" | "center";
-  sort: Sort;
-  onSort: (key: string, defaultDir: SortDir) => void;
+  sorts: Sort[];
+  onSort: (key: string, defaultDir: SortDir, additive: boolean) => void;
 }) {
-  const active = sort.key === sortKey;
+  const i = sorts.findIndex((s) => s.key === sortKey);
+  const active = i >= 0;
+  const dir = active ? sorts[i].dir : undefined;
   const alignCls = align === "right" ? "text-right" : align === "center" ? "text-center" : "text-left";
   const justify = align === "right" ? "justify-end" : align === "center" ? "justify-center" : "justify-start";
   const defaultDir: SortDir = align === "left" ? "asc" : "desc";
+  const arrow = active ? (dir === "asc" ? "▲" : "▼") : "";
+  const priority = active && sorts.length > 1 ? String(i + 1) : ""; // shown only for multi-sort
   return (
-    <th className={`px-2 py-1.5 font-medium ${alignCls}`} aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}>
+    <th className={`px-2 py-1.5 font-medium ${alignCls}`} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
       <button
         type="button"
-        onClick={() => onSort(sortKey, defaultDir)}
+        title="Click to sort; Ctrl/Cmd-click to add a secondary sort"
+        onClick={(e) => onSort(sortKey, defaultDir, e.ctrlKey || e.metaKey)}
         className={`flex w-full items-center gap-1 ${justify} hover:text-fg ${active ? "text-fg" : ""}`}
       >
         <span>{label}</span>
-        <span className="w-2 text-[9px] leading-none">{active ? (sort.dir === "asc" ? "▲" : "▼") : ""}</span>
+        <span className="text-[9px] leading-none tabular-nums">{arrow}{priority ? ` ${priority}` : ""}</span>
       </button>
     </th>
   );
 }
 
 export function PortfolioPivot({ data }: { data: Composition | null }) {
-  // Default order = largest positions first (gross weight desc), matching the book convention.
-  const [sort, setSort] = useState<Sort>({ key: "weight", dir: "desc" });
-  const onSort = (key: string, defaultDir: SortDir) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: defaultDir }));
+  // Ordered list of sort keys (index 0 = primary). Default = largest positions first (gross weight
+  // desc), matching the book convention. Plain click sets a single sort; Ctrl/Cmd-click adds/toggles.
+  const [sorts, setSorts] = useState<Sort[]>([{ key: "weight", dir: "desc" }]);
+  const onSort = (key: string, defaultDir: SortDir, additive: boolean) =>
+    setSorts((prev) => {
+      const i = prev.findIndex((s) => s.key === key);
+      if (additive) {
+        // Ctrl/Cmd-click: toggle direction if already a sort key (keep its priority), else append.
+        return i >= 0
+          ? prev.map((s, j) => (j === i ? { key: s.key, dir: s.dir === "asc" ? "desc" : "asc" } : s))
+          : [...prev, { key, dir: defaultDir }];
+      }
+      // Plain click: collapse to a single sort; toggle direction iff it's already the sole key.
+      return prev.length === 1 && prev[0].key === key
+        ? [{ key, dir: prev[0].dir === "asc" ? "desc" : "asc" }]
+        : [{ key, dir: defaultDir }];
+    });
 
   if (!data?.holdings?.length) {
     return <p className="text-sm text-muted">No holdings yet — upload a weight vector to see the breakdown.</p>;
@@ -180,7 +210,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
   for (const h of data.holdings) (bySector[h.sector] ||= []).push(h);
   const sectors = Object.entries(bySector)
     .map(([sector, rows]) => {
-      const hs = rows.slice().sort((a, b) => compareHoldings(a, b, sort));
+      const hs = rows.slice().sort((a, b) => compareHoldings(a, b, sorts));
       const wt = hs.reduce((s, h) => s + Math.abs(h.weight), 0);
       const pnls: Record<string, number> = {};
       for (const { win } of PNL_COLS) pnls[win] = hs.reduce((s, h) => s + (pnlOf(h, win) ?? 0), 0);
@@ -198,22 +228,22 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
           <tr>
             {/* text columns left, numeric columns right, the 52-week range bar centered; every
                 column is click-to-sort (sorts rows within each sector) */}
-            <SortableTh label="Ticker" sortKey="ticker" align="left" sort={sort} onSort={onSort} />
-            <SortableTh label="Name" sortKey="name" align="left" sort={sort} onSort={onSort} />
-            <SortableTh label="Country" sortKey="country" align="left" sort={sort} onSort={onSort} />
-            <SortableTh label="Exch" sortKey="mic" align="left" sort={sort} onSort={onSort} />
-            <SortableTh label="Ccy" sortKey="currency" align="left" sort={sort} onSort={onSort} />
-            <SortableTh label="Wt" sortKey="weight" align="right" sort={sort} onSort={onSort} />
-            <SortableTh label="Price" sortKey="price" align="right" sort={sort} onSort={onSort} />
+            <SortableTh label="Ticker" sortKey="ticker" align="left" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Name" sortKey="name" align="left" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Country" sortKey="country" align="left" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Exch" sortKey="mic" align="left" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Ccy" sortKey="currency" align="left" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Wt" sortKey="weight" align="right" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Price" sortKey="price" align="right" sorts={sorts} onSort={onSort} />
             {WINDOWS.map((w) => (
-              <SortableTh key={w.key} label={w.label} sortKey={`ret:${w.key}`} align="right" sort={sort} onSort={onSort} />
+              <SortableTh key={w.key} label={w.label} sortKey={`ret:${w.key}`} align="right" sorts={sorts} onSort={onSort} />
             ))}
-            <SortableTh label="52-week range" sortKey="range" align="center" sort={sort} onSort={onSort} />
+            <SortableTh label="52-week range" sortKey="range" align="center" sorts={sorts} onSort={onSort} />
             {PNL_COLS.map(({ label, win }) => (
-              <SortableTh key={win} label={label} sortKey={`pnl:${win}`} align="right" sort={sort} onSort={onSort} />
+              <SortableTh key={win} label={label} sortKey={`pnl:${win}`} align="right" sorts={sorts} onSort={onSort} />
             ))}
-            <SortableTh label="Mkt cap" sortKey="mcap" align="right" sort={sort} onSort={onSort} />
-            <SortableTh label="Volume" sortKey="volume" align="right" sort={sort} onSort={onSort} />
+            <SortableTh label="Mkt cap" sortKey="mcap" align="right" sorts={sorts} onSort={onSort} />
+            <SortableTh label="Volume" sortKey="volume" align="right" sorts={sorts} onSort={onSort} />
           </tr>
         </thead>
         <tbody>

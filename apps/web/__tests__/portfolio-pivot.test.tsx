@@ -95,6 +95,43 @@ describe("PortfolioPivot", () => {
     expect(idx(rows, "INTC")).toBeLessThan(idx(rows, "AAPL")); // 0 < 0.0123
   });
 
+  it("adds a secondary sort with Ctrl/Cmd-click and breaks ties by it (within a sector)", () => {
+    render(<PortfolioPivot data={COMP} />);
+    const order = () => screen.getAllByRole("row").map((r) => r.textContent ?? "");
+    const idx = (rows: string[], t: string) => rows.findIndex((x) => x.includes(t));
+    // Primary = Exch (both AAPL/INTC are XNAS -> a tie); secondary = Daily P&L breaks it.
+    fireEvent.click(screen.getByRole("button", { name: /Exch/ })); // single sort by mic
+    // Ctrl-click Daily P&L -> appended as secondary (desc): AAPL (0.5*0.1=+0.05) before INTC (0.4*-0.05=-0.02)
+    fireEvent.click(screen.getByRole("button", { name: /Daily P&L/ }), { ctrlKey: true });
+    expect(idx(order(), "AAPL")).toBeLessThan(idx(order(), "INTC"));
+    // priority indicators appear only when >=2 sorts active: Exch shows "1", Daily P&L shows "2"
+    expect(screen.getByRole("button", { name: /Exch/ }).textContent).toContain("1");
+    expect(screen.getByRole("button", { name: /Daily P&L/ }).textContent).toContain("2");
+    // Ctrl-click Daily P&L again -> toggles ONLY its direction to asc, keeping Exch primary:
+    // INTC (-0.02) now before AAPL (+0.05)
+    fireEvent.click(screen.getByRole("button", { name: /Daily P&L/ }), { metaKey: true });
+    expect(idx(order(), "INTC")).toBeLessThan(idx(order(), "AAPL"));
+    expect(screen.getByRole("button", { name: /Exch/ }).textContent).toContain("1"); // still primary
+    expect(screen.getByRole("button", { name: /Daily P&L/ }).textContent).toContain("2"); // priority kept
+  });
+
+  it("a plain click collapses a multi-sort back to a single sort", () => {
+    render(<PortfolioPivot data={COMP} />);
+    const order = () => screen.getAllByRole("row").map((r) => r.textContent ?? "");
+    const idx = (rows: string[], t: string) => rows.findIndex((x) => x.includes(t));
+    // build a 2-key sort
+    fireEvent.click(screen.getByRole("button", { name: /Exch/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Daily P&L/ }), { ctrlKey: true });
+    expect(screen.getByRole("button", { name: /Exch/ }).textContent).toContain("1");
+    // plain click Ticker -> single sort asc, no priority numbers, AAPL before INTC (alphabetical)
+    fireEvent.click(screen.getByRole("button", { name: /Ticker/ }));
+    expect(idx(order(), "AAPL")).toBeLessThan(idx(order(), "INTC"));
+    // single active sort shows no priority number on its header
+    expect(screen.getByRole("button", { name: /Ticker/ }).textContent).not.toMatch(/\d/);
+    // and the previously-secondary Daily P&L is no longer part of the sort (no arrow/number)
+    expect(screen.getByRole("button", { name: /Daily P&L/ }).textContent?.trim()).toBe("Daily P&L");
+  });
+
   it("shows an empty state with no holdings", () => {
     render(<PortfolioPivot data={{ ...COMP, holdings: [] }} />);
     expect(screen.getByText(/No holdings yet/)).toBeInTheDocument();
