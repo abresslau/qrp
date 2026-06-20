@@ -449,7 +449,7 @@ export interface paths {
         };
         /**
          * Portfolio Composition
-         * @description Live composition (heat map sized by position size + sector/position pizza) from a swapped
+         * @description Live composition (heat map sized by position size + sector/position donut) from a swapped
          *     (live-quote) price source — fetched at serve time, not persisted. 422 over the holdings cap;
          *     the honest 503 envelope when the quote provider is wholly unreachable.
          */
@@ -1726,7 +1726,7 @@ export interface components {
         /**
          * PortfolioComposition
          * @description Live composition of a portfolio's shown weight vector (the live heat map + sector/position
-         *     pizza surface). Holdings carry SIGNED weights (size = |weight|) + a live return; `sectors` is
+         *     donut surface). Holdings carry SIGNED weights (size = |weight|) + a live return; `sectors` is
          *     the per-sector Σ|weight| rollup. `freshness` is the worst across priced holdings; `as_of` is
          *     the oldest priced quote. NOT persisted.
          */

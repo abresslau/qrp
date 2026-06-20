@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
 import { PortfolioHeatmap, type Composition } from "@/components/portfolio-heatmap";
 import { PortfolioMovers } from "@/components/portfolio-movers";
 import { PortfolioPivot } from "@/components/portfolio-pivot";
-import { PortfolioPizza } from "@/components/portfolio-pizza";
+import { PortfolioDonut } from "@/components/portfolio-donut";
 import { PortfolioRiskPnl } from "@/components/portfolio-risk-pnl";
 import type { Schemas } from "@/lib/api";
 
@@ -41,7 +41,7 @@ function weightedPnl(comp: Composition | null, ret: (h: Composition["holdings"][
 export default function PortfolioLive() {
   const { id } = useParams<{ id: string }>();
   const [p, setP] = useState<Portfolio | null>(null);
-  // Live composition (heat map + pizza) — ONE fetch feeds both visuals. Newest-wins via an
+  // Live composition (heat map + donut) — ONE fetch feeds both visuals. Newest-wins via an
   // AbortController (a slow/superseded request can't overwrite the current view); `nonce` bumps a
   // manual refresh. Not persisted — fetched at view time, like the analytics-panel Live PnL.
   const [comp, setComp] = useState<Composition | null>(null);
@@ -157,7 +157,7 @@ export default function PortfolioLive() {
           {/* Sector donut + top movers — two separate cards, side by side */}
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="rounded-xl border border-border bg-surface p-4">
-              <PortfolioPizza data={comp} />
+              <PortfolioDonut data={comp} />
             </div>
             <div className="rounded-xl border border-border bg-surface p-4">
               <PortfolioMovers pid={String(id)} composition={comp} />

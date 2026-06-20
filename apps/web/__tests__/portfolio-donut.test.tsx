@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { Composition } from "@/components/portfolio-heatmap";
-import { PortfolioPizza } from "@/components/portfolio-pizza";
+import { PortfolioDonut } from "@/components/portfolio-donut";
 
 function holding(over: Record<string, unknown>) {
   return { figi: "F", ticker: "T", name: "n", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.1, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 1, live_return: 0, window_returns: {}, low_52w: null, high_52w: null, range_pct: null, freshness: "live", ...over };
@@ -22,9 +22,9 @@ const COMP: Composition = {
   ],
 };
 
-describe("PortfolioPizza — sector donut heat map", () => {
+describe("PortfolioDonut — sector donut heat map", () => {
   it("labels each sector by its daily P&L CONTRIBUTION in-slice + legend (sums to Daily P&L)", () => {
-    render(<PortfolioPizza data={COMP} />);
+    render(<PortfolioDonut data={COMP} />);
     // covered = 0.5+0.4+0.3 = 1.2. Tech contrib = (0.5·0.1 + 0.4·−0.05)/1.2 = +2.50%; Energy = +0.25%.
     expect(screen.getAllByText("Tech").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Energy").length).toBeGreaterThanOrEqual(2);
@@ -35,7 +35,7 @@ describe("PortfolioPizza — sector donut heat map", () => {
   });
 
   it("has column headers and a Total row that sums to Daily P&L", () => {
-    render(<PortfolioPizza data={COMP} />);
+    render(<PortfolioDonut data={COMP} />);
     expect(screen.getByText("Sector")).toBeInTheDocument();
     expect(screen.getByText("Wt")).toBeInTheDocument();
     expect(screen.getByText("P&L")).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("PortfolioPizza — sector donut heat map", () => {
   });
 
   it("colors each segment by daily P&L (one <path> per sector) and shows gross in the center", () => {
-    const { container } = render(<PortfolioPizza data={COMP} />);
+    const { container } = render(<PortfolioDonut data={COMP} />);
     expect(container.querySelectorAll("path").length).toBe(2); // 2 sectors -> 2 ring segments
     expect(screen.getByText("120.0%")).toBeInTheDocument(); // gross center
   });
@@ -66,8 +66,8 @@ describe("PortfolioPizza — sector donut heat map", () => {
     Array.from(container.querySelectorAll("svg g")).find((g) => g.textContent?.includes(sector));
 
   it("sizes the donut by its CONTAINER (container-query class, not viewport)", () => {
-    const { container } = render(<PortfolioPizza data={COMP} />);
-    const root = container.firstElementChild as HTMLElement; // the pizza root <div>
+    const { container } = render(<PortfolioDonut data={COMP} />);
+    const root = container.firstElementChild as HTMLElement; // the donut root <div>
     expect(root.getAttribute("class") ?? "").toContain("@container"); // establishes a query container
     const svgCls = container.querySelector("svg")!.getAttribute("class") ?? "";
     expect(svgCls).toMatch(/@\w+:[hw]-/); // grows at container breakpoints (e.g. @xl:w-72)
@@ -75,7 +75,7 @@ describe("PortfolioPizza — sector donut heat map", () => {
   });
 
   it("renders minor-sector labels but CSS-gates them to wide containers; majors always show", () => {
-    const { container } = render(<PortfolioPizza data={COMP_SMALL_SECTOR} />);
+    const { container } = render(<PortfolioDonut data={COMP_SMALL_SECTOR} />);
     // Energy (4%) is a minor slice: its label is in the DOM but hidden until the container is wide.
     const energy = labelGroupFor(container, "Energy");
     expect(energy).toBeTruthy();
@@ -88,12 +88,12 @@ describe("PortfolioPizza — sector donut heat map", () => {
   });
 
   it("shows a quiet empty state when there are no sectors", () => {
-    render(<PortfolioPizza data={{ ...COMP, sectors: [], total_weight: 0 }} />);
+    render(<PortfolioDonut data={{ ...COMP, sectors: [], total_weight: 0 }} />);
     expect(screen.getByText(/No holdings to slice yet/)).toBeInTheDocument();
   });
 
   it("hovering a sector slice shows its top winners/losers tooltip (≤5 names each)", async () => {
-    const { container } = render(<PortfolioPizza data={COMP} />);
+    const { container } = render(<PortfolioDonut data={COMP} />);
     const paths = container.querySelectorAll("path");
     fireEvent.mouseEnter(paths[0], { clientX: 100, clientY: 100 }); // first slice = Tech (largest)
     expect(await screen.findByText("Winners")).toBeInTheDocument();

@@ -48,7 +48,7 @@ const LABEL_R = (R + RI) / 2;
 const LABEL_MIN_FRAC = 0.06; // major slices: always labelled in-chart
 const LABEL_MIN_MINOR = 0.035; // minor slices (≥3.5% but <6%): rendered but CSS-gated to wide containers
 
-export function PortfolioPizza({ data }: { data: Composition | null }) {
+export function PortfolioDonut({ data }: { data: Composition | null }) {
   const isDark = useIsDark();
   const [hover, setHover] = useState<{ sector: string; x: number; y: number } | null>(null);
 

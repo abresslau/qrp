@@ -32,7 +32,7 @@ SYM_READ_SURFACE = {
     "return_window",
     "instrument",
     "pipeline_run_log",  # Operate's correlated run history (FR-6/FR-8)
-    "gics_scd",  # GICS sector/industry — analytics' live portfolio composition (sector pizza)
+    "gics_scd",  # GICS sector/industry — analytics' live portfolio composition (sector donut)
     "exchange",  # exchange→country — the live composition pivot (explorer-style per-stock columns)
     "prices_raw",  # latest EOD volume — the live composition pivot (explorer-style per-stock columns)
     "fact_price_extremes",  # 52-week high/low — the live composition pivot's 52W range bar (Story 3.2-ext)

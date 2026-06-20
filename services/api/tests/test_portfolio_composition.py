@@ -1,4 +1,4 @@
-"""Live portfolio composition — the heat-map (sized by position size) + sector/position pizza
+"""Live portfolio composition — the heat-map (sized by position size) + sector/position donut
 surface (story portfolios-live-heatmap-and-pizza). DB-free: the portfolios seam is monkeypatched,
 the sym conn is faked, the quote fan-out is monkeypatched. Asserts the per-holding cell shape with
 SIGNED weights preserved, the per-sector |weight| rollup (slice size + weighted live return), the

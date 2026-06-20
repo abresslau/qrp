@@ -334,12 +334,12 @@ class DbAnalyticsGateway:
         return result
 
     def composition(self, pid: int, *, now: float | None = None) -> dict:
-        """Live composition of a portfolio (the live heat map + sector/position pizza surface):
+        """Live composition of a portfolio (the live heat map + sector/position donut surface):
         the SHOWN (latest) weight vector enriched per holding with GICS sector/industry, name,
         and a LIVE return (quote price / its own previous close − 1, the QH.2 convention) fetched
         via the bounded fan-out and NEVER persisted. Position SIZE is |weight| (not market cap).
-        Returns per-holding cells (heat map + position pizza) plus a per-sector rollup (sector
-        pizza). Each holding also carries ``window_returns`` — trailing 1D/1M/3M/6M price returns
+        Returns per-holding cells (heat map + position donut) plus a per-sector rollup (sector
+        donut). Each holding also carries ``window_returns`` — trailing 1D/1M/3M/6M price returns
         (``fact_returns.pr``) RE-BASED to end at the live price when priced
         (``live_price * (1 + pr) / last_close - 1``), degrading to the plain stored EOD return when
         the holding has no live quote, and null when ``pr``/``last_close`` is unusable.
