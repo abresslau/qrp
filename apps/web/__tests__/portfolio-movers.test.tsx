@@ -5,7 +5,7 @@ import type { Composition } from "@/components/portfolio-heatmap";
 import { PortfolioMovers } from "@/components/portfolio-movers";
 
 function holding(over: Record<string, unknown>) {
-  return { figi: "F", ticker: "T", name: "n", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.1, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 1, live_return: 0, freshness: "live", ...over };
+  return { figi: "F", ticker: "T", name: "n", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.1, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 1, live_return: 0, window_returns: {}, freshness: "live", ...over };
 }
 
 const COMP: Composition = {

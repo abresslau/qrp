@@ -29,15 +29,19 @@ class _Cur:
 
 
 class _SymConn:
-    """Fake sym read conn — returns the SAME meta rows for any query, and RECORDS the SQL it
-    sees so a test can assert the live path issues no INSERT/UPDATE."""
+    """Fake sym read conn — dispatches by SQL: the ``fact_returns`` window-returns query gets
+    ``ret_rows`` ((figi, code, pr) tuples), every other query gets the meta ``rows``. RECORDS the
+    SQL it sees so a test can assert the live path issues no INSERT/UPDATE."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, ret_rows=None):
         self._rows = rows
+        self._ret_rows = ret_rows or []
         self.seen: list[str] = []
 
     def execute(self, sql, params=None):
         self.seen.append(sql)
+        if "fact_returns" in sql:
+            return _Cur(self._ret_rows)
         return _Cur(self._rows)
 
 
@@ -52,10 +56,10 @@ _EPOCH = 1781553601
 def test_composition_assembly_signed_weight_and_sector_rollup(monkeypatch):
     # One long (priced) IT name + one short (uncovered) Energy name.
     _wire(monkeypatch, weights={"F1": Decimal("0.6"), "F2": Decimal("-0.2")})
-    # row shape: figi, ticker, mic, sector, industry, name, currency, status, mcap, country, volume
+    # row shape: figi, ticker, mic, sector, industry, name, currency, status, mcap, country, volume, last_close
     sym = _SymConn([
-        ("F1", "AAPL", "XNAS", "Information Technology", "Tech HW", "Apple Inc", "USD", "active", 3.0e12, "United States", 50_000_000),
-        ("F2", "PETR4", "BVMF", "Energy", "Oil & Gas", "Petrobras", "BRL", "active", 1.0e11, "Brazil", 2_000_000),
+        ("F1", "AAPL", "XNAS", "Information Technology", "Tech HW", "Apple Inc", "USD", "active", 3.0e12, "United States", 50_000_000, 100.0),
+        ("F2", "PETR4", "BVMF", "Energy", "Oil & Gas", "Petrobras", "BRL", "active", 1.0e11, "Brazil", 2_000_000, 30.0),
     ])
 
     def fake_batch(symbols, **kw):
@@ -99,8 +103,8 @@ def test_composition_sector_return_is_weight_weighted(monkeypatch):
     # Two priced holdings in ONE sector with different returns -> |weight|-weighted rollup.
     _wire(monkeypatch, weights={"F1": Decimal("0.6"), "F3": Decimal("0.4")})
     sym = _SymConn([
-        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None),
-        ("F3", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None),
+        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, None),
+        ("F3", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None, None),
     ])
     monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
         "AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH),   # +10%
@@ -112,9 +116,85 @@ def test_composition_sector_return_is_weight_weighted(monkeypatch):
     assert tech["live_return"] == pytest.approx(0.14)
 
 
+def test_composition_window_returns_rebased_to_live(monkeypatch):
+    # F1 priced (last_close 100), F2 unpriced (no quote), F3 priced but last_close missing.
+    _wire(monkeypatch, weights={
+        "F1": Decimal("0.5"), "F2": Decimal("0.3"), "F3": Decimal("0.2"),
+    })
+    sym = _SymConn(
+        [
+            ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, 100.0),
+            ("F2", "ZZZ", "XNAS", "Tech", None, "Zed", "USD", None, None, None, None, 50.0),
+            ("F3", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None, None),
+        ],
+        # (figi, window code, pr) — already deduped (the latest-as_of pick is the SQL's DISTINCT ON,
+        # which this fake conn can't exercise; it's an integration concern, not a unit one).
+        ret_rows=[
+            ("F1", "1D", 0.01), ("F1", "1M", 0.10), ("F1", "3M", 0.30),  # no 6M for F1
+            ("F2", "1M", 0.05),
+            ("F3", "1M", 0.20),
+        ],
+    )
+    monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
+        "AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH),   # priced
+        "MSFT": RawQuote(120.0, 100.0, "USD", _EPOCH),   # priced (F3)
+        # ZZZ absent -> F2 unpriced
+    })
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    by = {h["figi"]: h for h in out["holdings"]}
+
+    # F1 priced -> each window re-based to the live price: price*(1+pr)/last_close - 1
+    assert set(by["F1"]["window_returns"]) == {"1D", "1M", "3M", "6M", "MTD", "YTD"}  # all keys present
+    assert by["F1"]["window_returns"]["1D"] == pytest.approx(110 * 1.01 / 100 - 1)   # 0.111
+    assert by["F1"]["window_returns"]["1M"] == pytest.approx(0.21)                   # 110*1.10/100-1
+    assert by["F1"]["window_returns"]["3M"] == pytest.approx(0.43)                   # 110*1.30/100-1
+    assert by["F1"]["window_returns"]["6M"] is None                                  # no stored pr
+
+    # F2 NOT priced live -> degrade to the plain stored EOD return (no re-base)
+    assert by["F2"]["live_return"] is None
+    assert by["F2"]["window_returns"]["1M"] == pytest.approx(0.05)
+    assert by["F2"]["window_returns"]["1D"] is None and by["F2"]["window_returns"]["6M"] is None
+
+    # F3 priced but last_close missing -> not computable -> null even with a stored pr
+    assert by["F3"]["live_return"] == pytest.approx(0.20)
+    assert by["F3"]["window_returns"]["1M"] is None
+
+
+def test_composition_window_returns_guard_nonfinite_base(monkeypatch):
+    # Re-base inputs that are unusable must yield null, never a garbage/non-finite value (which would
+    # break JSON serialization). F1: negative last_close; F2: NaN last_close; F3: NaN stored pr.
+    nan = float("nan")
+    _wire(monkeypatch, weights={
+        "F1": Decimal("0.4"), "F2": Decimal("0.3"), "F3": Decimal("0.3"),
+    })
+    sym = _SymConn(
+        [
+            ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, -5.0),
+            ("F2", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None, nan),
+            ("F3", "GOOG", "XNAS", "Tech", None, "Alphabet", "USD", None, None, None, None, 100.0),
+        ],
+        ret_rows=[("F1", "1M", 0.1), ("F2", "1M", 0.1), ("F3", "1M", nan)],
+    )
+    monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
+        "AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH),
+        "MSFT": RawQuote(120.0, 100.0, "USD", _EPOCH),
+        "GOOG": RawQuote(130.0, 100.0, "USD", _EPOCH),
+    })
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    by = {h["figi"]: h for h in out["holdings"]}
+    assert by["F1"]["window_returns"]["1M"] is None   # negative base -> null
+    assert by["F2"]["window_returns"]["1M"] is None   # NaN base -> null
+    assert by["F3"]["window_returns"]["1M"] is None   # NaN pr -> null
+    # nothing non-finite leaked into any cell
+    import math as _m
+    for h in out["holdings"]:
+        for v in h["window_returns"].values():
+            assert v is None or _m.isfinite(v)
+
+
 def test_composition_unmapped_mic_is_unavailable(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("1.0")})
-    sym = _SymConn([("F1", "FOO", "XZZZ", "Unclassified", None, "Foo Co", None, None, None, None, None)])  # XZZZ unmapped
+    sym = _SymConn([("F1", "FOO", "XZZZ", "Unclassified", None, "Foo Co", None, None, None, None, None, None)])  # XZZZ unmapped
     monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {})
     out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
     assert out["n_priced"] == 0 and out["freshness"] == "unavailable"
@@ -125,8 +205,8 @@ def test_composition_unmapped_mic_is_unavailable(monkeypatch):
 def test_composition_all_unreachable_raises(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("0.5"), "F2": Decimal("0.5")})
     sym = _SymConn([
-        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None),
-        ("F2", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None),
+        ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, None),
+        ("F2", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None, None),
     ])
 
     def boom(symbols, **kw):
@@ -154,7 +234,7 @@ def test_composition_over_cap_raises_value_error(monkeypatch):
 
 def test_composition_writes_nothing(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("1.0")})
-    sym = _SymConn([("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None)])
+    sym = _SymConn([("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, 100.0)])
     monkeypatch.setattr(quotes, "fetch_quotes_batch",
                         lambda s, **kw: {"AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH)})
     DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)

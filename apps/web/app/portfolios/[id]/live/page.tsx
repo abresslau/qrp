@@ -20,19 +20,22 @@ const FRESH_STYLE: Record<string, string> = {
   unavailable: "border-border bg-fg/5 text-muted",
 };
 
-// The LIVE portfolio daily return: Σ w·r ÷ Σ|w| over priced holdings (coverage-normalised) — the
-// exact weighted roll-up of the heat-map names and donut sectors, so the top Daily P&L matches them.
-function liveDailyReturn(comp: Composition | null): number | null {
+// LIVE Daily/MTD/YTD P&L = Σ weight·return (FX-hedged — base currency, no FX translation, no
+// coverage-normalisation). This is the SAME plain weight×return roll-up the grid's P&L columns sum to,
+// so the panel's Daily/MTD/YTD P&L match the grid's grand totals exactly. Daily uses the live return;
+// MTD/YTD use the (live-re-based) trailing windows on each holding.
+function weightedPnl(comp: Composition | null, ret: (h: Composition["holdings"][number]) => number | null): number | null {
   if (!comp?.holdings?.length) return null;
   let num = 0;
-  let den = 0;
+  let any = false;
   for (const h of comp.holdings) {
-    if (h.live_return != null) {
-      num += h.weight * h.live_return;
-      den += Math.abs(h.weight);
+    const r = ret(h);
+    if (r != null) {
+      num += h.weight * r;
+      any = true;
     }
   }
-  return den > 0 ? num / den : null;
+  return any ? num : null;
 }
 
 export default function PortfolioLive() {
@@ -137,7 +140,12 @@ export default function PortfolioLive() {
         </div>
       </div>
 
-      <PortfolioRiskPnl pid={String(id)} portfolio={p} dailyReturn={liveDailyReturn(comp)} />
+      <PortfolioRiskPnl
+        portfolio={p}
+        dailyReturn={weightedPnl(comp, (h) => h.live_return)}
+        mtdReturn={weightedPnl(comp, (h) => h.window_returns?.["MTD"] ?? null)}
+        ytdReturn={weightedPnl(comp, (h) => h.window_returns?.["YTD"] ?? null)}
+      />
 
       {compErr && (
         <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">

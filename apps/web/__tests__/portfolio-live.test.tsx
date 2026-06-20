@@ -29,8 +29,8 @@ const COMP = {
   portfolio_id: 7, weights_as_of: "2026-06-05", as_of: "2026-06-19T14:30:00+00:00",
   freshness: "live", n_holdings: 2, n_priced: 2, total_weight: 1.0, net_weight: 0.6,
   holdings: [
-    { figi: "F1", ticker: "AAPL", name: "Apple", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.6, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 110, live_return: 0.1, freshness: "live" },
-    { figi: "F2", ticker: "MSFT", name: "Microsoft", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.4, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 120, live_return: 0.05, freshness: "live" },
+    { figi: "F1", ticker: "AAPL", name: "Apple", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.6, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 110, live_return: 0.1, window_returns: {}, freshness: "live" },
+    { figi: "F2", ticker: "MSFT", name: "Microsoft", sector: "Tech", industry: null, mic: "XNAS", country: "US", status: "active", weight: 0.4, currency: "USD", market_cap_usd: 1e9, volume: 1000, price: 120, live_return: 0.05, window_returns: {}, freshness: "live" },
   ],
   sectors: [{ sector: "Tech", weight: 1.0, n: 2, live_return: 0.08 }],
 };
@@ -63,8 +63,8 @@ describe("PortfolioLive page", () => {
     render(<PortfolioLive />);
     expect(await screen.findByText(/Long\/Short Book/)).toBeInTheDocument(); // header
 
-    // Risk & P&L panel (compact)
-    expect(screen.getByText("Daily P&L")).toBeInTheDocument();
+    // Risk & P&L panel (compact) — "Daily P&L" now appears both here and as a grid column header
+    expect(screen.getAllByText("Daily P&L").length).toBeGreaterThan(0);
     expect(screen.getByText("Long")).toBeInTheDocument();
     expect(screen.getByText("L/S")).toBeInTheDocument();
     expect(screen.getByText("4.00×")).toBeInTheDocument(); // long 0.8 / short 0.2

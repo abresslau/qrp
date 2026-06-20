@@ -22,6 +22,8 @@ export type CompositionHolding = {
   volume: number | null;
   price: number | null;
   live_return: number | null;
+  // trailing 1D/1M/3M/6M returns re-based to the live price (plain EOD when not priced; null otherwise)
+  window_returns: Record<string, number | null>;
   freshness: string;
 };
 export type SectorSlice = {

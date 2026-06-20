@@ -128,6 +128,9 @@ class CompositionHolding(BaseModel):
     volume: int | None
     price: float | None
     live_return: float | None
+    # Trailing 1D/1M/3M/6M price returns, re-based to end at the live price (plain EOD when
+    # not priced live; null when not computable). Keys are the WINDOW_RETURNS codes.
+    window_returns: dict[str, float | None]
     freshness: str
 
 

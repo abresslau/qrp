@@ -44,7 +44,12 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-16
+last_updated: 2026-06-20
+# 2026-06-20: retrospectively enumerated the standalone / cross-cutting stories (delivered OUTSIDE the
+#   epic decompositions) into a new development_status section below (operator: "we can add to status
+#   file retrospectively"). These are the inline-tracked extras the DERIVATION NOTE references; statuses
+#   derived from each artifact's `Status:` field. Legacy 'review' entries (B-series, ext-company-names,
+#   E1) are left as-declared — they may be stale (the work shipped) rather than silently promoted.
 # story qh-3-readonly-db-role created 2026-06-13; implemented + reviewed 2026-06-14 (-> done)
 # story q8-5-kinea-brazil-macro-feeder created + implemented 2026-06-14 (central-bank feeders
 #   BCB/IBGE/Focus/Treasury + sell-side macro display; -> done)
@@ -239,3 +244,66 @@ development_status:
   qh-8-console-fetch-hardening: done  # 2026-06-16: AbortController newest-wins + benchmarks alive guard, palette openRef close-safety + latch split, portfolios error+retry; reviewed + 2 patches (r.ok check, ops array-latch); 25 tests, eslint 0/0, tsc + build green
   qh-9-live-heatmap: done  # 2026-06-16: LIVE mode recolors the treemap by live return (reuse QH.2 quotes + EOD assembly); bounded ThreadPool fan-out + LIVE_HEATMAP_MAX; reviewed + 2 patches (budget actually enforced, badge !loading); 90 api + 27 console tests, eslint 0/0, tsc + build green
   epic-qh-retrospective: done  # held 2026-06-15; augmented 2026-06-16 (after QH.2); 3rd pass 2026-06-16b (epic-qh-retro-2026-06-16b.md) covering the QH.7/QH.8 console-hardening arc + the stop rule
+
+  # ===== Standalone / cross-cutting stories (delivered OUTSIDE the epic decompositions) =====
+  # Retrospectively enumerated 2026-06-20 (see the last_updated note). Keys = artifact basename under
+  # _bmad-output/implementation-artifacts/. Status from each file's `Status:` field. NOT part of any
+  # *epic*.md decomposition (which the development_status entries above are derived from); listed here
+  # for visibility only. qh-9-live-heatmap and q8-5-kinea-brazil-macro-feeder are already enumerated
+  # in their epic sections above and are not repeated here.
+
+  # -- sym extras (identity / prices / returns) --
+  1-9-review-queue-gating: done
+  1-10-symbology-scd-transitions: done
+  3.1-ext-return-window-expansion: done
+  ext-company-names: review        # legacy 'review' — may be stale
+  E1-eod-orchestration: review     # legacy 'review' — may be stale
+
+  # -- index benchmark spine (B-series) --
+  B1-instrument-identity: review   # B1-B6 legacy 'review'; B7 (which builds on them) is done
+  B2-index-levels: review
+  B3-index-returns-alpha: review
+  B4-msci-file-import: review
+  B5-universe-benchmark-link: review
+  B6-canonical-index-figis: review
+  B7-identity-key-bridge: done
+
+  # -- universe extras --
+  U1-7-resolution-watermark: done  # distinct from u1-7-seed-50-name-universe (epic-u1)
+  U3-5-wire-safety-machinery: done
+  U3-6-maintenance-plans: done
+  U3-7-provenance-aware-correct: done
+  nasdaq100-universe: in-progress
+  universes-landing-coverage: done
+
+  # -- lineage / Dagster (QL-series) --
+  QL-1-lineage-dagster-foundation: in-progress
+  QL-2-auto-feeder-rollout: done
+  QL-3-fk-referential-and-visual: done
+  QL-4-console-wiring: done
+  QL-5-eod-schedule: done
+
+  # -- operate hardening (O-series) + durable review surfaces --
+  O-2-operate-hardening: done
+  O-3-actuation-origin-guard: done
+  O-4-error-envelope: done
+  S-1-durable-review-surfaces: done
+
+  # -- analytics / console (A / C series) --
+  A-1-analytics-boundaries: done
+  C-1-console-submenus: done
+  C-2-macro-comparison: done
+
+  # -- classification (multi-source GICS) --
+  classification-multisource: done
+  multi-source-classification-matrix: done
+  classification-robustness: done
+
+  # -- explorer enrichment / sym de-hub --
+  explorer-enrichment: done
+  dehub-sym: done
+
+  # -- portfolio live cockpit --
+  portfolios-exposure-and-layout: done
+  portfolios-live-heatmap-and-pizza: done
+  portfolios-live-grid-eod-returns: done  # created + implemented + reviewed 2026-06-20 (live-rebased trailing returns in the grid; 2 review patches applied)

@@ -45,6 +45,13 @@ _ONE_DAY_WINDOW = 1
 # fan-out. Mirrors the universe heat map's LIVE_HEATMAP_MAX rationale.
 COMPOSITION_MAX = 400
 
+# Trailing-return windows shown per holding in the live grid (story portfolios-live-grid-eod-returns).
+# Codes are return_window.code values; each is re-based to END at the holding's LIVE price rather than
+# the last close: window_return = live_price * (1 + pr) / last_close - 1.
+# 1D/1M/3M/6M are the grid's return columns; MTD/YTD additionally back the grid's Daily/MTD/YTD P&L
+# contribution columns (Daily uses 1D). All ride the same one-query fetch + re-base.
+WINDOW_RETURNS = ["1D", "1M", "3M", "6M", "MTD", "YTD"]
+
 
 # Every window code analytics understands; anything else is a 422 at the router.
 VALID_WINDOWS = ("ALL", "SI", "MAX", "YTD", "1M", "3M", "6M", "1Y", "2Y", "3Y")
@@ -332,7 +339,11 @@ class DbAnalyticsGateway:
         and a LIVE return (quote price / its own previous close − 1, the QH.2 convention) fetched
         via the bounded fan-out and NEVER persisted. Position SIZE is |weight| (not market cap).
         Returns per-holding cells (heat map + position pizza) plus a per-sector rollup (sector
-        pizza). Freshness = worst across PRICED holdings; ``as_of`` = oldest priced quote.
+        pizza). Each holding also carries ``window_returns`` — trailing 1D/1M/3M/6M price returns
+        (``fact_returns.pr``) RE-BASED to end at the live price when priced
+        (``live_price * (1 + pr) / last_close - 1``), degrading to the plain stored EOD return when
+        the holding has no live quote, and null when ``pr``/``last_close`` is unusable.
+        Freshness = worst across PRICED holdings; ``as_of`` = oldest priced quote.
         Raises LookupError (404) for a missing portfolio, ValueError (422) over COMPOSITION_MAX
         holdings, QuoteSourceUnreachable (503) only when EVERY mappable holding network-errors.
         """
@@ -360,10 +371,10 @@ class DbAnalyticsGateway:
             )
 
         figis = list(weights)
-        _MISSING = (None, None, "Unclassified", None, None, None, None, None, None, None)
+        _MISSING = (None, None, "Unclassified", None, None, None, None, None, None, None, None)
         meta = {
-            f: (tk, mic, sector, industry, name, currency, status, mcap, country, volume)
-            for f, tk, mic, sector, industry, name, currency, status, mcap, country, volume
+            f: (tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close)
+            for f, tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close
             in self._sym.execute(
                 """
                 SELECT s.composite_figi, tk.symbol_value, s.mic,
@@ -374,7 +385,8 @@ class DbAnalyticsGateway:
                        s.status,
                        f.market_cap_usd,
                        ex.country,
-                       px.volume
+                       px.volume,
+                       px.close AS last_close
                   FROM securities s
                   LEFT JOIN exchange ex ON ex.mic = s.mic
                   LEFT JOIN LATERAL (
@@ -398,7 +410,7 @@ class DbAnalyticsGateway:
                        ORDER BY as_of_date DESC LIMIT 1
                   ) f ON TRUE
                   LEFT JOIN LATERAL (
-                      SELECT volume FROM prices_raw p
+                      SELECT volume, close FROM prices_raw p
                        WHERE p.composite_figi = s.composite_figi
                        ORDER BY p.session_date DESC LIMIT 1
                   ) px ON TRUE
@@ -407,6 +419,25 @@ class DbAnalyticsGateway:
                 (figis,),
             ).fetchall()
         }
+
+        # Latest stored price return per holding for the four grid windows (the same fact_returns.pr
+        # the Explorer shows). One query for all figis; latest as_of per window. These end at the
+        # last CLOSE; the loop below re-bases each to the LIVE price using last_close.
+        pr_by_figi: dict[str, dict[str, float | None]] = {
+            f: {code: None for code in WINDOW_RETURNS} for f in figis
+        }
+        for cf, code, pr in self._sym.execute(
+            """
+            SELECT DISTINCT ON (fr.composite_figi, fr.window_id)
+                   fr.composite_figi, w.code, fr.pr
+              FROM fact_returns fr JOIN return_window w USING (window_id)
+             WHERE fr.composite_figi = ANY(%s) AND w.code = ANY(%s)
+             ORDER BY fr.composite_figi, fr.window_id, fr.as_of_date DESC
+            """,
+            (figis, WINDOW_RETURNS),
+        ).fetchall():
+            if pr is not None:
+                pr_by_figi[cf][code] = float(pr)
 
         now = quotes.now_epoch() if now is None else now
         ysym_by_figi = {
@@ -433,7 +464,9 @@ class DbAnalyticsGateway:
             aw = abs(w)
             total_abs += aw
             net += w
-            tk, mic, sector, industry, name, currency, status, mcap, country, volume = meta.get(figi, _MISSING)
+            tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close = meta.get(
+                figi, _MISSING
+            )
             sector = sector or "Unclassified"
             ysym = ysym_by_figi.get(figi)
             q = batch.get(ysym) if ysym else None
@@ -458,6 +491,23 @@ class DbAnalyticsGateway:
                 n_priced += 1
                 sec_cov[sector] = sec_cov.get(sector, 0.0) + aw
                 sec_rsum[sector] = sec_rsum.get(sector, 0.0) + aw * lr
+            # Trailing window returns, RE-BASED to end at the live price when the holding is priced
+            # (live_price * (1 + pr) / last_close - 1). When not priced live, degrade to the plain
+            # stored EOD return (pr); when pr or last_close is unusable, the cell is null.
+            # last_close must be a finite POSITIVE base (a 0/negative/NaN/Inf close would divide to
+            # garbage or emit a non-finite that breaks JSON serialization — same isfinite hygiene the
+            # weight read applies above). Non-finite pr is dropped to null on BOTH branches.
+            lc = float(last_close) if last_close is not None else None
+            lc_ok = lc is not None and math.isfinite(lc) and lc > 0
+            win: dict[str, float | None] = {}
+            for code in WINDOW_RETURNS:
+                pr = pr_by_figi[figi][code]
+                if pr is None or not math.isfinite(pr):
+                    win[code] = None
+                elif price is not None:
+                    win[code] = (price * (1.0 + pr) / lc - 1.0) if lc_ok else None
+                else:
+                    win[code] = pr  # not priced live -> plain EOD trailing return
             holdings.append(
                 {"figi": figi, "ticker": tk, "name": name,
                  "sector": sector, "industry": industry, "mic": mic,
@@ -465,7 +515,7 @@ class DbAnalyticsGateway:
                  "weight": w, "currency": currency,
                  "market_cap_usd": float(mcap) if mcap is not None else None,
                  "volume": int(volume) if volume is not None else None,
-                 "price": price, "live_return": lr, "freshness": cfresh}
+                 "price": price, "live_return": lr, "window_returns": win, "freshness": cfresh}
             )
 
         holdings.sort(key=lambda h: abs(h["weight"]), reverse=True)
