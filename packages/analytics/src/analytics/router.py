@@ -131,6 +131,11 @@ class CompositionHolding(BaseModel):
     # Trailing 1D/1M/3M/6M price returns, re-based to end at the live price (plain EOD when
     # not priced live; null when not computable). Keys are the WINDOW_RETURNS codes.
     window_returns: dict[str, float | None]
+    # 52-week range (Story 3.2-ext): the trailing-52w adjusted-close low/high and where the
+    # current price sits within it (0 = at the low, 1 = at the high). null when no extremes row.
+    low_52w: float | None
+    high_52w: float | None
+    range_pct: float | None
     freshness: str
 
 

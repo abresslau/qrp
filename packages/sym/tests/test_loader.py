@@ -204,3 +204,38 @@ def test_v_prices_adjusted_does_not_join_securities_status():
         Path(__file__).resolve().parents[1] / "migrations/deploy/v_prices_adjusted.sql"
     ).read_text(encoding="utf-8")
     assert "status" not in sql.lower()
+
+
+# --- 52-week extremes ride the returns pass (Story 3.2-ext) -----------------
+
+
+def _loader_src() -> str:
+    return (
+        Path(__file__).resolve().parents[1] / "src/sym/returns/loader.py"
+    ).read_text(encoding="utf-8")
+
+
+def test_extremes_orphan_delete_covers_the_extremes_table():
+    """An as_of_date that lost its price must be DELETEd from fact_price_extremes too.
+
+    The UPSERT alone never deletes, so a phantom bar removed by `load --overwrite` would
+    otherwise leave a stale extreme row forever — exactly the bug fact_returns guards.
+    """
+    src = _loader_src()
+    assert "fact_price_extremes" in src
+    # the orphan DELETE iterates both fact tables
+    assert '("fact_returns", "fact_price_extremes")' in src
+
+
+def test_extremes_upsert_has_dirty_set_guard():
+    """The extreme UPSERT must skip rows whose input_hash/gated are unchanged (3.6)."""
+    src = _loader_src()
+    assert "fact_price_extremes.input_hash IS DISTINCT FROM EXCLUDED.input_hash" in src
+    assert "fact_price_extremes.gated IS DISTINCT FROM EXCLUDED.gated" in src
+
+
+def test_recompute_summary_counts_extreme_rows():
+    """RecomputeSummary exposes extreme_rows so the CLI can report it (AC#7)."""
+    from sym.returns.loader import RecomputeSummary
+
+    assert RecomputeSummary().extreme_rows == 0

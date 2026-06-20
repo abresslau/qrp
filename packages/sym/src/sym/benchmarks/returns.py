@@ -16,6 +16,7 @@ from decimal import Decimal
 
 import psycopg
 
+from sym.returns.extremes import compute_extreme_rows
 from sym.returns.windows import WINDOWS, base_date, canonical_return, end_date, period_years
 
 
@@ -62,6 +63,7 @@ def alpha(asset_return: Decimal | None, benchmark_return: Decimal | None) -> Dec
 class IndexReturnsSummary:
     series: int = 0  # index instruments (sym_id)
     rows: int = 0
+    extreme_rows: int = 0
 
 
 def _index_series(conn: psycopg.Connection) -> list[int]:
@@ -98,10 +100,41 @@ def _upsert(conn: psycopg.Connection, rows: Sequence[tuple]) -> None:
         )
 
 
+def _upsert_extremes(conn: psycopg.Connection, sym_id: int, rows: Sequence) -> None:
+    """UPSERT index 52-week extremes (Story 3.2-ext) — one txn per series, no gate."""
+    if not rows:
+        return
+    with conn.transaction(), conn.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO fact_index_extremes
+                (sym_id, as_of_date, high_52w, low_52w, high_52w_date, low_52w_date,
+                 pct_off_high, pct_off_low, input_hash)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (sym_id, as_of_date) DO UPDATE
+                SET high_52w = EXCLUDED.high_52w, low_52w = EXCLUDED.low_52w,
+                    high_52w_date = EXCLUDED.high_52w_date,
+                    low_52w_date = EXCLUDED.low_52w_date,
+                    pct_off_high = EXCLUDED.pct_off_high, pct_off_low = EXCLUDED.pct_off_low,
+                    input_hash = EXCLUDED.input_hash
+                WHERE fact_index_extremes.input_hash IS DISTINCT FROM EXCLUDED.input_hash
+            """,
+            [
+                (sym_id, r.as_of_date, r.high_52w, r.low_52w, r.high_52w_date,
+                 r.low_52w_date, r.pct_off_high, r.pct_off_low, r.input_hash)
+                for r in rows
+            ],
+        )
+
+
 def recompute_index_returns(
     conn: psycopg.Connection, *, start_date: date, end_date: date
 ) -> IndexReturnsSummary:
-    """Materialize benchmark index returns into ``fact_index_returns`` for [start_date, end_date]."""
+    """Materialize benchmark index returns into ``fact_index_returns`` for [start_date, end_date].
+
+    The same per-series pass also materializes the index 52-week extremes (Story 3.2-ext)
+    into ``fact_index_extremes`` from the level series (no gate — index levels are unflagged).
+    """
     conn.autocommit = True
     summary = IndexReturnsSummary()
     for sym_id in _index_series(conn):
@@ -114,8 +147,14 @@ def recompute_index_returns(
             continue
         rows = index_return_rows(sym_id, levels, as_of_dates, sessions)
         _upsert(conn, rows)
+        # current_calendar_version is figi/MIC-scoped and indexes use their own level
+        # dates as the session set, so the extreme hash is keyed on None (no exchange
+        # calendar) — the (sym_id, as_of_date, levels) inputs still re-dirty on a revision.
+        extreme_rows = compute_extreme_rows(levels, as_of_dates, None)
+        _upsert_extremes(conn, sym_id, extreme_rows)
         summary.series += 1
         summary.rows += len(rows)
+        summary.extreme_rows += len(extreme_rows)
     return summary
 
 

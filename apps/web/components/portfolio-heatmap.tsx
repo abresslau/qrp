@@ -24,6 +24,11 @@ export type CompositionHolding = {
   live_return: number | null;
   // trailing 1D/1M/3M/6M returns re-based to the live price (plain EOD when not priced; null otherwise)
   window_returns: Record<string, number | null>;
+  // 52-week range: trailing-52w adjusted-close low/high and where the current price sits in it
+  // (0 = at the low, 1 = at the high). null when no extremes row.
+  low_52w: number | null;
+  high_52w: number | null;
+  range_pct: number | null;
   freshness: string;
 };
 export type SectorSlice = {

@@ -30,16 +30,20 @@ class _Cur:
 
 class _SymConn:
     """Fake sym read conn — dispatches by SQL: the ``fact_returns`` window-returns query gets
-    ``ret_rows`` ((figi, code, pr) tuples), every other query gets the meta ``rows``. RECORDS the
-    SQL it sees so a test can assert the live path issues no INSERT/UPDATE."""
+    ``ret_rows`` ((figi, code, pr) tuples), the ``fact_price_extremes`` query gets ``ext_rows``
+    ((figi, low_52w, high_52w) tuples), every other query gets the meta ``rows``. RECORDS the SQL
+    it sees so a test can assert the live path issues no INSERT/UPDATE."""
 
-    def __init__(self, rows, ret_rows=None):
+    def __init__(self, rows, ret_rows=None, ext_rows=None):
         self._rows = rows
         self._ret_rows = ret_rows or []
+        self._ext_rows = ext_rows or []
         self.seen: list[str] = []
 
     def execute(self, sql, params=None):
         self.seen.append(sql)
+        if "fact_price_extremes" in sql:
+            return _Cur(self._ext_rows)
         if "fact_returns" in sql:
             return _Cur(self._ret_rows)
         return _Cur(self._rows)
@@ -158,6 +162,58 @@ def test_composition_window_returns_rebased_to_live(monkeypatch):
     # F3 priced but last_close missing -> not computable -> null even with a stored pr
     assert by["F3"]["live_return"] == pytest.approx(0.20)
     assert by["F3"]["window_returns"]["1M"] is None
+
+
+def test_composition_52w_range_positions_the_current_price(monkeypatch):
+    # F1 priced live (uses the live price within the range); F2 unpriced (uses last_close);
+    # F3 has no extremes row (range fields null); F4 has a degenerate range (low == high -> null).
+    _wire(monkeypatch, weights={
+        "F1": Decimal("0.4"), "F2": Decimal("0.3"), "F3": Decimal("0.2"), "F4": Decimal("0.1"),
+    })
+    sym = _SymConn(
+        [
+            ("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, 100.0),
+            ("F2", "MSFT", "XNAS", "Tech", None, "Microsoft", "USD", None, None, None, None, 60.0),
+            ("F3", "GOOG", "XNAS", "Tech", None, "Alphabet", "USD", None, None, None, None, 50.0),
+            ("F4", "ZZZ", "XNAS", "Tech", None, "Zed", "USD", None, None, None, None, 80.0),
+        ],
+        # (figi, low_52w, high_52w) — F3 omitted (no row); F4 degenerate.
+        ext_rows=[
+            ("F1", Decimal("50"), Decimal("150")),
+            ("F2", Decimal("40"), Decimal("80")),
+            ("F4", Decimal("80"), Decimal("80")),
+        ],
+    )
+    monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
+        "AAPL": RawQuote(125.0, 100.0, "USD", _EPOCH),  # F1 priced live at 125
+        # MSFT absent -> F2 unpriced (falls back to last_close 60)
+    })
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    by = {h["figi"]: h for h in out["holdings"]}
+
+    # F1: live price 125 in [50, 150] -> (125-50)/100 = 0.75
+    assert by["F1"]["low_52w"] == pytest.approx(50.0) and by["F1"]["high_52w"] == pytest.approx(150.0)
+    assert by["F1"]["range_pct"] == pytest.approx(0.75)
+    # F2: not priced live -> last_close 60 in [40, 80] -> (60-40)/40 = 0.5
+    assert by["F2"]["range_pct"] == pytest.approx(0.5)
+    # F3: no extremes row -> all three fields null
+    assert by["F3"]["low_52w"] is None and by["F3"]["high_52w"] is None and by["F3"]["range_pct"] is None
+    # F4: degenerate range (high == low) -> range_pct null (no divide-by-zero)
+    assert by["F4"]["range_pct"] is None
+
+
+def test_composition_52w_range_clamps_a_fresh_live_high(monkeypatch):
+    # A live print above the close-based 52w high clamps to 1.0 (a full bar, never overflow).
+    _wire(monkeypatch, weights={"F1": Decimal("1.0")})
+    sym = _SymConn(
+        [("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, 100.0)],
+        ext_rows=[("F1", Decimal("50"), Decimal("120"))],
+    )
+    monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
+        "AAPL": RawQuote(130.0, 100.0, "USD", _EPOCH),  # 130 > 120 high -> clamp to 1.0
+    })
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    assert out["holdings"][0]["range_pct"] == pytest.approx(1.0)
 
 
 def test_composition_window_returns_guard_nonfinite_base(monkeypatch):

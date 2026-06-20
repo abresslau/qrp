@@ -35,6 +35,7 @@ SYM_READ_SURFACE = {
     "gics_scd",  # GICS sector/industry — analytics' live portfolio composition (sector pizza)
     "exchange",  # exchange→country — the live composition pivot (explorer-style per-stock columns)
     "prices_raw",  # latest EOD volume — the live composition pivot (explorer-style per-stock columns)
+    "fact_price_extremes",  # 52-week high/low — the live composition pivot's 52W range bar (Story 3.2-ext)
 }
 
 # The known sym public relations OUTSIDE the read surface (kept current by hand from
@@ -49,4 +50,5 @@ SYM_INTERNAL_RELATIONS = {
     "instrument_xref", "corporate_actions", "currency", "index_levels", "price_gaps",
     "universe_benchmark", "universe_member_resolution", "universe_monitor_log",
     "v_fx", "v_fx_daily", "v_prices_adjusted", "validation_run_log",
+    "fact_index_extremes",  # 52-week index extremes (Story 3.2-ext) — not yet consumed by any API reader
 }

@@ -23,6 +23,33 @@ function retClass(r: number | null): string {
   return r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
 }
 
+// 52-week range bar: low — [track with a marker at the current price] — high. The marker sits at
+// `pct` of the way from the 52w low to the 52w high (0 = at the low, 1 = at the high); its colour
+// signals proximity (near-high green, near-low red, mid amber). Renders "—" when the API has no
+// extremes row or a degenerate range. fmtPrice keeps the endpoint labels consistent with the Price column.
+function RangeBar({ low, high, pct: p }: { low: number | null; high: number | null; pct: number | null }) {
+  if (low == null || high == null || p == null || !Number.isFinite(p)) {
+    return <span className="text-muted">—</span>;
+  }
+  const pos = Math.min(100, Math.max(0, p * 100));
+  const tone = p >= 0.66 ? "bg-emerald-500" : p <= 0.34 ? "bg-rose-500" : "bg-amber-500";
+  return (
+    <div
+      className="flex items-center justify-end gap-1.5"
+      title={`52W ${fmtPrice(low)} – ${fmtPrice(high)} · ${pos.toFixed(0)}% of range`}
+    >
+      <span className="tabular-nums text-[10px] text-muted">{fmtPrice(low)}</span>
+      <div className="relative h-1.5 w-16 rounded-full bg-fg/15">
+        <div
+          className={`absolute top-1/2 h-2.5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-sm ${tone}`}
+          style={{ left: `${pos}%` }}
+        />
+      </div>
+      <span className="tabular-nums text-[10px] text-muted">{fmtPrice(high)}</span>
+    </div>
+  );
+}
+
 // Trailing return windows shown after Price — re-based to the live price by the API. `key` is the
 // window_returns code; `label` is the column header. Order = column order.
 const WINDOWS = [
@@ -70,7 +97,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
 
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-surface">
-      <table className="w-full min-w-[64rem] text-xs">
+      <table className="w-full min-w-[72rem] text-xs">
         <thead className="border-b border-border bg-fg/5 text-left text-muted">
           <tr>
             <th className="px-2 py-1.5 font-medium">Ticker</th>
@@ -83,6 +110,7 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
             {WINDOWS.map((w) => (
               <th key={w.key} className="px-2 py-1.5 text-right font-medium">{w.label}</th>
             ))}
+            <th className="px-2 py-1.5 text-right font-medium">52W Range</th>
             <th className="px-2 py-1.5 text-right font-medium">Daily P&amp;L</th>
             <th className="px-2 py-1.5 text-right font-medium">MTD P&amp;L</th>
             <th className="px-2 py-1.5 text-right font-medium">YTD P&amp;L</th>
@@ -98,8 +126,8 @@ export function PortfolioPivot({ data }: { data: Composition | null }) {
               Total · {data.n_holdings} holdings
             </td>
             <td className="px-2 py-1.5 text-right tabular-nums">{wpct(data.total_weight)}</td>
-            {/* blank span over Price + 1D/1M/3M/6M (returns don't aggregate) */}
-            <td className="px-2 py-1.5" colSpan={5} />
+            {/* blank span over Price + 1D/1M/3M/6M + 52W Range (none aggregate) */}
+            <td className="px-2 py-1.5" colSpan={6} />
             {PNL_COLS.map(({ win }) => (
               <td key={win} className={`px-2 py-1.5 text-right tabular-nums ${retClass(totalPnls[win])}`}>
                 {pct(totalPnls[win])}
@@ -143,8 +171,8 @@ function SectorGroup({
         <td className="px-2 py-1 text-right font-semibold tabular-nums text-fg">
           {gross > 0 ? `${((wt / gross) * 100).toFixed(1)}%` : "—"}
         </td>
-        {/* blank span over Price + 1D/1M/3M/6M */}
-        <td colSpan={5} />
+        {/* blank span over Price + 1D/1M/3M/6M + 52W Range */}
+        <td colSpan={6} />
         {PNL_COLS.map(({ win }) => (
           <td key={win} className={`px-2 py-1 text-right font-semibold tabular-nums ${retClass(pnls[win])}`}>
             {pct(pnls[win])}
@@ -170,6 +198,9 @@ function SectorGroup({
               </td>
             );
           })}
+          <td className="px-2 py-1">
+            <RangeBar low={h.low_52w} high={h.high_52w} pct={h.range_pct} />
+          </td>
           {PNL_COLS.map(({ win }) => {
             const c = pnlOf(h, win);
             return (

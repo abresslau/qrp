@@ -439,6 +439,23 @@ class DbAnalyticsGateway:
             if pr is not None:
                 pr_by_figi[cf][code] = float(pr)
 
+        # Latest (non-gated) 52-week adjusted-close low/high per holding — the 52W range bar
+        # (Story 3.2-ext). One query for all figis; the loop positions the live/last price within.
+        ext_by_figi: dict[str, tuple[float | None, float | None]] = {f: (None, None) for f in figis}
+        for cf, low_52w, high_52w in self._sym.execute(
+            """
+            SELECT DISTINCT ON (composite_figi) composite_figi, low_52w, high_52w
+              FROM fact_price_extremes
+             WHERE composite_figi = ANY(%s) AND NOT gated
+             ORDER BY composite_figi, as_of_date DESC
+            """,
+            (figis,),
+        ).fetchall():
+            ext_by_figi[cf] = (
+                float(low_52w) if low_52w is not None else None,
+                float(high_52w) if high_52w is not None else None,
+            )
+
         now = quotes.now_epoch() if now is None else now
         ysym_by_figi = {
             f: quotes.yahoo_symbol_for(meta.get(f, _MISSING)[0], meta.get(f, _MISSING)[1])
@@ -508,6 +525,18 @@ class DbAnalyticsGateway:
                     win[code] = (price * (1.0 + pr) / lc - 1.0) if lc_ok else None
                 else:
                     win[code] = pr  # not priced live -> plain EOD trailing return
+            # 52-week range position: place the live price (or the last close when not priced
+            # live) within [low_52w, high_52w]. Clamped to [0, 1] — a live print beyond the
+            # close-based extreme reads as a full/empty bar rather than overflowing. null unless
+            # both bounds exist, the range is non-degenerate, and a finite reference price exists.
+            low_52w, high_52w = ext_by_figi[figi]
+            ref = price if price is not None else (lc if lc_ok else None)
+            range_pct: float | None = None
+            if (
+                low_52w is not None and high_52w is not None
+                and high_52w > low_52w and ref is not None and math.isfinite(ref)
+            ):
+                range_pct = min(1.0, max(0.0, (ref - low_52w) / (high_52w - low_52w)))
             holdings.append(
                 {"figi": figi, "ticker": tk, "name": name,
                  "sector": sector, "industry": industry, "mic": mic,
@@ -515,7 +544,9 @@ class DbAnalyticsGateway:
                  "weight": w, "currency": currency,
                  "market_cap_usd": float(mcap) if mcap is not None else None,
                  "volume": int(volume) if volume is not None else None,
-                 "price": price, "live_return": lr, "window_returns": win, "freshness": cfresh}
+                 "price": price, "live_return": lr, "window_returns": win,
+                 "low_52w": low_52w, "high_52w": high_52w, "range_pct": range_pct,
+                 "freshness": cfresh}
             )
 
         holdings.sort(key=lambda h: abs(h["weight"]), reverse=True)

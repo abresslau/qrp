@@ -56,3 +56,5 @@ prices_review_per_flag [prices_review_sweep_flag] 2026-06-10T22:00:00Z Andre <ab
 fx_rate_review [fx_rate] 2026-06-10T22:05:00Z Andre <ab@gladstone-management.com> # Durable FX plausibility rejections + accept-un-wedges-band (Story S.1)
 fx_rate_review_superseded [fx_rate_review] 2026-06-10T23:00:00Z Andre <ab@gladstone-management.com> # 'superseded' resolution: load_fx drains moot rejection rows (S.1 review)
 gics_source_opinion [gics_scd] 2026-06-18T12:00:00Z Andre <ab@gladstone-management.com> # Per-source GICS opinion matrix (multi-source classification; gics_scd stays the resolved truth)
+fact_price_extremes [fact_returns] 2026-06-20T12:00:00Z Andre <ab@gladstone-management.com> # 52-week high/low of the adjusted close + pct-off (Story 3.2-ext)
+fact_index_extremes [fact_index_returns] 2026-06-20T12:30:00Z Andre <ab@gladstone-management.com> # 52-week high/low of the index level + pct-off (Story 3.2-ext)

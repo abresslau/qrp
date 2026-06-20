@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sym.benchmarks.returns import alpha, index_return_rows
+from sym.benchmarks.returns import IndexReturnsSummary, alpha, index_return_rows
 
 
 def test_alpha_excess_return():
@@ -36,3 +36,8 @@ def test_index_return_rows_insufficient_history_is_none():
     # zero-length span can't be annualized).
     for _s, wid, _a, ret in rows:
         assert ret == Decimal("0") if wid == 27 else ret is None
+
+
+def test_index_summary_counts_extreme_rows():
+    """IndexReturnsSummary exposes extreme_rows for the benchmarks CLI line (Story 3.2-ext)."""
+    assert IndexReturnsSummary().extreme_rows == 0

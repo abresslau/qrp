@@ -491,7 +491,7 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
         return 1
     print(
         f"recompute PR+TR [{start_date} .. {end_date}]: {summary.securities} securities, "
-        f"{summary.rows:,} fact_returns rows"
+        f"{summary.rows:,} fact_returns rows, {summary.extreme_rows:,} fact_price_extremes rows"
     )
     return 0
 
@@ -619,7 +619,9 @@ def _cmd_msci_import(args: argparse.Namespace) -> int:
                 currency_code=args.currency,
             )
             end_date = date.today()
-            recompute_index_returns(conn, start_date=end_date - DEFAULT_LOOKBACK, end_date=end_date)
+            rets = recompute_index_returns(
+                conn, start_date=end_date - DEFAULT_LOOKBACK, end_date=end_date
+            )
     except ValueError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -631,7 +633,9 @@ def _cmd_msci_import(args: argparse.Namespace) -> int:
         return 1
     print(
         f"msci import ({args.msci_code}) -> sym_id {summary.sym_id}: "
-        f"parsed {summary.parsed}, {summary.written} levels written"
+        f"parsed {summary.parsed}, {summary.written} levels written; "
+        f"index returns: {rets.rows:,} rows / {rets.series} series "
+        f"({rets.extreme_rows:,} extreme rows)"
     )
     return 0
 
@@ -667,7 +671,8 @@ def _cmd_benchmarks(args: argparse.Namespace) -> int:
     print(
         f"benchmarks: {summary.instruments} instruments, "
         f"{summary.levels_written} levels written, {summary.deferred} deferred (MSCI), "
-        f"{summary.gaps} gaps; index returns: {rets.rows:,} rows / {rets.series} series; "
+        f"{summary.gaps} gaps; index returns: {rets.rows:,} rows / {rets.series} series "
+        f"({rets.extreme_rows:,} extreme rows); "
         f"universe links: {links.linked} created; figis: {attached} attached"
     )
     return 0

@@ -1,4 +1,10 @@
 
+## Deferred from: code review of 3.2-ext-price-extremes-52w (2026-06-20)
+
+- **Gateway shows a silently-stale 52w window when the latest extremes row is gated** (`packages/analytics/src/analytics/gateway.py`) — `SELECT DISTINCT ON (composite_figi) … WHERE NOT gated ORDER BY as_of_date DESC` returns an *older* non-gated row when today's row is gated (unreviewed flag), with no recency floor or staleness signal in the UI. Deferred (Decision 2): belongs with the surfacing follow-up's range-bar polish, not this calc-layer story. Fix when picked up: bound recency or render "—" on a gated-latest row.
+- **Index path has no orphan DELETE for `fact_index_extremes`** (`packages/sym/src/sym/benchmarks/returns.py`) — `recompute_index_returns` is UPSERT-only with no DELETE for either `fact_index_returns` (pre-existing) or the new `fact_index_extremes`. A removed/corrected index level date leaves a stale extreme row. Deferred: fixing it consistently means adding orphan-delete to the index-returns sibling too (broader than this story); index levels are append-mostly so practical risk is low. AC#5 delete-orphan parity is satisfied on the equity path it specifies.
+- **Anti-orphan / dirty-set tests are source-string assertions, not behavioral DB tests** (`packages/sym/tests/test_loader.py`) — the new tests grep the loader source for the two-table DELETE loop and the dirty-set WHERE rather than exercising a DB round-trip. Matches the repo's DB-free unit convention (`test_v_prices_adjusted_does_not_join_securities_status`). A behavioral test against a transient DB would be stronger but is out of the DB-free scope.
+
 ## Deferred from: code review of the registry refactor (2026-06-17b)
 
 - **No `_cmd_classify` loop-integration test:** the registry units (`run_fill_pass` run/skip/error/empty paths) + the live `sym classify`/`--llm` smoke cover behavior, but nothing tests the CLI's `[run_fill_pass(...) for spec in fill_specs(...)]` loop + the uniform report-printing branches (skipped/error/empty/success, stderr vs stdout) end to end. A full integration test needs a DB or heavy `_cmd_classify` mock; the loop is simple + live-verified, so deferred.

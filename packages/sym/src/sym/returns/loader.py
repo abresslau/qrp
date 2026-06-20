@@ -19,6 +19,7 @@ from decimal import Decimal
 import psycopg
 
 from sym.calendar.snapshot import current_calendar_version
+from sym.returns.extremes import ExtremeRow, compute_extreme_rows
 from sym.returns.windows import (
     INCEPTION,
     WINDOWS,
@@ -243,7 +244,8 @@ def _upsert(conn: psycopg.Connection, rows: Sequence[ReturnRow]) -> None:
             "pr numeric, tr numeric, input_hash text, gated boolean) ON COMMIT DROP"
         )
         copy_sql = (
-            "COPY _ret (composite_figi, window_id, as_of_date, pr, tr, input_hash, gated) FROM STDIN"
+            "COPY _ret (composite_figi, window_id, as_of_date, pr, tr, input_hash, gated) "
+            "FROM STDIN"
         )
         with cur.copy(copy_sql) as cp:
             for r in rows:
@@ -265,10 +267,57 @@ def _upsert(conn: psycopg.Connection, rows: Sequence[ReturnRow]) -> None:
         )
 
 
+def _upsert_extremes(
+    conn: psycopg.Connection, figi: str, rows: Sequence[ExtremeRow]
+) -> None:
+    """COPY 52-week extreme rows into a temp table then UPSERT — durable per figi.
+
+    Same dirty-set skip as ``_upsert``: rewrite only rows whose ``input_hash`` or
+    ``gated`` changed, so the nightly recompute touches just the moved extremes.
+    """
+    if not rows:
+        return
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "CREATE TEMP TABLE _ext (composite_figi char(12), as_of_date date, "
+            "high_52w numeric, low_52w numeric, high_52w_date date, low_52w_date date, "
+            "pct_off_high numeric, pct_off_low numeric, input_hash text, gated boolean) "
+            "ON COMMIT DROP"
+        )
+        copy_sql = (
+            "COPY _ext (composite_figi, as_of_date, high_52w, low_52w, high_52w_date, "
+            "low_52w_date, pct_off_high, pct_off_low, input_hash, gated) FROM STDIN"
+        )
+        with cur.copy(copy_sql) as cp:
+            for r in rows:
+                cp.write_row(
+                    (figi, r.as_of_date, r.high_52w, r.low_52w, r.high_52w_date,
+                     r.low_52w_date, r.pct_off_high, r.pct_off_low, r.input_hash, r.gated)
+                )
+        cur.execute(
+            """
+            INSERT INTO fact_price_extremes
+                (composite_figi, as_of_date, high_52w, low_52w, high_52w_date,
+                 low_52w_date, pct_off_high, pct_off_low, input_hash, gated)
+            SELECT composite_figi, as_of_date, high_52w, low_52w, high_52w_date,
+                   low_52w_date, pct_off_high, pct_off_low, input_hash, gated FROM _ext
+            ON CONFLICT (composite_figi, as_of_date) DO UPDATE
+                SET high_52w = EXCLUDED.high_52w, low_52w = EXCLUDED.low_52w,
+                    high_52w_date = EXCLUDED.high_52w_date,
+                    low_52w_date = EXCLUDED.low_52w_date,
+                    pct_off_high = EXCLUDED.pct_off_high, pct_off_low = EXCLUDED.pct_off_low,
+                    input_hash = EXCLUDED.input_hash, gated = EXCLUDED.gated
+                WHERE fact_price_extremes.input_hash IS DISTINCT FROM EXCLUDED.input_hash
+                   OR fact_price_extremes.gated IS DISTINCT FROM EXCLUDED.gated
+            """
+        )
+
+
 @dataclass
 class RecomputeSummary:
     securities: int = 0
     rows: int = 0
+    extreme_rows: int = 0
 
 
 def load_returns(
@@ -301,11 +350,12 @@ def load_returns(
         as_of_dates = [d for d in sorted(adj) if start_date <= d <= end_date]
         # Drop rows whose as-of date no longer has a price (e.g. an overwrite removed a
         # vendor-phantom bar) — the upsert alone never deletes, so they'd live forever.
-        conn.execute(
-            "DELETE FROM fact_returns WHERE composite_figi = %s "
-            "AND as_of_date BETWEEN %s AND %s AND NOT (as_of_date = ANY(%s))",
-            (figi, start_date, end_date, as_of_dates),
-        )
+        for table in ("fact_returns", "fact_price_extremes"):
+            conn.execute(
+                f"DELETE FROM {table} WHERE composite_figi = %s "  # noqa: S608 (fixed table list)
+                "AND as_of_date BETWEEN %s AND %s AND NOT (as_of_date = ANY(%s))",
+                (figi, start_date, end_date, as_of_dates),
+            )
         if not as_of_dates:
             continue
         rows = compute_return_rows(
@@ -313,8 +363,14 @@ def load_returns(
             gated_div_dates=gated_dates & set(dividends),  # flags on dividend ex-dates
         )
         _upsert(conn, rows)
+        # 52-week extremes (Story 3.2-ext) — same per-figi pass, no second price read.
+        extreme_rows = compute_extreme_rows(
+            adj, as_of_dates, calendar_version, gated_dates=gated_dates
+        )
+        _upsert_extremes(conn, figi, extreme_rows)
         summary.securities += 1
         summary.rows += len(rows)
+        summary.extreme_rows += len(extreme_rows)
     return summary
 
 

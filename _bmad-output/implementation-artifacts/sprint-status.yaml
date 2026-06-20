@@ -44,7 +44,7 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-20
+last_updated: 2026-06-20  # 3.2-ext code-review complete -> done
 # 2026-06-20: retrospectively enumerated the standalone / cross-cutting stories (delivered OUTSIDE the
 #   epic decompositions) into a new development_status section below (operator: "we can add to status
 #   file retrospectively"). These are the inline-tracked extras the DERIVATION NOTE references; statuses
@@ -256,6 +256,7 @@ development_status:
   1-9-review-queue-gating: done
   1-10-symbology-scd-transitions: done
   3.1-ext-return-window-expansion: done
+  3.2-ext-price-extremes-52w: done   # 2026-06-20: implemented + migrations deployed + live spot-check exact + surfacing follow-up (52W range bar). Code-review (3 adversarial layers): all 8 ACs satisfied, no High/Med; 3 decisions (hash-price patch / gated-stale defer / accept surfacing scope) + 2 patches applied (input_hash now includes price[as_of]; msci-import summary line); 2 defers logged. 37 sym + 14 api + 17 web tests green, 0 new lint.
   ext-company-names: review        # legacy 'review' — may be stale
   E1-eod-orchestration: review     # legacy 'review' — may be stale
 
