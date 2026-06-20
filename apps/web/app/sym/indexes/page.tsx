@@ -114,6 +114,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 export default function IndexesPage() {
   const [list, setList] = useState<IndexSummary[] | null>(null);
   const [listErr, setListErr] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [data, setData] = useState<LevelSeries | null>(null);
   const [dataErr, setDataErr] = useState<string | null>(null);
@@ -126,8 +127,16 @@ export default function IndexesPage() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`indexes -> ${r.status}`))))
       .then((rows: IndexSummary[]) => {
         if (!alive) return;
-        setList(rows);
-        if (rows.length > 0) setSelected(rows[0].sym_id);
+        // MSCI indexes first (the benchmark set this page is built for), then alphabetical.
+        const sorted = [...rows].sort((a, b) => {
+          const am = a.msci_code ? 0 : 1;
+          const bm = b.msci_code ? 0 : 1;
+          return am !== bm ? am - bm : (a.name ?? "").localeCompare(b.name ?? "");
+        });
+        setList(sorted);
+        // default to the marquee MSCI World Net, else the first index
+        const marquee = sorted.find((r) => /MSCI World Net/i.test(r.name ?? "")) ?? sorted[0];
+        if (marquee) setSelected(marquee.sym_id);
       })
       .catch((e) => alive && setListErr(String(e)));
     return () => {
@@ -189,7 +198,19 @@ export default function IndexesPage() {
         <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
           {/* index list */}
           <nav className="flex flex-col gap-1" aria-label="indexes">
-            {list.map((ix) => {
+            {list.length > 8 ? (
+              <input
+                type="search"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Filter indexes…"
+                aria-label="filter indexes"
+                className="mb-1 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm text-fg placeholder:text-muted"
+              />
+            ) : null}
+            {list
+              .filter((ix) => (ix.name ?? "").toLowerCase().includes(filter.toLowerCase()))
+              .map((ix) => {
               const active = ix.sym_id === selected;
               return (
                 <button

@@ -55,6 +55,28 @@ describe("Indexes page", () => {
     expect(screen.getByText("+66.3%")).toBeInTheDocument(); // 5y 0.663
   });
 
+  it("defaults to the marquee MSCI World Net even when a non-MSCI index sorts first alphabetically", async () => {
+    const MULTI = [
+      { sym_id: 2064, name: "AEX", currency: "EUR", msci_code: null, variant: null, n_levels: 8585, first_date: "1992-10-12", last_date: "2026-06-05", last_level: 1041.1 },
+      { sym_id: 2210, name: "MSCI World Net (USD)", currency: "USD", msci_code: "990100", variant: "NETR", n_levels: 6646, first_date: "2000-12-29", last_date: "2026-06-19", last_level: 15585.46 },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        if (url.includes("/levels"))
+          return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(LEVELS) });
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(MULTI) });
+      }),
+    );
+    render(<IndexesPage />);
+    // AEX is in the list, but the selected detail panel is the marquee MSCI World Net
+    expect(await screen.findByText("AEX")).toBeInTheDocument();
+    const detail = await screen.findByRole("img", { name: /Index level time series/i });
+    const section = detail.closest("section")!;
+    expect(section.textContent).toMatch(/MSCI World Net/);
+    expect(section.textContent).not.toMatch(/AEX/);
+  });
+
   it("shows an honest empty state with the msci-pull hint when no index data", async () => {
     stub({ empty: true });
     render(<IndexesPage />);
