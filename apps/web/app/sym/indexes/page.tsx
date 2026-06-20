@@ -119,6 +119,7 @@ export default function IndexesPage() {
   const [data, setData] = useState<LevelSeries | null>(null);
   const [dataErr, setDataErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [range, setRange] = useState<"1Y" | "5Y" | "Max">("Max");
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -172,6 +173,17 @@ export default function IndexesPage() {
   }, [selected]);
 
   const sel = useMemo(() => list?.find((i) => i.sym_id === selected) ?? null, [list, selected]);
+
+  // chart slice for the selected range (stats stay full-history; only the chart zooms)
+  const chartSeries = useMemo(() => {
+    const s = data?.series ?? [];
+    if (range === "Max" || s.length < 2) return s;
+    const lastT = new Date(s[s.length - 1].date).getTime();
+    const days = range === "1Y" ? 365 : 5 * 365;
+    const cutoff = new Date(lastT - days * 864e5).toISOString().slice(0, 10);
+    const sliced = s.filter((p) => p.date >= cutoff);
+    return sliced.length >= 2 ? sliced : s;
+  }, [data, range]);
 
   return (
     <div className="w-full">
@@ -261,7 +273,25 @@ export default function IndexesPage() {
                 ) : loading || !data ? (
                   <p className="text-sm text-muted">Loading series…</p>
                 ) : (
-                  <LevelChart series={data.series} currency={sel.currency} />
+                  <>
+                    <div className="mb-1 flex justify-end">
+                      <div className="inline-flex overflow-hidden rounded-md border border-border text-xs">
+                        {(["1Y", "5Y", "Max"] as const).map((rg) => (
+                          <button
+                            key={rg}
+                            type="button"
+                            onClick={() => setRange(rg)}
+                            className={`px-2 py-0.5 ${
+                              range === rg ? "bg-fg/10 font-medium text-fg" : "text-muted hover:bg-fg/5"
+                            }`}
+                          >
+                            {rg}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <LevelChart series={chartSeries} currency={sel.currency} />
+                  </>
                 )}
               </>
             ) : null}

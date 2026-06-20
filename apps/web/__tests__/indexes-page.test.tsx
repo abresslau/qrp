@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import IndexesPage from "@/app/sym/indexes/page";
@@ -53,6 +53,10 @@ describe("Indexes page", () => {
     expect(screen.getByText("YTD")).toBeInTheDocument();
     expect(screen.getByText("+8.2%")).toBeInTheDocument(); // ytd 0.082
     expect(screen.getByText("+66.3%")).toBeInTheDocument(); // 5y 0.663
+    // chart range selector present; switching range keeps the chart rendered
+    fireEvent.click(screen.getByRole("button", { name: /^Max$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^1Y$/ }));
+    expect(screen.getByRole("img", { name: /Index level time series/i })).toBeInTheDocument();
   });
 
   it("defaults to the marquee MSCI World Net even when a non-MSCI index sorts first alphabetically", async () => {
