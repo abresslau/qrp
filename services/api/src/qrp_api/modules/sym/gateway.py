@@ -1170,6 +1170,23 @@ class DbSymGateway:
             )
         return out
 
+    def index_reconcile(self) -> dict:
+        """Live index-close fidelity check: stored latest level vs the source's official close, per
+        benchmark index. Read-only (SELECTs index_levels/xref + outbound vendor quotes; no writes) —
+        the same check `sym index-reconcile` runs. Returns the tri-state result for the console."""
+        from sym.benchmarks.levels import YahooIndexLevelSource
+        from sym.validate.index_levels import check_index_level_fidelity
+
+        r = check_index_level_fidelity(self._conn, YahooIndexLevelSource())
+        return {
+            "status": r.status,
+            "checked": r.checked,
+            "warnings": r.warnings,
+            "failures": r.failures,
+            "samples": r.samples,
+            "detail": r.detail,
+        }
+
     def validation(self) -> list[dict]:
         """Recent validation runs (validation_run_log), newest first."""
         rows = self._conn.execute(

@@ -23,7 +23,32 @@ def test_index_routes_exist():
     paths = _route_paths()
     assert "/api/sym/indexes" in paths
     assert "/api/sym/indexes/board" in paths
+    assert "/api/sym/indexes/reconcile" in paths
     assert any(p.startswith("/api/sym/indexes/{sym_id}/levels") for p in paths)
+
+
+def test_index_reconcile_route_returns_check_shape():
+    """`/indexes/reconcile` returns the live fidelity check's tri-state shape. DB/network-free via a
+    dependency override (the gateway method is exercised separately by the sym validate tests)."""
+    from qrp_api.modules.sym.router import _gateway
+
+    class _Gw:
+        def index_reconcile(self):
+            return {
+                "status": "warn", "checked": 17, "warnings": 1, "failures": 0,
+                "samples": ["WARN IBOVESPA (^BVSP) 2026-06-19: stored 168576 vs official 168334 (14.4 bps)"],
+                "detail": "stored latest index close vs source official (warn>=5bps, fail>=50bps)",
+            }
+
+    app = create_app()
+    app.dependency_overrides[_gateway] = lambda: _Gw()
+    client = TestClient(app)
+    resp = client.get("/api/sym/indexes/reconcile")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "warn" and body["checked"] == 17 and body["warnings"] == 1
+    assert "IBOVESPA" in body["samples"][0]
+    app.dependency_overrides.clear()
 
 
 def test_index_board_route_accepts_as_of_date_and_rejects_garbage():

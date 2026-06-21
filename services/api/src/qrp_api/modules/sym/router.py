@@ -269,6 +269,15 @@ class ValidationRun(BaseModel):
     status: str | None
 
 
+class IndexReconcile(BaseModel):
+    status: str  # pass | warn | fail
+    checked: int
+    warnings: int
+    failures: int
+    samples: list[str]
+    detail: str | None
+
+
 @router.get("/health", response_model=SymHealth)
 def sym_health(gw: DbSymGateway = Depends(_gateway)) -> dict:
     return {"module": "sym", "healthy": gw.healthy()}
@@ -436,6 +445,14 @@ def attention(gw: DbSymGateway = Depends(_gateway)) -> dict:
 @router.get("/validation", response_model=list[ValidationRun])
 def validation(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     return gw.validation()
+
+
+@router.get("/indexes/reconcile", response_model=IndexReconcile)
+def index_reconcile(gw: DbSymGateway = Depends(_gateway)) -> dict:
+    """Live index-close fidelity: stored latest level vs the source's official close, per index.
+    Read-only; makes outbound vendor quote calls, so it can take a few seconds. The same check as
+    `sym index-reconcile` / the nightly EOD drift monitor."""
+    return gw.index_reconcile()
 
 
 # ---- benchmark indexes (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----

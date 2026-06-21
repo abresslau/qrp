@@ -1,3 +1,4 @@
+import { IndexReconcilePanel } from "@/components/index-reconcile-panel";
 import { apiGet } from "@/lib/api";
 
 type Run = {
@@ -80,6 +81,8 @@ export default async function ValidationPage() {
         </table>
       </div>
       <p className="mt-4 text-xs text-muted">Live from sym&apos;s validation log.</p>
+
+      <IndexReconcilePanel />
     </div>
   );
 }
