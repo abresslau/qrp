@@ -195,8 +195,8 @@ export default function WeiPage() {
 
   return (
     <div className="w-full">
-      <header className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <h1 className="text-lg font-semibold text-fg">World equity indices</h1>
+      <header className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 2xl:mb-3">
+        <h1 className="text-base font-semibold text-fg 2xl:text-lg">World equity indices</h1>
         <p className="grow text-xs text-muted">
           Major equity indices by region — last level, 1-day change, YTD.
         </p>
@@ -245,13 +245,13 @@ export default function WeiPage() {
         // One table for the whole board so every column lines up across regions; each region is a
         // grouped <tbody> introduced by a full-width banner row.
         <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-          <table className="w-full text-xs [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+          <table className="w-full text-xs leading-tight [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap [@media(min-height:960px)]:leading-normal">
             <thead className="text-[10px] uppercase tracking-wide text-muted">
               <tr className="border-b border-border">
                 {COLS.map((c) => {
                   const active = sort.key === c.id;
                   return (
-                    <th key={c.id} className={`px-2 py-1 font-medium ${ALIGN_CLS[c.align]}`}>
+                    <th key={c.id} className={`px-2 py-0.5 font-medium ${ALIGN_CLS[c.align]} [@media(min-height:960px)]:py-1`}>
                       {c.sortable ? (
                         <button
                           type="button"
@@ -275,7 +275,7 @@ export default function WeiPage() {
                 <tr className="bg-fg/5">
                   <th
                     colSpan={17}
-                    className="border-y border-border/60 px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-muted"
+                    className="border-y border-border/60 px-2 py-0.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted [@media(min-height:960px)]:py-1"
                   >
                     {region}
                   </th>
@@ -284,7 +284,7 @@ export default function WeiPage() {
                   const stale = r.last_date != null && boardDate != null && r.last_date < boardDate;
                   return (
                     <tr key={r.sym_id} className="border-b border-border/30 hover:bg-fg/5">
-                      <td className="px-2 py-0.5 font-medium text-fg">
+                      <td className="px-2 py-0.5 [@media(min-height:960px)]:py-1 font-medium text-fg">
                         {r.name ?? `#${r.sym_id}`}
                         {stale ? (
                           <span
@@ -295,22 +295,22 @@ export default function WeiPage() {
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-2 py-0.5 text-muted">{r.country}</td>
-                      <td className="px-2 py-0.5 text-right tabular-nums text-fg">{fmtNum(r.last)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.chg_pct)}`}>{fmtPct(r.chg_pct)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.d5)}`}>{fmtPct(r.d5)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.mtd)}`}>{fmtPct(r.mtd)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.m1)}`}>{fmtPct(r.m1)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.m3)}`}>{fmtPct(r.m3)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.m6)}`}>{fmtPct(r.m6)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.ytd)}`}>{fmtPct(r.ytd)}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r["1y"])}`}>{fmtPct(r["1y"])}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r["2y"])}`}>{fmtPct(r["2y"])}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r["3y"])}`}>{fmtPct(r["3y"])}</td>
-                      <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r["5y"])}`}>{fmtPct(r["5y"])}</td>
-                      <td className="px-2 py-0.5 text-center"><Range52 lo={r.lo_52w} hi={r.hi_52w} last={r.last} /></td>
-                      <td className="px-2 py-0.5 text-center"><Spark pts={r.spark} /></td>
-                      <td className="px-2 py-0.5 text-right text-muted">{r.currency ?? "—"}</td>
+                      <td className="px-2 py-0.5 [@media(min-height:960px)]:py-1 text-muted">{r.country}</td>
+                      <td className="px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums text-fg">{fmtNum(r.last)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.chg_pct)}`}>{fmtPct(r.chg_pct)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.d5)}`}>{fmtPct(r.d5)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.mtd)}`}>{fmtPct(r.mtd)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.m1)}`}>{fmtPct(r.m1)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.m3)}`}>{fmtPct(r.m3)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.m6)}`}>{fmtPct(r.m6)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r.ytd)}`}>{fmtPct(r.ytd)}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r["1y"])}`}>{fmtPct(r["1y"])}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r["2y"])}`}>{fmtPct(r["2y"])}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r["3y"])}`}>{fmtPct(r["3y"])}</td>
+                      <td className={`px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right tabular-nums ${upDown(r["5y"])}`}>{fmtPct(r["5y"])}</td>
+                      <td className="px-2 py-0.5 [@media(min-height:960px)]:py-1 text-center"><Range52 lo={r.lo_52w} hi={r.hi_52w} last={r.last} /></td>
+                      <td className="px-2 py-0.5 [@media(min-height:960px)]:py-1 text-center"><Spark pts={r.spark} /></td>
+                      <td className="px-2 py-0.5 [@media(min-height:960px)]:py-1 text-right text-muted">{r.currency ?? "—"}</td>
                     </tr>
                   );
                 })}
@@ -320,11 +320,9 @@ export default function WeiPage() {
         </div>
       )}
 
-      <p className="mt-3 text-[11px] leading-snug text-muted">
-        EOD levels from the warehouse (1-day change = last vs prior session). World markets keep
-        different holiday calendars — a row marked <span className="text-amber-500">●</span> had no
-        session on the board date and shows its most recent prior close (the date beside ●). MSCI
-        aggregates shown as Net Return. A QRP view, not affiliated with any vendor.
+      <p className="mt-2 text-[10px] leading-snug text-muted 2xl:mt-3 2xl:text-[11px]">
+        EOD warehouse levels (1D = last vs prior session). <span className="text-amber-500">●</span> =
+        no session on the board date — showing the prior close (date beside ●). MSCI shown as Net Return.
       </p>
     </div>
   );

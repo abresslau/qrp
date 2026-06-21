@@ -49,7 +49,14 @@ type WindowOpt = { code: string; label: string };
 type Node = any;
 
 const W = 1000;
-const H = 640;
+// Two-tier density (see memory: responsive-density-two-tier). H is the map's height in viewBox units
+// (W=1000); rendered height = contentWidth × H/W, so a smaller H = flatter map. Large external monitors
+// are proportionally WIDER/SHORTER than laptops (mostly 16:9 / 21:9, and the fixed sidebar is a small
+// fraction → content aspect ≈ 1.55–1.6:1), whereas laptops trend 16:10 / 3:2 with a chunkier sidebar
+// (content aspect ≈ 1.4:1). So the map must be FLATTER on large screens to fit their shorter height,
+// not taller. Both tiers keep ~the same fraction of the viewport so neither scrolls.
+const H_LAPTOP = 540; // ratio 0.54 — fits a 16:9 1366×768 laptop (the tight case)
+const H_LARGE = 470; // ratio 0.47 — flatter for wide/short large monitors (≥1536px)
 const HEADER = 16;
 const CLAMP = 0.03; // ±3% saturates the color scale (matches the legend)
 
@@ -79,6 +86,21 @@ function useIsDark(): boolean {
     return () => obs.disconnect();
   }, []);
   return dark;
+}
+
+// True on large screens (Tailwind 2xl, ≥1536px). Drives the two-tier density: laptops get the tighter
+// layout (shorter map), large monitors the roomier one. Defaults to false (laptop) for SSR/first paint.
+function useIsLarge(): boolean {
+  const [large, setLarge] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(min-width: 1536px)");
+    const update = () => setLarge(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+  return large;
 }
 
 // Dark text on light tiles, white text on saturated/dark tiles — keeps labels readable.
@@ -127,6 +149,8 @@ export function HeatmapView({
   // in render (react-hooks/refs).
   const [pos, setPos] = useState<{ x: number; y: number; w: number }>({ x: 0, y: 0, w: 0 });
   const isDark = useIsDark();
+  const isLarge = useIsLarge(); // two-tier density: shorter map on laptops, taller on large screens
+  const H = isLarge ? H_LARGE : H_LAPTOP;
   const online = useOnline(); // sidebar offline toggle pauses LIVE auto-refresh
 
   useEffect(() => {
@@ -209,18 +233,18 @@ export function HeatmapView({
       .paddingTop((d: Node) => (d.depth === 1 ? HEADER : 0))
       .round(true)(h);
     return h;
-  }, [data]);
+  }, [data, H]);
 
   const selectCls =
-    "rounded-md border border-border bg-surface px-2 py-1 text-fg outline-none focus:border-fg/40";
+    "rounded-md border border-border bg-surface px-2 py-0.5 text-fg outline-none focus:border-fg/40 2xl:py-1";
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold tracking-tight text-fg">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3 2xl:mb-3">
+        <h1 className="text-base font-semibold tracking-tight text-fg 2xl:text-lg">
           {data?.universe_name ?? "Universe"} Heatmap
         </h1>
-        <div className="flex items-center gap-2 text-sm">
+        <div className="flex items-center gap-2 text-xs 2xl:text-sm">
           <select value={uni} onChange={(e) => setUni(e.target.value)} className={selectCls}>
             {universes.map((u) => (
               <option key={u.universe_id} value={u.universe_id}>
@@ -240,7 +264,7 @@ export function HeatmapView({
       </div>
 
       {win === LIVE && data?.freshness && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs 2xl:mb-3">
           {/* During a refetch show a 'refreshing' state rather than the prior pull's stale numbers,
               and keep the (disabled) button visible so the click has clear feedback. */}
           <span
@@ -293,7 +317,7 @@ export function HeatmapView({
 
       <div
         ref={containerRef}
-        className="relative rounded-xl border border-border bg-surface p-2"
+        className="relative rounded-xl border border-border bg-surface p-1.5 2xl:p-2"
         onMouseMove={(e) => {
           const r = containerRef.current?.getBoundingClientRect();
           if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top, w: r.width });
@@ -425,7 +449,7 @@ export function HeatmapView({
         )}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-3 text-[11px] text-muted 2xl:mt-3 2xl:text-xs">
         <div className="flex items-center gap-2">
           <span>−3%</span>
           <span
