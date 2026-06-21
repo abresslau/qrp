@@ -1122,7 +1122,9 @@ class DbSymGateway:
             last_f = float(last) if last is not None else None
             prev_f = float(prev) if prev is not None else None
             chg = last_f - prev_f if last_f is not None and prev_f is not None else None
-            chg_pct = last_f / prev_f - 1.0 if last_f and prev_f else None
+            # `prev_f` truthiness still guards divide-by-zero; `last_f is not None` lets a legitimate
+            # zero level through (consistent with chg's None-check).
+            chg_pct = last_f / prev_f - 1.0 if last_f is not None and prev_f else None
             s = series.get(sym_id, [])
             asc = [{"date": d.isoformat(), "level": lv} for d, lv in s]
             tr = _trailing_returns(asc)

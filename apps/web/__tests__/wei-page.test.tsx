@@ -50,8 +50,11 @@ describe("WEI (world equity indices) page", () => {
     render(<WeiPage />);
     await screen.findByText("Americas");
     expect(screen.getByText(/EOD · as of 2026-06-19/)).toBeInTheDocument();
-    // FTSE 100's last_date (2026-06-18) lags the board max (2026-06-19) → a stale marker
-    expect(screen.getByTitle(/behind the latest session/)).toBeInTheDocument();
+    // FTSE 100's last_date (2026-06-18) lags the board max (2026-06-19) → a stale ● with a
+    // holiday-aware tooltip naming the last close (date shown in the tooltip, not inline)
+    expect(
+      screen.getByTitle(/No session on 2026-06-19 .* showing the last close, 2026-06-18/),
+    ).toBeInTheDocument();
   });
 
   it("re-fetches a backdated board when the as-of date changes, then resets to latest", async () => {
@@ -74,6 +77,34 @@ describe("WEI (world equity indices) page", () => {
     // a Latest reset clears the param
     fireEvent.click(screen.getByText("Latest"));
     await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/indexes/board"));
+  });
+
+  it("defaults the date picker to the latest session (not empty, not today)", async () => {
+    render(<WeiPage />);
+    await screen.findByText("Americas");
+    // the latest session across the board is 2026-06-19 (S&P / Nikkei); the picker shows it by default
+    const input = document.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(input.value).toBe("2026-06-19");
+    // no "Latest" reset shown while at the latest (not backdated)
+    expect(screen.queryByText("Latest")).toBeNull();
+  });
+
+  it("sorts within each region — default by index name, click a header to re-sort", async () => {
+    const TWO = [
+      { ...BOARD[0], sym_id: 11, name: "Zeta Index", region: "Americas", "1y": 0.05 },
+      { ...BOARD[0], sym_id: 12, name: "Alpha Index", region: "Americas", "1y": 0.99 },
+    ];
+    stub(TWO);
+    const { container } = render(<WeiPage />);
+    await screen.findByText("Americas");
+    const names = () => [...container.querySelectorAll("tbody td:first-child")].map((td) => td.textContent?.replace(/●.*/, "").trim());
+    // default = index name ascending
+    expect(names()).toEqual(["Alpha Index", "Zeta Index"]);
+    // sort by 1Y → numeric descending (Alpha 0.99 before Zeta 0.05 stays, so flip to check: click twice)
+    fireEvent.click(screen.getByLabelText("Sort by 1Y"));
+    expect(names()).toEqual(["Alpha Index", "Zeta Index"]); // 1Y desc: 0.99 then 0.05
+    fireEvent.click(screen.getByLabelText("Sort by 1Y")); // toggle to ascending
+    expect(names()).toEqual(["Zeta Index", "Alpha Index"]); // 1Y asc: 0.05 then 0.99
   });
 
   it("shows an honest empty state when no index data", async () => {

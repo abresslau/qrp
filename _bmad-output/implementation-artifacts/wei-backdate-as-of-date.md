@@ -107,6 +107,14 @@ day earlier) — consistent with `freshness_per_market` (per-member recency, nev
   2024-09-30 flips the header to "as of 2024-09-30" and re-anchors the rows; the Latest button restores
   the live board.
 
+### Review Findings (code-review of c1736fe + 1c9534f, 2026-06-21)
+- [x] [Review][Patch] `chg_pct` truthiness guard nulls a legitimate-zero level — fixed: `last_f is not None and prev_f` (divisor still guards /0) [services/api/.../sym/gateway.py]
+- [x] [Review][Patch] Date-input `max` only applied when `!asOf` (unbounded after first pick) — fixed: bound to the captured `latestDate` always [apps/web/app/monitor/wei/page.tsx]
+- [x] [Review][Defer] 1900-day lookback is anchored on as-of/global-max, not each index's own anchor — 3Y/5Y can read None for a pathologically-stale market (tests already assert honest-None; 75d cushion fine for daily data)
+- [x] [Review][Defer] story #1 (`wei-world-equity-indices`) AC#3/Task3/File-List still say `/sym/wei` + `SYM_SUBNAV` — stale after the Monitor move (doc-only)
+- [x] [Review][Defer] A server region outside `REGION_ORDER` is silently dropped from the board (`region_for` only emits the 4 known regions today; latent)
+- Dismissed (3): `_period_return`/`_trailing_returns` consistency (verified identical guard+series); ISO-string date compare (safe, zero-padded); dropped Net-Chg/As-of columns (intended in-session design change).
+
 ## Dev Notes
 
 ### Where this fits
