@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
-import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
+import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type RunSummary = Schemas["RunSummary"];
 type RunDetail = Schemas["RunDetail"];
@@ -40,7 +40,7 @@ function EquityCurve({ detail }: { detail: RunDetail }) {
     const sy = (v: number) => H - PAD - ((v - minY) / spanY) * (H - 2 * PAD);
     const mk = (sel: (p: RunDetail["curve"][number]) => number) =>
       pts.map((p, i) => `${i ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(sel(p)).toFixed(1)}`).join(" ");
-    const xticks = dateAxisTicks(minX, maxX, 6).map((tk) => ({ x: sx(tk.t), label: tk.label }));
+    const xticks = dateAxisTicks(minX, maxX, axisTickCount(W - 2 * PAD)).map((tk) => ({ x: sx(tk.t), label: tk.label }));
     return { sPath: mk((p) => p.strat), bPath: mk((p) => p.base), xticks, hi: maxY };
   }, [detail]);
 

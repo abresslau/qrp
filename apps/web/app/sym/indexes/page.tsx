@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
+import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type IndexSummary = {
   sym_id: number;
@@ -83,7 +83,7 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
     // Even round-step date ticks anchored at the series start (see lib/date-axis). The chart is
     // index-scaled (not time-scaled), so map each tick time to its nearest observation.
     const times = series.map((p) => new Date(p.date).getTime());
-    const xticks = dateAxisTicks(times[0], times[n - 1], 6).map((tk) => {
+    const xticks = dateAxisTicks(times[0], times[n - 1], axisTickCount(W - PAD_L - PAD_R)).map((tk) => {
       let idx = 0;
       let best = Infinity;
       for (let i = 0; i < times.length; i++) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
+import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 const t = (iso: string) => new Date(iso).getTime();
 
@@ -55,6 +55,18 @@ describe("dateAxisTicks (even round step, phased from the start)", () => {
 
   it("returns [] for a non-positive span", () => {
     expect(dateAxisTicks(t("2024-06-01"), t("2024-06-01"))).toEqual([]);
+  });
+
+  it("axisTickCount scales with width (~1 per 80px) and clamps to [6,16]", () => {
+    expect(axisTickCount(800)).toBe(10); // canonical density (D3 ~10, Highcharts ~100px/tick)
+    expect(axisTickCount(80)).toBe(6); // clamp floor
+    expect(axisTickCount(4000)).toBe(16); // clamp ceiling
+  });
+
+  it("a higher target yields more (denser) ticks", () => {
+    const sparse = dateAxisTicks(t("2001-06-15"), t("2026-06-19"), 6).length;
+    const dense = dateAxisTicks(t("2001-06-15"), t("2026-06-19"), 13).length;
+    expect(dense).toBeGreaterThan(sparse); // 5-year step -> 2-year step
   });
 
   it("tickAnchor: first=start (left edge), rest=middle", () => {

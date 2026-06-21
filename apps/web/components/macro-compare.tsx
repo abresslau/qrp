@@ -3,7 +3,7 @@
 import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
-import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
+import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type SeriesSummary = Schemas["SeriesSummary"];
 type SeriesDetail = Schemas["SeriesDetail"];
@@ -158,7 +158,7 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
         )
         .join(" "),
     }));
-    const xticks = dateAxisTicks(minX, maxX, 6).map((tk) => ({ x: sx(tk.t), label: tk.label }));
+    const xticks = dateAxisTicks(minX, maxX, axisTickCount(W - 2 * PAD)).map((tk) => ({ x: sx(tk.t), label: tk.label }));
     return { lines, lo: minY, hi: maxY, xticks, minX, maxX };
   }, [visible]);
 

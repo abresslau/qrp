@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
-import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
+import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type AltSeries = Schemas["AltSeries"];
 type AltSeriesDetail = Schemas["AltSeriesDetail"];
@@ -37,7 +37,7 @@ function Spark({ detail }: { detail: AltSeriesDetail }) {
     const path = pts.map((p, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)},${sy(p.value).toFixed(1)}`).join(" ");
     // "nice" date ticks mapped to nearest observation (index-scaled chart)
     const times = pts.map((p) => new Date(p.obs_date).getTime());
-    const xticks = dateAxisTicks(times[0], times[times.length - 1], 6).map((tk) => {
+    const xticks = dateAxisTicks(times[0], times[times.length - 1], axisTickCount(W - 2 * PAD)).map((tk) => {
       let idx = 0;
       let best = Infinity;
       for (let i = 0; i < times.length; i++) {

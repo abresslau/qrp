@@ -1,15 +1,14 @@
 // Shared date-axis ticks for the platform's SVG time-series charts.
 //
-// Canonical reference: matplotlib's AutoDateLocator / D3 scaleTime.ticks() place EVENLY-spaced
-// ticks at a "nice" round step (years [1,2,4,5,10], months [1,2,3,4,6], days [1,2,3,7,14]) and let
-// the endpoints float — they rely on the axis having margins. Our charts draw the series
-// edge-to-edge (no margin), so a floating first tick leaves the left edge blank.
+// Canonical reference: matplotlib AutoDateLocator / D3 scaleTime.ticks() — evenly-spaced ticks at a
+// "nice" step chosen from a date ladder (days/months/years × nice multiples), with the tick COUNT
+// scaled to the available width (~1 label per 70-90px; D3 defaults to ~10). They let the endpoints
+// float (relying on axis margins).
 //
-// Fix: keep the canonical EVEN round step, but PHASE it from the data start — the first tick is the
-// start (anchored left edge), every gap is exactly one step (even spacing), the right edge floats by
-// < 1 step. Crucially the UNIT (day/month/year) is chosen by span so the step yields enough ticks
-// (matplotlib's "minticks" idea) AND labels are formatted in that unit — so a 2-year span uses month
-// steps + month labels, never a 1-year step that yields just two ticks.
+// Our adaptation: same width-driven count + nice ladder, but PHASE the step from the data start so
+// the first tick sits on the left edge (our charts are edge-to-edge, no margin) and gaps are even;
+// the right edge floats < 1 step. The step's UNIT decides the label (day "Jun 8" / month "Jun 24" /
+// year "2005"), so a 5y span can use 6-month steps without duplicate year labels.
 //
 // Dates here are date-only ISO strings (UTC midnight); compute/format in UTC to avoid a tz shift.
 
@@ -17,10 +16,33 @@ export type AxisTick = { t: number; label: string };
 
 const DAY = 86_400_000;
 
-function niceStep(rough: number, ladder: number[]): number {
-  for (const s of ladder) if (rough <= s) return s;
-  return ladder[ladder.length - 1];
-}
+type Unit = "day" | "month" | "year";
+// Ascending ladder of nice steps (matplotlib multiples), with an approximate length in days used
+// only to pick the step nearest the ideal spacing.
+const LADDER: { u: Unit; m: number; d: number }[] = [
+  { u: "day", m: 1, d: 1 },
+  { u: "day", m: 2, d: 2 },
+  { u: "day", m: 3, d: 3 },
+  { u: "day", m: 7, d: 7 },
+  { u: "day", m: 14, d: 14 },
+  { u: "month", m: 1, d: 30.44 },
+  { u: "month", m: 2, d: 60.9 },
+  { u: "month", m: 3, d: 91.3 },
+  { u: "month", m: 6, d: 182.6 },
+  { u: "year", m: 1, d: 365.25 },
+  { u: "year", m: 2, d: 730.5 },
+  { u: "year", m: 5, d: 1826.25 },
+  { u: "year", m: 10, d: 3652.5 },
+  { u: "year", m: 25, d: 9131.25 },
+  { u: "year", m: 50, d: 18262.5 },
+  { u: "year", m: 100, d: 36525 },
+];
+
+const yearLabel = (t: number) => String(new Date(t).getUTCFullYear());
+const monthLabel = (t: number) =>
+  new Date(t).toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
+const dayLabel = (t: number) =>
+  new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
 function addYears(t: number, n: number): number {
   const d = new Date(t);
@@ -31,44 +53,38 @@ function addMonths(t: number, n: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + n, d.getUTCDate());
 }
 
-const yearLabel = (t: number) => String(new Date(t).getUTCFullYear());
-const monthLabel = (t: number) =>
-  new Date(t).toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
-const dayLabel = (t: number) =>
-  new Date(t).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+/** Desired tick count from the plot width in viewBox units (~1 label per 80px), clamped sanely. */
+export function axisTickCount(plotWidth: number): number {
+  return Math.max(6, Math.min(16, Math.round(plotWidth / 80)));
+}
 
 /**
- * Evenly-spaced date ticks across [minT, maxT] (ms epoch), phased from the START. The unit is chosen
- * by span — days (≤ ~70d), months (≤ ~3y), else years — so the round step yields a sensible count;
- * labels are formatted in that unit. First tick is exactly `minT` (anchored left edge); last is ≤
- * `maxT` (right edge floats < 1 step). Returns [] for a non-positive span.
+ * Evenly-spaced date ticks across [minT, maxT] (ms epoch), phased from the START. `target` is the
+ * desired tick count (use {@link axisTickCount} from the chart width). The step is the ladder entry
+ * whose length is nearest `span/target`; labels are formatted in that step's unit. First tick is
+ * exactly `minT` (anchored left edge); last is ≤ `maxT` (right floats < 1 step). [] for empty span.
  */
-export function dateAxisTicks(minT: number, maxT: number, target = 6): AxisTick[] {
+export function dateAxisTicks(minT: number, maxT: number, target = 10): AxisTick[] {
   if (!(maxT > minT)) return [];
   const spanDays = (maxT - minT) / DAY;
+  const ideal = spanDays / Math.max(2, target);
+  let pick = LADDER[0];
+  for (const e of LADDER) if (Math.abs(e.d - ideal) < Math.abs(pick.d - ideal)) pick = e;
 
-  let at: (k: number) => number;
-  let label: (t: number) => string;
-  if (spanDays <= 70) {
-    const step = niceStep(spanDays / target, [1, 2, 3, 7, 14]);
-    at = (k) => minT + k * step * DAY;
-    label = dayLabel;
-  } else if (spanDays <= 365 * 3) {
-    const step = niceStep(spanDays / 30.44 / target, [1, 2, 3, 4, 6]);
-    at = (k) => addMonths(minT, k * step);
-    label = monthLabel;
-  } else {
-    const step = niceStep(spanDays / 365.25 / target, [1, 2, 4, 5, 10, 20, 25, 50, 100]);
-    at = (k) => addYears(minT, k * step);
-    label = yearLabel;
-  }
+  const label = pick.u === "year" ? yearLabel : pick.u === "month" ? monthLabel : dayLabel;
+  const at = (k: number): number =>
+    pick.u === "year"
+      ? addYears(minT, k * pick.m)
+      : pick.u === "month"
+        ? addMonths(minT, k * pick.m)
+        : minT + k * pick.m * DAY;
 
   const out: AxisTick[] = [];
   for (let k = 0; ; k++) {
     const t = at(k);
     if (t > maxT) break;
     out.push({ t, label: label(t) });
-    if (out.length > 64) break; // safety against a degenerate zero/tiny step
+    if (out.length > 48) break; // safety
   }
   if (out.length < 2) return [minT, maxT].map((t) => ({ t, label: label(t) }));
   return out;
