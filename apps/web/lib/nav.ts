@@ -34,6 +34,7 @@ export const SYM_SUBNAV: SubItem[] = [
 // existing sym + portfolios APIs — Monitor is a view aggregator, not its own backend package.
 export const MONITOR_SUBNAV: SubItem[] = [
   { href: "/monitor/wei", label: "World equity indices" },
+  { href: "/monitor/fx", label: "FX matrix" },
   { href: "/monitor/heatmap", label: "Heat map" },
   { href: "/monitor/portfolio-live", label: "Portfolio live" },
 ];

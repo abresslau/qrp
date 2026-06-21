@@ -432,7 +432,6 @@ def _read_stored_closes(
     ).fetchall()
     return {session_date: close for session_date, close in rows}
 
-
 def _flag_divergence(
     conn: psycopg.Connection,
     figi: str,

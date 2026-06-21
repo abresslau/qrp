@@ -278,6 +278,33 @@ class IndexReconcile(BaseModel):
     detail: str | None
 
 
+class FxCell(BaseModel):
+    rate: float | None  # units of quote per 1 base (null when a leg is stale/no_data)
+    chg: float | None  # the cross's day-on-day move (drives the green/red heat map)
+    stale: bool
+    pair: str  # the conventional market direction for this pair, e.g. "GBP/USD"
+
+
+class FxMatrixRow(BaseModel):
+    base: str
+    cells: list[FxCell]
+
+
+class FxCurrencyMeta(BaseModel):
+    currency: str
+    status: str  # ok | stale | no_data
+    observed_date: str | None
+    days_stale: int
+    quote_rank: int  # quoting precedence (lower = conventional base)
+
+
+class FxMatrix(BaseModel):
+    as_of_date: str
+    currencies: list[str]
+    meta: list[FxCurrencyMeta]
+    rows: list[FxMatrixRow]
+
+
 @router.get("/health", response_model=SymHealth)
 def sym_health(gw: DbSymGateway = Depends(_gateway)) -> dict:
     return {"module": "sym", "healthy": gw.healthy()}
@@ -453,6 +480,18 @@ def index_reconcile(gw: DbSymGateway = Depends(_gateway)) -> dict:
     Read-only; makes outbound vendor quote calls, so it can take a few seconds. The same check as
     `sym index-reconcile` / the nightly EOD drift monitor."""
     return gw.index_reconcile()
+
+
+@router.get("/fx/matrix", response_model=FxMatrix)
+def fx_matrix(
+    as_of_date: date | None = Query(None, description="Backdate the matrix (latest FX date if omitted)."),
+    currencies: str | None = Query(None, description="CSV currency set; default = G10 majors + CNY/BRL."),
+    gw: DbSymGateway = Depends(_gateway),
+) -> dict:
+    """FX cross-rate matrix: a square grid of major currencies, cell(base, quote) = quote per 1 base
+    (derived from the USD-base fx_rate star, diagonal 1.0). EOD; per-currency as-of staleness."""
+    ccys = [c.strip() for c in currencies.split(",")] if currencies else None
+    return gw.fx_matrix(ccys, as_of_date)
 
 
 # ---- benchmark indexes (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----

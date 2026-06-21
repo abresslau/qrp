@@ -65,6 +65,17 @@ class UniverseRef:
 
 _TRAILING_KEYS = ("mtd", "qtd", "ytd", "1y", "2y", "3y", "5y", "10y")
 
+# Default currency set for the FX cross-rate matrix — the majors basket (G10 + Scandies + HKD/SGD/MXN
+# + CNY/BRL), all populated in fx_rate. USD last (the star base sits at the bottom row / right column
+# so the non-USD crosses read first).
+DEFAULT_FX_MATRIX = [
+    # by FX trading volume, matching Bloomberg FXC's column order (USD prepended on the page):
+    # USD, EUR, JPY, GBP, CHF, CAD, AUD, NZD, then the Scandies + HKD/SGD/MXN + CNY/BRL.
+    "EUR", "JPY", "GBP", "CHF", "CAD", "AUD", "NZD",
+    "SEK", "NOK", "DKK", "HKD", "SGD", "MXN",
+    "CNY", "BRL", "USD",
+]
+
 
 def _period_return(series: list[dict], days: int) -> float | None:
     """Trailing return over a day window: latest level vs the last observation on-or-before
@@ -1169,6 +1180,84 @@ class DbSymGateway:
                 }
             )
         return out
+
+    def fx_matrix(
+        self, currencies: list[str] | None = None, as_of_date: date | None = None
+    ) -> dict:
+        """FX cross-rate matrix: a square grid of major currencies where cell(base, quote) = units of
+        quote per 1 base (= quote_rate / base_rate, both per-USD), diagonal = 1.0. Derived from the
+        USD-base ``fx_rate`` star — two as-of resolutions per currency (the date + its prior
+        observation), then the N×N grid by division (no N²). Each cell carries ``chg`` = the day's move
+        in the cross (for the green/red heat map). ``as_of_date`` backdates the whole matrix (omitted ⇒
+        the latest FX date). A cell whose base or quote leg isn't ``ok`` (stale/no_data) gets a null
+        rate (never a fabricated cross)."""
+        from sym.fx.convention import conventional_pair, quote_rank
+        from sym.fx.resolve import fx_rate
+
+        c = self._conn
+        ccys = [x.strip().upper() for x in (currencies or DEFAULT_FX_MATRIX) if x and x.strip()]
+        if as_of_date is None:
+            row = c.execute("SELECT max(as_of_date) FROM fx_rate").fetchone()
+            as_of_date = row[0] if row and row[0] else date.today()
+        res = {ccy: fx_rate(c, ccy, as_of_date) for ccy in ccys}
+        # the prior observation per currency (the day before its resolved date) — for the cell's
+        # daily change. USD is the constant star base; a leg with no observation has no prior.
+        prev = {
+            ccy: fx_rate(c, ccy, res[ccy].observed_date - timedelta(days=1))
+            if res[ccy].observed_date is not None
+            else None
+            for ccy in ccys
+        }
+        meta = [
+            {
+                "currency": ccy,
+                "status": r.status,
+                "observed_date": r.observed_date.isoformat() if r.observed_date else None,
+                "days_stale": r.days_stale,
+                "quote_rank": quote_rank(ccy),  # quoting precedence (lower = conventional base)
+            }
+            for ccy in ccys
+            for r in (res[ccy],)
+        ]
+
+        def cross_chg(base: str, quote: str) -> float | None:
+            """Day's move in the cross (now vs the prior session), or None when unavailable."""
+            pb, pq = prev.get(base), prev.get(quote)
+            nb, nq = res[base].rate, res[quote].rate
+            if not (pb and pq and nb is not None and nq is not None and pb.rate and pq.rate):
+                return None
+            now, before = nq / nb, pq.rate / pb.rate
+            return float(now / before) - 1.0 if before else None
+
+        rows: list[dict] = []
+        for base in ccys:
+            b = res[base]
+            cells = []
+            for quote in ccys:
+                q = res[quote]
+                cb, cq = conventional_pair(base, quote)
+                pair = f"{cb}/{cq}"  # the market-standard direction for this pair
+                if base == quote:
+                    cells.append({"rate": 1.0, "chg": 0.0, "stale": False, "pair": pair})
+                elif b.rate is not None and q.rate is not None:
+                    # both legs resolved (ok, possibly carried-forward) — derive the cross + its move
+                    cells.append(
+                        {
+                            "rate": float(q.rate / b.rate),
+                            "chg": cross_chg(base, quote),
+                            "stale": b.is_filled or q.is_filled,
+                            "pair": pair,
+                        }
+                    )
+                else:
+                    cells.append({"rate": None, "chg": None, "stale": True, "pair": pair})
+            rows.append({"base": base, "cells": cells})
+        return {
+            "as_of_date": as_of_date.isoformat(),
+            "currencies": ccys,
+            "meta": meta,
+            "rows": rows,
+        }
 
     def index_reconcile(self) -> dict:
         """Live index-close fidelity check: stored latest level vs the source's official close, per
