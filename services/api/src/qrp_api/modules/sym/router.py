@@ -472,6 +472,7 @@ class IndexBoardRow(BaseModel):
     sym_id: int
     name: str | None
     region: str  # Americas | EMEA | Asia-Pacific | Global
+    country: str  # e.g. United States | Germany | Japan | Global
     currency: str | None
     last: float | None
     last_date: str | None

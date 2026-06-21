@@ -89,6 +89,8 @@ def test_index_board_chg_ytd_region_and_msci_net_only():
     assert set(by) == {1, 2210}  # the GRTR (gross) MSCI variant is filtered out (Net only)
     sp = by[1]
     assert sp["region"] == "Americas" and sp["currency"] == "USD"
+    assert sp["country"] == "United States"  # data-driven country (currency fallback)
+    assert by[2210]["country"] == "Global"  # MSCI aggregate
     assert sp["last"] == 5000.0 and sp["last_date"] == "2026-06-19"
     assert abs(sp["chg"] - 50.0) < 1e-9  # 5000 - 4950
     assert abs(sp["chg_pct"] - (5000 / 4950 - 1)) < 1e-9

@@ -1065,7 +1065,7 @@ class DbSymGateway:
         and every window re-bases to that anchor (the trailing helpers anchor on the clipped series'
         last point, so no formula changes). Omitted ⇒ the latest session (unchanged behaviour); an
         index with no session on-or-before the date drops out (inner join), never a fabricated row."""
-        from sym.benchmarks.levels import region_for
+        from sym.benchmarks.levels import country_for, region_for
 
         c = self._conn
         # The anchor is the latest session per index ≤ as_of_date (or the global latest when omitted).
@@ -1146,6 +1146,7 @@ class DbSymGateway:
                     "sym_id": sym_id,
                     "name": name,
                     "region": region_for(name, ccy),
+                    "country": country_for(name, ccy),
                     "currency": ccy,
                     "last": last_f,
                     "last_date": last_date.isoformat() if last_date else None,

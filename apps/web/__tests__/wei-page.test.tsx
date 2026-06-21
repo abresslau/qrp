@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import WeiPage from "@/app/monitor/wei/page";
 
 const BOARD = [
-  { sym_id: 1, name: "S&P 500", region: "Americas", currency: "USD", last: 5000, last_date: "2026-06-19", prev: 4950, chg: 50, chg_pct: 0.0101, d5: 0.005, mtd: 0.02, m1: 0.018, m3: 0.04, m6: 0.06, ytd: 0.1111, "1y": 0.15, "2y": 0.3, "3y": 0.45, "5y": 0.7, lo_52w: 4000, hi_52w: 5100, spark: [4500, 4800, 5000] },
-  { sym_id: 2, name: "FTSE 100", region: "EMEA", currency: "GBP", last: 7250, last_date: "2026-06-18", prev: 8050, chg: -50, chg_pct: -0.0062, d5: -0.003, mtd: -0.01, m1: -0.005, m3: 0.02, m6: 0.03, ytd: 0.03, "1y": 0.08, "2y": 0.12, "3y": 0.18, "5y": 0.25, lo_52w: 7200, hi_52w: 8300, spark: [8200, 8100, 8000] },
-  { sym_id: 3, name: "Nikkei 225", region: "Asia-Pacific", currency: "JPY", last: 39000, last_date: "2026-06-19", prev: 38500, chg: 500, chg_pct: 0.013, d5: 0.01, mtd: 0.03, m1: 0.025, m3: 0.05, m6: 0.07, ytd: 0.05, "1y": 0.2, "2y": 0.35, "3y": 0.5, "5y": 0.9, lo_52w: 33000, hi_52w: 40000, spark: [37000, 38000, 39000] },
+  { sym_id: 1, name: "S&P 500", region: "Americas", country: "United States", currency: "USD", last: 5000, last_date: "2026-06-19", prev: 4950, chg: 50, chg_pct: 0.0101, d5: 0.005, mtd: 0.02, m1: 0.018, m3: 0.04, m6: 0.06, ytd: 0.1111, "1y": 0.15, "2y": 0.3, "3y": 0.45, "5y": 0.7, lo_52w: 4000, hi_52w: 5100, spark: [4500, 4800, 5000] },
+  { sym_id: 2, name: "FTSE 100", region: "EMEA", country: "United Kingdom", currency: "GBP", last: 7250, last_date: "2026-06-18", prev: 8050, chg: -50, chg_pct: -0.0062, d5: -0.003, mtd: -0.01, m1: -0.005, m3: 0.02, m6: 0.03, ytd: 0.03, "1y": 0.08, "2y": 0.12, "3y": 0.18, "5y": 0.25, lo_52w: 7200, hi_52w: 8300, spark: [8200, 8100, 8000] },
+  { sym_id: 3, name: "Nikkei 225", region: "Asia-Pacific", country: "Japan", currency: "JPY", last: 39000, last_date: "2026-06-19", prev: 38500, chg: 500, chg_pct: 0.013, d5: 0.01, mtd: 0.03, m1: 0.025, m3: 0.05, m6: 0.07, ytd: 0.05, "1y": 0.2, "2y": 0.35, "3y": 0.5, "5y": 0.9, lo_52w: 33000, hi_52w: 40000, spark: [37000, 38000, 39000] },
 ];
 
 function stub(rows: unknown = BOARD) {
@@ -57,6 +57,27 @@ describe("WEI (world equity indices) page", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the country and sorts by country then index name", async () => {
+    // two US indices + one Brazil index, all in Americas, to prove country-then-name ordering
+    const AMER = [
+      { ...BOARD[0], sym_id: 21, name: "Zeta US Index", country: "United States" },
+      { ...BOARD[0], sym_id: 22, name: "IBOVESPA", country: "Brazil" },
+      { ...BOARD[0], sym_id: 23, name: "Alpha US Index", country: "United States" },
+    ];
+    stub(AMER);
+    const { container } = render(<WeiPage />);
+    await screen.findByText("Americas");
+    expect(screen.getAllByText("United States", { selector: "td" }).length).toBe(2);
+    expect(screen.getByText("Brazil", { selector: "td" })).toBeInTheDocument();
+    const names = () =>
+      [...container.querySelectorAll("tbody td:first-child")].map((td) => td.textContent?.replace(/●.*/, "").trim());
+    // default sort IS country → Brazil before United States; within United States, index name asc
+    expect(names()).toEqual(["IBOVESPA", "Alpha US Index", "Zeta US Index"]);
+    // clicking Country toggles to descending (United States before Brazil; name asc within)
+    fireEvent.click(screen.getByLabelText("Sort by Country"));
+    expect(names()).toEqual(["Alpha US Index", "Zeta US Index", "IBOVESPA"]);
+  });
+
   it("re-fetches a backdated board when the as-of date changes, then resets to latest", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
@@ -89,16 +110,16 @@ describe("WEI (world equity indices) page", () => {
     expect(screen.queryByText("Latest")).toBeNull();
   });
 
-  it("sorts within each region — default by index name, click a header to re-sort", async () => {
+  it("sorts within each region — same-country rows fall back to index name; click a header to re-sort", async () => {
     const TWO = [
-      { ...BOARD[0], sym_id: 11, name: "Zeta Index", region: "Americas", "1y": 0.05 },
-      { ...BOARD[0], sym_id: 12, name: "Alpha Index", region: "Americas", "1y": 0.99 },
+      { ...BOARD[0], sym_id: 11, name: "Zeta Index", region: "Americas", country: "United States", "1y": 0.05 },
+      { ...BOARD[0], sym_id: 12, name: "Alpha Index", region: "Americas", country: "United States", "1y": 0.99 },
     ];
     stub(TWO);
     const { container } = render(<WeiPage />);
     await screen.findByText("Americas");
     const names = () => [...container.querySelectorAll("tbody td:first-child")].map((td) => td.textContent?.replace(/●.*/, "").trim());
-    // default = index name ascending
+    // default sort is country; both are United States, so they fall back to index name ascending
     expect(names()).toEqual(["Alpha Index", "Zeta Index"]);
     // sort by 1Y → numeric descending (Alpha 0.99 before Zeta 0.05 stays, so flip to check: click twice)
     fireEvent.click(screen.getByLabelText("Sort by 1Y"));

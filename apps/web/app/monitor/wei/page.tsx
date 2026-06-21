@@ -11,6 +11,7 @@ type BoardRow = {
   sym_id: number;
   name: string | null;
   region: string;
+  country: string;
   currency: string | null;
   last: number | null;
   last_date: string | null;
@@ -105,6 +106,7 @@ const range52Pos = (r: BoardRow): number | null =>
     : null;
 const COLS: Col[] = [
   { id: "name", label: "Index", align: "left", sortable: true, val: (r) => r.name },
+  { id: "country", label: "Country", align: "left", sortable: true, val: (r) => r.country },
   { id: "last", label: "Last", align: "right", sortable: true, val: (r) => r.last },
   { id: "chg_pct", label: "1D", align: "right", sortable: true, val: (r) => r.chg_pct },
   { id: "d5", label: "5D", align: "right", sortable: true, val: (r) => r.d5 },
@@ -125,16 +127,20 @@ type SortDir = "asc" | "desc";
 const ALIGN_CLS = { left: "text-left", right: "text-right", center: "text-center" } as const;
 
 // Sort within a region group. Nulls/missing always sink to the bottom regardless of direction;
-// text keys compare lexicographically, numeric keys numerically.
+// text keys compare lexicographically, numeric keys numerically. Ties always break by index name
+// ascending — so sorting by Country gives "country, then index name", and equal returns stay tidy.
 function compareRows(a: BoardRow, b: BoardRow, key: string, dir: SortDir): number {
   const col = COLS.find((c) => c.id === key) ?? COLS[0];
   const va = col.val(a);
   const vb = col.val(b);
-  if (va == null && vb == null) return 0;
-  if (va == null) return 1;
-  if (vb == null) return -1;
-  const d = typeof va === "string" || typeof vb === "string" ? String(va).localeCompare(String(vb)) : va - vb;
-  return dir === "asc" ? d : -d;
+  let d = 0;
+  if (va == null && vb == null) d = 0;
+  else if (va == null) return 1;
+  else if (vb == null) return -1;
+  else d = typeof va === "string" || typeof vb === "string" ? String(va).localeCompare(String(vb)) : va - vb;
+  const primary = dir === "asc" ? d : -d;
+  if (primary !== 0 || key === "name") return primary;
+  return String(a.name ?? "").localeCompare(String(b.name ?? "")); // tiebreak: index name asc
 }
 
 const maxLastDate = (rows: BoardRow[]): string | null =>
@@ -145,7 +151,7 @@ export default function WeiPage() {
   const [error, setError] = useState<string | null>(null);
   const [asOf, setAsOf] = useState<string>(""); // "" = latest close; YYYY-MM-DD = backdated board
   const [latestDate, setLatestDate] = useState<string>(""); // newest session of the un-backdated board
-  const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "name", dir: "asc" });
+  const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "country", dir: "asc" });
 
   // Re-fetch whenever the as-of date changes. Newest-wins (the `alive` guard) so a slow earlier load
   // can't clobber a newer one. An as-of date backdates the whole board (server resolves last session
@@ -179,11 +185,12 @@ export default function WeiPage() {
     return REGION_ORDER.filter((rg) => by.has(rg)).map((rg) => [rg, by.get(rg)!] as const);
   }, [rows, sort]);
   // Click a header to sort the whole board within each region; text defaults ascending, numbers descending.
+  const TEXT_COLS = new Set(["name", "country", "currency"]); // default ascending; numbers descending
   const onSort = (id: string) =>
     setSort((s) =>
       s.key === id
         ? { key: id, dir: s.dir === "asc" ? "desc" : "asc" }
-        : { key: id, dir: id === "name" || id === "currency" ? "asc" : "desc" },
+        : { key: id, dir: TEXT_COLS.has(id) ? "asc" : "desc" },
     );
 
   return (
@@ -266,7 +273,7 @@ export default function WeiPage() {
               <tbody key={region}>
                 <tr className="bg-fg/5">
                   <th
-                    colSpan={16}
+                    colSpan={17}
                     className="border-y border-border/60 px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-muted"
                   >
                     {region}
@@ -287,6 +294,7 @@ export default function WeiPage() {
                           </span>
                         ) : null}
                       </td>
+                      <td className="px-2 py-0.5 text-muted">{r.country}</td>
                       <td className="px-2 py-0.5 text-right tabular-nums text-fg">{fmtNum(r.last)}</td>
                       <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.chg_pct)}`}>{fmtPct(r.chg_pct)}</td>
                       <td className={`px-2 py-0.5 text-right tabular-nums ${upDown(r.d5)}`}>{fmtPct(r.d5)}</td>

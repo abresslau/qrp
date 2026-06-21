@@ -109,6 +109,35 @@ def region_for(name: str | None, currency: str | None = None) -> str:
     return _REGION_BY_NAME.get(name or "") or by_ccy or "Global"
 
 
+# Country needs a name map for the euro-zone single-country indexes (the EUR currency can't tell
+# Germany from France); everything else resolves by currency. MSCI aggregates are global/regional.
+_COUNTRY_BY_NAME = {
+    "EURO STOXX 50": "Eurozone",
+    "DAX (Total Return)": "Germany",
+    "CAC 40": "France",
+    "IBEX 35": "Spain",
+    "FTSE MIB": "Italy",
+    "AEX": "Netherlands",
+}
+_COUNTRY_BY_CCY = {
+    "USD": "United States", "BRL": "Brazil", "CAD": "Canada", "MXN": "Mexico", "ARS": "Argentina",
+    "GBP": "United Kingdom", "CHF": "Switzerland", "EUR": "Eurozone",
+    "SEK": "Sweden", "NOK": "Norway", "DKK": "Denmark", "ZAR": "South Africa",
+    "JPY": "Japan", "HKD": "Hong Kong", "KRW": "South Korea", "AUD": "Australia",
+    "CNY": "China", "INR": "India", "SGD": "Singapore", "TWD": "Taiwan", "NZD": "New Zealand",
+}
+
+
+def country_for(name: str | None, currency: str | None = None) -> str:
+    """Country for an index by name (euro-zone single-country map; MSCI USA/Europe → that, other
+    MSCI aggregates → Global), with a currency fallback for the rest. ``—`` when unknown."""
+    if name and name.strip().upper().startswith("MSCI"):
+        u = name.upper()
+        return "United States" if "USA" in u else "Europe" if "EUROPE" in u else "Global"
+    by_ccy = _COUNTRY_BY_CCY.get((currency or "").upper())
+    return _COUNTRY_BY_NAME.get(name or "") or by_ccy or "—"
+
+
 class IndexLevelSource(Protocol):
     """Yields a symbol's (session_date, level) close series from ``start``."""
 

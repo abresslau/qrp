@@ -6,7 +6,27 @@ distinguishes price vs total-return.
 
 from __future__ import annotations
 
-from sym.benchmarks.levels import BENCHMARKS, Benchmark, benchmark_xrefs, load_index_levels, region_for
+from sym.benchmarks.levels import (
+    BENCHMARKS,
+    Benchmark,
+    benchmark_xrefs,
+    country_for,
+    load_index_levels,
+    region_for,
+)
+
+
+def test_country_for_name_map_currency_fallback_and_msci():
+    assert country_for("S&P 500", "USD") == "United States"  # currency fallback
+    assert country_for("IBOVESPA", "BRL") == "Brazil"
+    assert country_for("DAX (Total Return)", "EUR") == "Germany"  # name map beats EUR->Eurozone
+    assert country_for("CAC 40", "EUR") == "France"
+    assert country_for("FTSE 100", "GBP") == "United Kingdom"
+    assert country_for("Nikkei 225", "JPY") == "Japan"
+    assert country_for("MSCI World Net (USD)", "USD") == "Global"  # aggregate
+    assert country_for("MSCI USA", "USD") == "United States"
+    assert country_for("MSCI Europe", "EUR") == "Europe"
+    assert country_for("Mystery Index", None) == "—"  # unknown
 
 
 def test_registry_yahoo_symbols_unique():
