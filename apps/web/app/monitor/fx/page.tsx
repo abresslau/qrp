@@ -8,7 +8,6 @@
 
 import { type CSSProperties, type DragEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
-import { ScaleToFit } from "@/components/scale-to-fit";
 
 type Cell = { rate: number | null; chg: number | null; stale: boolean; pair: string };
 type Row = { base: string; cells: Cell[] };
@@ -302,8 +301,8 @@ function MatrixCard({
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
       <table
-        className="table-fixed text-[11px] leading-tight [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap"
-        style={{ width: `${minWidth}px` }}
+        className="w-full table-fixed text-[11px] leading-tight [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap"
+        style={{ minWidth: `${minWidth}px` }}
       >
         <colgroup>
           <col className="w-11" />
@@ -592,7 +591,7 @@ export default function FxMatrixPage() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
           <p className="rounded-lg border border-border bg-surface p-4 text-sm text-rose-500">
             Could not load the matrix: {error}
@@ -604,16 +603,16 @@ export default function FxMatrixPage() {
             No FX data yet. Populate rates with <code className="rounded bg-fg/10 px-1">sym fx load</code>.
           </p>
         ) : (
-          // Scale the two cards (spot rate · % change) to fit the available height — identical layout on
-          // a laptop and a large screen, just larger. table-fixed + identical colgroup keeps the
-          // currency columns aligned across both cards.
-          <ScaleToFit>
-            <div className="space-y-1">
-              <MatrixCard mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
-              <MatrixCard mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
-              <HeatLegend isDark={isDark} />
-            </div>
-          </ScaleToFit>
+          // Two cards (spot rate · % change) stacked, each filling the FULL WIDTH (w-full tables with a
+          // per-currency min-width floor → they scroll horizontally only when the window is too narrow).
+          // NOT wrapped in ScaleToFit: this board is taller than a laptop viewport, so a contain-fit would
+          // shrink it to fit height and waste the width — instead it renders at full width and the page
+          // scrolls to the % change grid. table-fixed + identical colgroup keeps the columns aligned.
+          <div className="space-y-1">
+            <MatrixCard mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+            <MatrixCard mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+            <HeatLegend isDark={isDark} />
+          </div>
         )}
       </div>
 
