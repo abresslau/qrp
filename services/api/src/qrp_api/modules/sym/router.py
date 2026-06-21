@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from qrp_api.db import connect
 from qrp_api.modules.sym.gateway import DEFAULT_HEATMAP_WINDOW, DbSymGateway
@@ -467,10 +468,49 @@ class IndexLevelSeries(BaseModel):
     series: list[IndexLevelPoint]
 
 
+class IndexBoardRow(BaseModel):
+    sym_id: int
+    name: str | None
+    region: str  # Americas | EMEA | Asia-Pacific | Global
+    currency: str | None
+    last: float | None
+    last_date: str | None
+    prev: float | None
+    chg: float | None  # last - prev (1-day net change)
+    chg_pct: float | None  # 1D — last/prev - 1
+    d5: float | None  # trailing 5 sessions (~7d)
+    mtd: float | None
+    m1: float | None  # trailing 1 month
+    m3: float | None  # trailing 3 months
+    m6: float | None  # trailing 6 months
+    ytd: float | None
+    one_y: float | None = Field(alias="1y")
+    two_y: float | None = Field(alias="2y")
+    three_y: float | None = Field(alias="3y")
+    five_y: float | None = Field(alias="5y")
+    lo_52w: float | None  # trailing 52-week low
+    hi_52w: float | None  # trailing 52-week high
+    spark: list[float]  # recent levels for an inline sparkline
+    model_config = ConfigDict(populate_by_name=True)
+
+
 @router.get("/indexes", response_model=list[IndexSummary])
 def indexes(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     """Benchmark index instruments that carry level data (one per index×variant)."""
     return gw.indexes()
+
+
+@router.get("/indexes/board", response_model=list[IndexBoardRow])
+def index_board(
+    as_of_date: date | None = Query(
+        None, description="Rewind the board to this close (last session ≤ date, per index). Omit ⇒ latest."
+    ),
+    gw: DbSymGateway = Depends(_gateway),
+) -> list[dict]:
+    """World Equity Indices board (WEI): one row per index — last/prior session (1D change), YTD,
+    region, sparkline. EOD; MSCI aggregates are the Net variant only. ``as_of_date`` backdates the
+    whole board to that historical close (omitted ⇒ the latest session)."""
+    return gw.index_board(as_of_date)
 
 
 @router.get("/indexes/{sym_id}/levels", response_model=IndexLevelSeries)

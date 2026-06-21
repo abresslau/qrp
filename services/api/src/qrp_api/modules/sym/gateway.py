@@ -66,6 +66,22 @@ class UniverseRef:
 _TRAILING_KEYS = ("mtd", "qtd", "ytd", "1y", "2y", "3y", "5y", "10y")
 
 
+def _period_return(series: list[dict], days: int) -> float | None:
+    """Trailing return over a day window: latest level vs the last observation on-or-before
+    latest − ``days``. None when the series doesn't reach that far back. Pure helper (no DB)."""
+    if len(series) < 2:
+        return None
+    last = series[-1]
+    start_iso = (date.fromisoformat(last["date"]) - timedelta(days=days)).isoformat()
+    base = None
+    for p in series:
+        if p["date"] <= start_iso:
+            base = p
+        else:
+            break
+    return last["level"] / base["level"] - 1.0 if base and base["level"] and base["date"] < last["date"] else None
+
+
 def _trailing_returns(series: list[dict]) -> dict:
     """Trailing returns (MTD/QTD/YTD/1Y/2Y/3Y/5Y/10Y) from a date-ascending level series — latest
     level vs the last observation on-or-before each window's start date. MTD/QTD/YTD anchor on the
@@ -1038,6 +1054,118 @@ class DbSymGateway:
             "trailing": _trailing_returns(series),
             "series": series,
         }
+
+    def index_board(self, as_of_date: date | None = None) -> list[dict]:
+        """World-Equity-Indices board: every index instrument with levels — latest + prior session
+        (1D net/% change), YTD, region, currency, and a recent sparkline — in two queries (no N+1).
+        MSCI aggregates are limited to the Net (NETR) variant so the board shows one row per index.
+
+        ``as_of_date`` rewinds the board to a past close: each index anchors on its latest session
+        with ``session_date <= as_of_date`` (per-market as-of resolution — last value with date ≤ D),
+        and every window re-bases to that anchor (the trailing helpers anchor on the clipped series'
+        last point, so no formula changes). Omitted ⇒ the latest session (unchanged behaviour); an
+        index with no session on-or-before the date drops out (inner join), never a fabricated row."""
+        from sym.benchmarks.levels import region_for
+
+        c = self._conn
+        # The anchor is the latest session per index ≤ as_of_date (or the global latest when omitted).
+        # Both queries stay relative to that anchor so the omitted path is byte-for-byte as before.
+        params: dict = {}
+        if as_of_date is not None:
+            params["as_of"] = as_of_date
+            ranked_filter = "WHERE session_date <= %(as_of)s"
+            recent_sql = """
+                SELECT sym_id, session_date, level FROM index_levels
+                 WHERE session_date <= %(as_of)s AND session_date >= %(as_of)s - 1900
+                 ORDER BY sym_id, session_date
+                """
+        else:
+            ranked_filter = ""
+            recent_sql = """
+                SELECT sym_id, session_date, level FROM index_levels
+                 WHERE session_date >= (SELECT max(session_date) FROM index_levels) - 1900
+                 ORDER BY sym_id, session_date
+                """
+        rows = c.execute(
+            f"""
+            WITH ranked AS (
+                SELECT sym_id, session_date, level,
+                       row_number() OVER (PARTITION BY sym_id ORDER BY session_date DESC) AS rn
+                  FROM index_levels
+                 {ranked_filter}
+            )
+            SELECT i.sym_id, i.name, i.currency_code,
+                   (SELECT value FROM instrument_xref x
+                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1)        AS msci_xref,
+                   max(r.level) FILTER (WHERE r.rn = 1)                              AS last,
+                   max(r.session_date) FILTER (WHERE r.rn = 1)                       AS last_date,
+                   max(r.level) FILTER (WHERE r.rn = 2)                              AS prev
+              FROM instrument i
+              JOIN ranked r ON r.sym_id = i.sym_id AND r.rn <= 2
+             WHERE i.kind = 'index'
+             GROUP BY i.sym_id, i.name, i.currency_code
+            """,
+            params,
+        ).fetchall()
+        # recent levels (one query) for trailing-return bases + sparkline; ~1900d reaches back past the
+        # 5Y window (and the prior year-end for MTD/YTD), so every window resolves from one pull.
+        recent = c.execute(recent_sql, params).fetchall()
+        series: dict[int, list[tuple[date, float]]] = {}
+        for sid, d, lv in recent:
+            series.setdefault(sid, []).append((d, float(lv)))
+
+        out: list[dict] = []
+        for sym_id, name, ccy, xref, last, last_date, prev in rows:
+            _code, _sep, variant = (xref or "").partition(":")
+            if xref and variant and variant != "NETR":
+                continue  # MSCI PR/GR triplets — board shows the Net variant only
+            last_f = float(last) if last is not None else None
+            prev_f = float(prev) if prev is not None else None
+            chg = last_f - prev_f if last_f is not None and prev_f is not None else None
+            chg_pct = last_f / prev_f - 1.0 if last_f and prev_f else None
+            s = series.get(sym_id, [])
+            asc = [{"date": d.isoformat(), "level": lv} for d, lv in s]
+            tr = _trailing_returns(asc)
+            # day-window returns: latest vs last obs on-or-before latest − Nd (same convention as the
+            # year windows). 5D ≈ 7 calendar days (5 trading sessions); 1M/3M/6M = 30/91/182 days.
+            d5 = _period_return(asc, 7)
+            m1 = _period_return(asc, 30)
+            m3 = _period_return(asc, 91)
+            m6 = _period_return(asc, 182)
+            # 52-week range: low/high of the trailing 365d of levels (incl. the latest observation)
+            lo52 = hi52 = None
+            if last_date:
+                yr_ago = (last_date - timedelta(days=365)).isoformat()
+                w52 = [lv for d, lv in s if d.isoformat() >= yr_ago]
+                if w52:
+                    lo52, hi52 = min(w52), max(w52)
+            out.append(
+                {
+                    "sym_id": sym_id,
+                    "name": name,
+                    "region": region_for(name, ccy),
+                    "currency": ccy,
+                    "last": last_f,
+                    "last_date": last_date.isoformat() if last_date else None,
+                    "prev": prev_f,
+                    "chg": chg,
+                    "chg_pct": chg_pct,  # 1D
+                    "d5": d5,
+                    "mtd": tr["mtd"],
+                    "m1": m1,
+                    "m3": m3,
+                    "m6": m6,
+                    "ytd": tr["ytd"],
+                    "1y": tr["1y"],
+                    "2y": tr["2y"],
+                    "3y": tr["3y"],
+                    "5y": tr["5y"],
+                    "lo_52w": lo52,
+                    "hi_52w": hi52,
+                    "spark": [lv for _, lv in s[-30:]],
+                }
+            )
+        return out
 
     def validation(self) -> list[dict]:
         """Recent validation runs (validation_run_log), newest first."""

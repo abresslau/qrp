@@ -6,7 +6,7 @@ distinguishes price vs total-return.
 
 from __future__ import annotations
 
-from sym.benchmarks.levels import BENCHMARKS, Benchmark, benchmark_xrefs, load_index_levels
+from sym.benchmarks.levels import BENCHMARKS, Benchmark, benchmark_xrefs, load_index_levels, region_for
 
 
 def test_registry_yahoo_symbols_unique():
@@ -35,6 +35,25 @@ def test_msci_registry_xref_is_variant_encoded_to_reconcile_with_pull():
     msci = next(b for b in BENCHMARKS if b.name.startswith("MSCI World"))
     assert msci.variant == "NR"
     assert benchmark_xrefs(msci) == {"msci": "990100:NETR"}
+
+
+def test_region_for_known_and_msci_and_currency_fallback():
+    # registry-mapped exchange indices
+    assert region_for("S&P 500") == "Americas"
+    assert region_for("FTSE 100") == "EMEA"
+    assert region_for("Nikkei 225") == "Asia-Pacific"
+    assert region_for("IBOVESPA") == "Americas"
+    # MSCI aggregates -> Global (incl. the seeded variants not in the registry)
+    assert region_for("MSCI World (Net Total Return)") == "Global"
+    assert region_for("MSCI ACWI Net (USD)") == "Global"
+    # currency fallback for an unknown name
+    assert region_for("Some Unknown Index", "JPY") == "Asia-Pacific"
+    assert region_for("Some Unknown Index", "EUR") == "EMEA"
+    assert region_for("Some Unknown Index", None) == "Global"
+
+
+def test_every_registry_benchmark_has_a_region():
+    assert all(b.region for b in BENCHMARKS)
 
 
 def test_benchmark_xrefs_yahoo_and_legacy_bare_msci():

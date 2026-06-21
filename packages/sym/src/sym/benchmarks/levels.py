@@ -40,6 +40,8 @@ class Benchmark:
     # (`<code>:<VARIANT>`) so the registry reconciles with `sym msci-pull` — same instrument per
     # variant, no bare-code stub. Yahoo-only benchmarks leave this None.
     variant: str | None = None
+    # Geographic region for the World-Equity-Indices board: Americas | EMEA | Asia-Pacific | Global.
+    region: str | None = None
 
 
 def benchmark_xrefs(b: Benchmark) -> dict[str, str]:
@@ -59,27 +61,52 @@ def benchmark_xrefs(b: Benchmark) -> dict[str, str]:
 # Return)"). MSCI-only entries (no yahoo) create the instrument + msci xref and
 # defer level loading to a file import.
 BENCHMARKS: tuple[Benchmark, ...] = (
-    Benchmark("S&P 500", "USD", yahoo_symbol="^GSPC"),
-    Benchmark("S&P 500 (Total Return)", "USD", yahoo_symbol="^SP500TR"),
-    Benchmark("S&P MidCap 400", "USD", yahoo_symbol="^MID"),
-    Benchmark("S&P SmallCap 600", "USD", yahoo_symbol="^SP600"),
-    Benchmark("Nasdaq Composite", "USD", yahoo_symbol="^IXIC"),
-    Benchmark("Dow Jones Industrial Average", "USD", yahoo_symbol="^DJI"),
-    Benchmark("Russell 2000", "USD", yahoo_symbol="^RUT"),
-    Benchmark("EURO STOXX 50", "EUR", yahoo_symbol="^STOXX50E"),
-    Benchmark("FTSE 100", "GBP", yahoo_symbol="^FTSE"),
-    Benchmark("DAX (Total Return)", "EUR", yahoo_symbol="^GDAXI"),
-    Benchmark("CAC 40", "EUR", yahoo_symbol="^FCHI"),
-    Benchmark("IBEX 35", "EUR", yahoo_symbol="^IBEX"),
-    Benchmark("FTSE MIB", "EUR", yahoo_symbol="FTSEMIB.MI"),
-    Benchmark("AEX", "EUR", yahoo_symbol="^AEX"),
-    Benchmark("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI"),
-    Benchmark("Nikkei 225", "JPY", yahoo_symbol="^N225"),
-    Benchmark("IBOVESPA", "BRL", yahoo_symbol="^BVSP"),
+    Benchmark("S&P 500", "USD", yahoo_symbol="^GSPC", region="Americas"),
+    Benchmark("S&P 500 (Total Return)", "USD", yahoo_symbol="^SP500TR", region="Americas"),
+    Benchmark("S&P MidCap 400", "USD", yahoo_symbol="^MID", region="Americas"),
+    Benchmark("S&P SmallCap 600", "USD", yahoo_symbol="^SP600", region="Americas"),
+    Benchmark("Nasdaq Composite", "USD", yahoo_symbol="^IXIC", region="Americas"),
+    Benchmark("Dow Jones Industrial Average", "USD", yahoo_symbol="^DJI", region="Americas"),
+    Benchmark("Russell 2000", "USD", yahoo_symbol="^RUT", region="Americas"),
+    Benchmark("EURO STOXX 50", "EUR", yahoo_symbol="^STOXX50E", region="EMEA"),
+    Benchmark("FTSE 100", "GBP", yahoo_symbol="^FTSE", region="EMEA"),
+    Benchmark("DAX (Total Return)", "EUR", yahoo_symbol="^GDAXI", region="EMEA"),
+    Benchmark("CAC 40", "EUR", yahoo_symbol="^FCHI", region="EMEA"),
+    Benchmark("IBEX 35", "EUR", yahoo_symbol="^IBEX", region="EMEA"),
+    Benchmark("FTSE MIB", "EUR", yahoo_symbol="FTSEMIB.MI", region="EMEA"),
+    Benchmark("AEX", "EUR", yahoo_symbol="^AEX", region="EMEA"),
+    Benchmark("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI", region="EMEA"),
+    Benchmark("Nikkei 225", "JPY", yahoo_symbol="^N225", region="Asia-Pacific"),
+    Benchmark("IBOVESPA", "BRL", yahoo_symbol="^BVSP", region="Americas"),
     # MSCI World Net — no Yahoo; levels come from `sym msci-pull` (or a file import). variant="NR"
     # → msci xref 990100:NETR, the SAME instrument the pull creates (no bare-code stub on re-seed).
-    Benchmark("MSCI World (Net Total Return)", "USD", msci_code="990100", variant="NR"),
+    Benchmark(
+        "MSCI World (Net Total Return)", "USD", msci_code="990100", variant="NR", region="Global"
+    ),
 )
+
+# Region resolution for the World-Equity-Indices board (data-driven, reused by the API). MSCI
+# aggregates → "Global"; otherwise the registry's region by name, else a currency fallback.
+_REGION_BY_NAME = {b.name: b.region for b in BENCHMARKS if b.region}
+_AMER = "Americas"
+_EMEA = "EMEA"
+_APAC = "Asia-Pacific"
+_REGION_BY_CCY = {
+    "USD": _AMER, "BRL": _AMER, "CAD": _AMER, "MXN": _AMER, "ARS": _AMER,
+    "EUR": _EMEA, "GBP": _EMEA, "CHF": _EMEA, "SEK": _EMEA, "NOK": _EMEA, "DKK": _EMEA,
+    "ZAR": _EMEA,
+    "JPY": _APAC, "HKD": _APAC, "KRW": _APAC, "AUD": _APAC,
+    "CNY": _APAC, "INR": _APAC, "SGD": _APAC, "TWD": _APAC, "NZD": _APAC,
+}
+
+
+def region_for(name: str | None, currency: str | None = None) -> str:
+    """Region for an index by name (MSCI aggregates → Global; registry map), with a currency
+    fallback for unknown names. Always returns one of Americas | EMEA | Asia-Pacific | Global."""
+    if name and name.strip().upper().startswith("MSCI"):
+        return "Global"
+    by_ccy = _REGION_BY_CCY.get((currency or "").upper())
+    return _REGION_BY_NAME.get(name or "") or by_ccy or "Global"
 
 
 class IndexLevelSource(Protocol):
