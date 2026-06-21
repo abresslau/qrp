@@ -55,8 +55,11 @@ describe("Indexes page", () => {
     expect(screen.getByText("QTD")).toBeInTheDocument();
     expect(screen.getByText("+1.10%")).toBeInTheDocument(); // mtd 0.011
     expect(screen.getByText("+8.20%")).toBeInTheDocument(); // ytd 0.082
-    expect(screen.getByText("+66.30%")).toBeInTheDocument(); // 5y 0.663
-    expect(screen.getByText("+123.40%")).toBeInTheDocument(); // 10y 1.234
+    expect(screen.getByText("+66.30%")).toBeInTheDocument(); // 5y 0.663 cumulative
+    expect(screen.getByText("+123.40%")).toBeInTheDocument(); // 10y 1.234 cumulative
+    // multi-year cards also show the annualised (CAGR)
+    expect(screen.getByText("+10.71% p.a.")).toBeInTheDocument(); // 5y: 1.663^(1/5)-1
+    expect(screen.getByText("+8.37% p.a.")).toBeInTheDocument(); // 10y: 2.234^(1/10)-1
     // chart range selector present; switching range keeps the chart rendered
     fireEvent.click(screen.getByRole("button", { name: /^Max$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^1Y$/ }));

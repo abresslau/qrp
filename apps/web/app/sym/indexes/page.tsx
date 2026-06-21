@@ -203,6 +203,23 @@ function Ret({ v }: { v: number | null | undefined }) {
   return <span className={cls}>{fmtPct(v)}</span>;
 }
 
+// Annualised (CAGR) from a cumulative return over `years`: (1+r)^(1/years) − 1.
+function annualisedPct(cum: number | null | undefined, years: number): string {
+  if (cum == null || !Number.isFinite(cum) || 1 + cum <= 0) return "—";
+  const cagr = (1 + cum) ** (1 / years) - 1;
+  return `${cagr >= 0 ? "+" : ""}${(cagr * 100).toFixed(2)}% p.a.`;
+}
+
+// Multi-year stat: cumulative return (large) + the annualised figure beneath it.
+function RetPa({ v, years }: { v: number | null | undefined; years: number }) {
+  return (
+    <span className="flex flex-col leading-tight">
+      <Ret v={v} />
+      <span className="text-xs font-normal text-muted">{annualisedPct(v, years)}</span>
+    </span>
+  );
+}
+
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-border bg-surface p-3">
@@ -374,10 +391,10 @@ export default function IndexesPage() {
                   <Stat label="QTD" value={<Ret v={data?.trailing?.qtd} />} />
                   <Stat label="YTD" value={<Ret v={data?.trailing?.ytd} />} />
                   <Stat label="1Y" value={<Ret v={data?.trailing?.["1y"]} />} />
-                  <Stat label="2Y" value={<Ret v={data?.trailing?.["2y"]} />} />
-                  <Stat label="3Y" value={<Ret v={data?.trailing?.["3y"]} />} />
-                  <Stat label="5Y" value={<Ret v={data?.trailing?.["5y"]} />} />
-                  <Stat label="10Y" value={<Ret v={data?.trailing?.["10y"]} />} />
+                  <Stat label="2Y" value={<RetPa v={data?.trailing?.["2y"]} years={2} />} />
+                  <Stat label="3Y" value={<RetPa v={data?.trailing?.["3y"]} years={3} />} />
+                  <Stat label="5Y" value={<RetPa v={data?.trailing?.["5y"]} years={5} />} />
+                  <Stat label="10Y" value={<RetPa v={data?.trailing?.["10y"]} years={10} />} />
                 </div>
                 {dataErr ? (
                   <p className="text-sm text-rose-500">Could not load levels: {dataErr}</p>
