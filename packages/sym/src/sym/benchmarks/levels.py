@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date
 from decimal import Decimal
 from typing import Protocol
 
@@ -116,6 +116,10 @@ class IndexLevelSource(Protocol):
 
     def levels(self, symbol: str, start: date) -> list[tuple[date, Decimal]]: ...
 
+    def official_quote(self, symbol: str) -> tuple[str | None, float | None]:
+        """The source's official/settled close as ``(iso_date, price)`` — for reconciliation."""
+        ...
+
 
 class YahooIndexLevelSource:
     """Index closes from yfinance (throttled)."""
@@ -131,6 +135,33 @@ class YahooIndexLevelSource:
         if wait > 0:
             time.sleep(wait)
         self._last = time.monotonic()
+
+    def official_quote(self, symbol: str) -> tuple[str | None, float | None]:
+        """Yahoo's settled official close = the chart endpoint's ``meta.regularMarketPrice`` at
+        ``regularMarketTime`` (the live/official quote), which for some symbols (e.g. ``^BVSP``)
+        differs from the daily OHLC candle close that ``levels()`` returns. Returns ``(iso_date,
+        price)`` for the session the official close belongs to (exchange-local date)."""
+        import json
+        import urllib.parse
+        import urllib.request
+        from datetime import datetime
+
+        self._throttle()
+        url = (
+            "https://query1.finance.yahoo.com/v8/finance/chart/"
+            f"{urllib.parse.quote(symbol)}?range=5d&interval=1d"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 — fixed Yahoo host
+            meta = json.load(resp)["chart"]["result"][0]["meta"]
+        price = meta.get("regularMarketPrice")
+        epoch = meta.get("regularMarketTime")
+        iso: str | None = None
+        if epoch:
+            offset = meta.get("gmtoffset") or 0  # exchange-local session date
+            local = datetime.fromtimestamp(epoch + offset, UTC)
+            iso = local.date().isoformat()
+        return iso, (float(price) if price is not None else None)
 
     def levels(self, symbol: str, start: date) -> list[tuple[date, Decimal]]:
         import math
@@ -162,13 +193,27 @@ class LevelsSummary:
 
 
 def _upsert_level(
-    conn: psycopg.Connection, sym_id: int, d: date, level: Decimal, source: str
+    conn: psycopg.Connection,
+    sym_id: int,
+    d: date,
+    level: Decimal,
+    source: str,
+    *,
+    overwrite: bool = False,
 ) -> bool:
+    """Write one index level. History is append-only (``DO NOTHING``); the latest, just-settled
+    session is revisable (``overwrite=True`` → ``DO UPDATE``) so a provisional candle close can be
+    corrected to the official close on a later run."""
+    conflict = (
+        "DO UPDATE SET level = EXCLUDED.level, source = EXCLUDED.source"
+        if overwrite
+        else "DO NOTHING"
+    )
     row = conn.execute(
-        """
+        f"""
         INSERT INTO index_levels (sym_id, session_date, level, source)
         VALUES (%s, %s, %s, %s)
-        ON CONFLICT (sym_id, session_date) DO NOTHING
+        ON CONFLICT (sym_id, session_date) {conflict}
         RETURNING sym_id
         """,
         (sym_id, d, level, source),
@@ -212,9 +257,20 @@ def load_index_levels(
         if not series:
             summary.gaps += 1
             continue
-        # One transaction per benchmark: an interrupt never leaves a half-written series.
+        latest_d = max(d for d, _ in series)
+        # The daily OHLC candle close can be a pre-auction snapshot; revise the latest session to
+        # the vendor's OFFICIAL settled close when it differs (e.g. ^BVSP). A source with no
+        # official quote (or a vendor failure) keeps the candle close — `index-reconcile` flags it.
+        try:
+            oq_date, oq_price = source.official_quote(b.yahoo_symbol)
+        except Exception:  # noqa: BLE001 — no official quote available; fall back to the candle
+            oq_date, oq_price = None, None
+        if oq_price and oq_date == latest_d.isoformat():
+            series = [(d, Decimal(str(oq_price)) if d == latest_d else lv) for d, lv in series]
+        # One transaction per benchmark: an interrupt never leaves a half-written series. Only the
+        # latest session is overwriteable (revisable provisional→official); history is append-only.
         with conn.transaction():
             for d, level in series:
-                if _upsert_level(conn, sym_id, d, level, source.SOURCE):
+                if _upsert_level(conn, sym_id, d, level, source.SOURCE, overwrite=(d == latest_d)):
                     summary.levels_written += 1
     return summary

@@ -752,9 +752,9 @@ def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
 
 
 def _cmd_eod(args: argparse.Namespace) -> int:
-    import psycopg
-
     from datetime import date
+
+    import psycopg
 
     from sym.config import load_dotenv
     from sym.db import connect
@@ -811,6 +811,31 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         return 1
     print(format_report(results))
     return 2 if overall == FAIL else 0
+
+
+def _cmd_index_reconcile(args: argparse.Namespace) -> int:
+    import psycopg
+
+    from sym.benchmarks.levels import YahooIndexLevelSource
+    from sym.config import load_dotenv
+    from sym.db import connect
+    from sym.validate.index_levels import check_index_level_fidelity
+    from sym.validate.results import FAIL
+    from sym.validate.runner import format_report
+
+    load_dotenv()
+    source = YahooIndexLevelSource()
+    try:
+        with connect() as conn:
+            conn.autocommit = True
+            result = check_index_level_fidelity(
+                conn, source, warn_bps=args.warn_bps, fail_bps=args.fail_bps
+            )
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 1
+    print(format_report([result]))
+    return 2 if result.status == FAIL else 0
 
 
 def _fx_currencies(args: argparse.Namespace) -> list[str] | None:
@@ -1524,6 +1549,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_validate.add_argument("--universe", help="Scope completeness to one universe (else all).")
     p_validate.set_defaults(func=_cmd_validate)
+
+    p_index_recon = sub.add_parser(
+        "index-reconcile",
+        help="Reconcile each benchmark index's stored latest close against the source's official "
+        "close (live); warns/fails on divergence. Catches candle-vs-official gaps (e.g. ^BVSP).",
+    )
+    p_index_recon.add_argument(
+        "--warn-bps", type=float, default=5.0, help="Warn at this divergence (basis points)."
+    )
+    p_index_recon.add_argument(
+        "--fail-bps", type=float, default=50.0, help="Fail at this divergence (basis points)."
+    )
+    p_index_recon.set_defaults(func=_cmd_index_reconcile)
 
     p_fx = sub.add_parser(
         "fx", help="FX rates: load, coverage, divergence, convert, px, returns, mcap."
