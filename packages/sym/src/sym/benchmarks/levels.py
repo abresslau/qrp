@@ -24,6 +24,7 @@ from typing import Protocol
 
 import psycopg
 
+from sym.benchmarks.msci import msci_xref_value
 from sym.identity.instrument import INDEX, SRC_MSCI, SRC_YAHOO, ensure_instrument
 
 DEFAULT_START = date(1990, 1, 1)
@@ -35,6 +36,22 @@ class Benchmark:
     currency_code: str
     yahoo_symbol: str | None = None
     msci_code: str | None = None
+    # Return variant for an MSCI entry (PR/NR/GR). Drives the variant-encoded `msci` xref
+    # (`<code>:<VARIANT>`) so the registry reconciles with `sym msci-pull` — same instrument per
+    # variant, no bare-code stub. Yahoo-only benchmarks leave this None.
+    variant: str | None = None
+
+
+def benchmark_xrefs(b: Benchmark) -> dict[str, str]:
+    """The external-id xrefs for a benchmark's instrument identity. The MSCI xref is
+    variant-encoded when a variant is set (reconciling with the pull); a bare code is only used
+    for a legacy MSCI entry without a variant."""
+    xrefs: dict[str, str] = {}
+    if b.yahoo_symbol:
+        xrefs[SRC_YAHOO] = b.yahoo_symbol
+    if b.msci_code:
+        xrefs[SRC_MSCI] = msci_xref_value(b.msci_code, b.variant) if b.variant else b.msci_code
+    return xrefs
 
 
 # Headline benchmarks. Each published series is its OWN index (instrument) — the
@@ -59,7 +76,9 @@ BENCHMARKS: tuple[Benchmark, ...] = (
     Benchmark("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI"),
     Benchmark("Nikkei 225", "JPY", yahoo_symbol="^N225"),
     Benchmark("IBOVESPA", "BRL", yahoo_symbol="^BVSP"),
-    Benchmark("MSCI World (Net Total Return)", "USD", msci_code="990100"),  # no Yahoo; MSCI file
+    # MSCI World Net — no Yahoo; levels come from `sym msci-pull` (or a file import). variant="NR"
+    # → msci xref 990100:NETR, the SAME instrument the pull creates (no bare-code stub on re-seed).
+    Benchmark("MSCI World (Net Total Return)", "USD", msci_code="990100", variant="NR"),
 )
 
 
@@ -145,11 +164,7 @@ def load_index_levels(
     conn.autocommit = True
     summary = LevelsSummary()
     for b in benchmarks:
-        xrefs: dict[str, str] = {}
-        if b.yahoo_symbol:
-            xrefs[SRC_YAHOO] = b.yahoo_symbol
-        if b.msci_code:
-            xrefs[SRC_MSCI] = b.msci_code
+        xrefs = benchmark_xrefs(b)
         sym_id = ensure_instrument(
             conn, INDEX, name=b.name, currency_code=b.currency_code, xrefs=xrefs
         )

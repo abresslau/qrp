@@ -6,7 +6,7 @@ distinguishes price vs total-return.
 
 from __future__ import annotations
 
-from sym.benchmarks.levels import BENCHMARKS, Benchmark, load_index_levels
+from sym.benchmarks.levels import BENCHMARKS, Benchmark, benchmark_xrefs, load_index_levels
 
 
 def test_registry_yahoo_symbols_unique():
@@ -27,6 +27,20 @@ def test_price_and_total_return_are_separate_named_indexes():
 def test_msci_world_is_deferred_no_yahoo():
     msci = next(b for b in BENCHMARKS if b.name.startswith("MSCI World"))
     assert msci.yahoo_symbol is None and msci.msci_code
+
+
+def test_msci_registry_xref_is_variant_encoded_to_reconcile_with_pull():
+    # The registry MSCI World entry must resolve to the SAME instrument `sym msci-pull --variant NR`
+    # creates (msci xref 990100:NETR) — so a re-seed never mints a bare-code 990100 stub again.
+    msci = next(b for b in BENCHMARKS if b.name.startswith("MSCI World"))
+    assert msci.variant == "NR"
+    assert benchmark_xrefs(msci) == {"msci": "990100:NETR"}
+
+
+def test_benchmark_xrefs_yahoo_and_legacy_bare_msci():
+    assert benchmark_xrefs(Benchmark("Y", "USD", yahoo_symbol="^Y")) == {"yahoo": "^Y"}
+    # a legacy MSCI entry with no variant keeps the bare code (backward-compatible)
+    assert benchmark_xrefs(Benchmark("Z", "USD", msci_code="999")) == {"msci": "999"}
 
 
 class _FakeSource:

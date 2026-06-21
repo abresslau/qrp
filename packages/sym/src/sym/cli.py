@@ -615,7 +615,7 @@ def _cmd_msci_import(args: argparse.Namespace) -> int:
         with connect() as conn:
             conn.autocommit = True
             summary = load_msci_file(
-                conn, args.path, msci_code=args.msci_code, name=args.name,
+                conn, args.path, msci_code=args.msci_code, variant=args.variant, name=args.name,
                 currency_code=args.currency,
             )
             end_date = date.today()
@@ -1479,6 +1479,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_msci.add_argument("path", help="Path to the downloaded MSCI level file (.csv/.xls/.xlsx).")
     p_msci.add_argument("--msci-code", dest="msci_code", required=True, help="MSCI index code.")
+    p_msci.add_argument(
+        "--variant", choices=["PR", "NR", "GR"],
+        help="Return variant — reconciles the xref with `msci-pull` (<code>:<VARIANT>). "
+        "Omit only for a legacy bare-code import.",
+    )
     p_msci.add_argument("--name", help="Instrument name (to create it on first import).")
     p_msci.add_argument("--currency", help="Instrument currency (ISO-4217, on first import).")
     p_msci.set_defaults(func=_cmd_msci_import)

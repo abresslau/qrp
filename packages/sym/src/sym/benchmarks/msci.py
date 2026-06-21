@@ -223,24 +223,28 @@ def load_msci_file(
     path: str | Path,
     *,
     msci_code: str,
+    variant: str | None = None,
     name: str | None = None,
     currency_code: str | None = None,
 ) -> MsciImportSummary:
     """Import an MSCI level file for the index identified by ``msci_code``.
 
-    The instrument is resolved from its ``msci`` xref; if absent and ``name`` is
-    given, it is created (kind=index) with the ``msci`` xref. Levels are
-    immutable-upserted into ``index_levels`` tagged ``source='msci'``.
+    When ``variant`` (PR/NR/GR) is given the instrument is resolved from the SAME variant-encoded
+    ``msci`` xref ``<code>:<VARIANT>`` that ``load_msci_pull`` uses — so a file import and a direct
+    pull of the same series land on ONE instrument (no bare-code duplicate). Omitting ``variant``
+    keeps the legacy bare-code behaviour. If absent and ``name`` is given, the instrument is created
+    (kind=index). Levels are immutable-upserted into ``index_levels`` tagged ``source='msci'``.
     """
     conn.autocommit = True
-    sym_id = sym_id_for(conn, SRC_MSCI, msci_code)
+    xref_value = msci_xref_value(msci_code, variant) if variant else msci_code
+    sym_id = sym_id_for(conn, SRC_MSCI, xref_value)
     if sym_id is None:
         if not name:
             raise ValueError(
-                f"no instrument for msci code {msci_code!r}; pass name (+ currency) to create it"
+                f"no instrument for msci xref {xref_value!r}; pass name (+ currency) to create it"
             )
         sym_id = ensure_instrument(
-            conn, INDEX, name=name, currency_code=currency_code, xrefs={SRC_MSCI: msci_code}
+            conn, INDEX, name=name, currency_code=currency_code, xrefs={SRC_MSCI: xref_value}
         )
     series = parse_msci_rows(read_rows(path))
     return _upsert_levels(conn, sym_id, series)
