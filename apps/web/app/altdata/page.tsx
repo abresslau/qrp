@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
-import { dateAxisTicks } from "@/lib/date-axis";
+import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type AltSeries = Schemas["AltSeries"];
 type AltSeriesDetail = Schemas["AltSeriesDetail"];
@@ -64,7 +64,7 @@ function Spark({ detail }: { detail: AltSeriesDetail }) {
     <svg viewBox="0 0 720 200" className="w-full">
       <path d={path} fill="none" stroke="currentColor" strokeWidth={1.8} className="text-sky-500" />
       {xticks.map((t, i) => (
-        <text key={i} x={t.x} y={196} textAnchor="middle" className="fill-muted" fontSize={10}>
+        <text key={i} x={t.x} y={196} textAnchor={tickAnchor(i, xticks.length)} className="fill-muted" fontSize={10}>
           {t.label}
         </text>
       ))}

@@ -3,7 +3,7 @@
 import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
-import { dateAxisTicks } from "@/lib/date-axis";
+import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type SeriesSummary = Schemas["SeriesSummary"];
 type SeriesDetail = Schemas["SeriesDetail"];
@@ -284,7 +284,7 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
             />
           ))}
           {xticks.map((t, i) => (
-            <text key={i} x={t.x} y={236} textAnchor="middle" className="fill-muted" fontSize={10}>
+            <text key={i} x={t.x} y={236} textAnchor={tickAnchor(i, xticks.length)} className="fill-muted" fontSize={10}>
               {t.label}
             </text>
           ))}

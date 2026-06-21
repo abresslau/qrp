@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { dateAxisTicks } from "@/lib/date-axis";
+import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type IndexSummary = {
   sym_id: number;
@@ -113,7 +113,7 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
         <path d={geom.area} fill="currentColor" fillOpacity={0.08} stroke="none" />
         <path d={geom.line} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" />
         {geom.xticks.map((t, i) => (
-          <text key={i} x={t.x} y={H - 8} textAnchor="middle" className="fill-muted" fontSize={11}>
+          <text key={i} x={t.x} y={H - 8} textAnchor={tickAnchor(i, geom.xticks.length)} className="fill-muted" fontSize={11}>
             {t.label}
           </text>
         ))}
