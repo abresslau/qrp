@@ -104,7 +104,7 @@ export default async function UniversesPage() {
                 <LayerCell layer={u.fundamentals} universeId={u.universe_id} layerKey="fundamentals" />
                 <td className="px-4 py-2 text-right">
                   <Link
-                    href={`/sym/heatmap?u=${u.universe_id}`}
+                    href={`/monitor/heatmap?u=${u.universe_id}`}
                     className="text-emerald-600 hover:underline dark:text-emerald-400"
                   >
                     Heat map →

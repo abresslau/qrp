@@ -8,6 +8,14 @@ theme = "dark"
 
 # Module registry. `enabled` is a feature toggle (engineering, not licensing).
 # The API mounts a module's routes, and the console shows its nav, only when enabled.
+# Order here is the order in the console rail. `monitor` is a frontend-only VIEW area (market
+# boards over existing sym/portfolios data) — it has no backend router, so nothing is mounted for it.
+[[modules]]
+key = "monitor"
+name = "monitor"
+description = "Market boards — world equity indices, heat map, portfolio live"
+enabled = true
+
 [[modules]]
 key = "sym"
 name = "sym"

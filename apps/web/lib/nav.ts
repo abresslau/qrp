@@ -23,11 +23,19 @@ export const SYM_SUBNAV: SubItem[] = [
   { href: "/sym", label: "Universes" },
   { href: "/sym/overview", label: "Overview" },
   { href: "/sym/explorer", label: "Explorer" },
-  { href: "/sym/heatmap", label: "Heat map" },
   { href: "/sym/indexes", label: "Indexes" },
   { href: "/sym/attention", label: "Attention" },
   { href: "/sym/validation", label: "Validation" },
   { href: "/sym/operate", label: "Operate" },
+];
+
+// Monitor — the top-level area for at-a-glance market boards (sits above sym in the rail). Drives
+// both the Monitor tab strip (app/monitor/layout.tsx) and the sidebar submenu. The boards read the
+// existing sym + portfolios APIs — Monitor is a view aggregator, not its own backend package.
+export const MONITOR_SUBNAV: SubItem[] = [
+  { href: "/monitor/wei", label: "World equity indices" },
+  { href: "/monitor/heatmap", label: "Heat map" },
+  { href: "/monitor/portfolio-live", label: "Portfolio live" },
 ];
 
 // macro's submenu is data-driven: categories live in the macro DB (the category column is the
@@ -47,6 +55,7 @@ async function loadMacroCategories(): Promise<SubItem[]> {
 // The registry. Add a module's submenu here (static list or fetch loader) — that is the ONLY
 // edit needed to give a new module a submenu; the shell render code is module-agnostic.
 export const SUBNAV_PROVIDERS: Record<string, SubnavProvider> = {
+  monitor: { kind: "static", items: MONITOR_SUBNAV },
   sym: { kind: "static", items: SYM_SUBNAV },
   macro: { kind: "fetch", load: loadMacroCategories },
 };
