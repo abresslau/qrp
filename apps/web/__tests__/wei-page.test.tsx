@@ -121,7 +121,7 @@ describe("WEI (world equity indices) page", () => {
     const names = () => [...container.querySelectorAll("tbody td:first-child")].map((td) => td.textContent?.replace(/●.*/, "").trim());
     // default sort is country; both are United States, so they fall back to index name ascending
     expect(names()).toEqual(["Alpha Index", "Zeta Index"]);
-    // sort by 1Y → numeric descending (Alpha 0.99 before Zeta 0.05 stays, so flip to check: click twice)
+    // first click on a numeric column sorts descending; a second click toggles to ascending
     fireEvent.click(screen.getByLabelText("Sort by 1Y"));
     expect(names()).toEqual(["Alpha Index", "Zeta Index"]); // 1Y desc: 0.99 then 0.05
     fireEvent.click(screen.getByLabelText("Sort by 1Y")); // toggle to ascending

@@ -29,7 +29,7 @@ class EodStep:
     critical: bool = True
 
 
-# The daily core, in order. monitor/map/benchmarks/fx/validate are non-critical (a
+# The daily core, in order. monitor/map/benchmarks/fx/validate/index-reconcile are non-critical (a
 # hiccup shouldn't fail the night); fill + recompute are the critical data path.
 DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("monitor", "Discover index-universe membership changes", critical=False),
@@ -40,6 +40,8 @@ DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("fx", "Daily FX rate fill (Frankfurter)", critical=False),
     EodStep("recompute", "Materialize fact_returns (PR + TR)", critical=True),
     EodStep("validate", "Cross-layer integrity gate", critical=False),
+    EodStep("index-reconcile", "Index close vs source official (drift monitor, warn-only)",
+            critical=False),
 )
 
 
@@ -233,6 +235,17 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             if overall == "fail":
                 # The step must REPORT failure — `[ok] validate: overall=FAIL` was a
                 # gate that couldn't gate. Non-critical, so the run still exits 0.
+                raise RuntimeError(detail)
+            return detail
+        if key == "index-reconcile":
+            from sym.benchmarks.levels import YahooIndexLevelSource
+            from sym.validate.index_levels import check_index_level_fidelity
+
+            r = check_index_level_fidelity(conn, YahooIndexLevelSource())
+            detail = f"{r.status} (checked={r.checked} warn={r.warnings} fail={r.failures})"
+            if r.status == "fail":
+                # Mirror validate: a real divergence (>= fail_bps) must REPORT, not show [ok].
+                # Non-critical + warn-only by design, so a WARN (vendor noise) just surfaces.
                 raise RuntimeError(detail)
             return detail
         raise ValueError(f"unknown EOD step {key!r}")

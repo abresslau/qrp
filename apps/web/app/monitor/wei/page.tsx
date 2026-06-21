@@ -213,7 +213,8 @@ export default function WeiPage() {
               type="date"
               value={asOf || latestDate}
               max={latestDate || undefined}
-              onChange={(e) => setAsOf(e.target.value)}
+              // picking the latest date is "latest" — keep asOf empty so we fetch the clean URL
+              onChange={(e) => setAsOf(e.target.value === latestDate ? "" : e.target.value)}
               className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg"
             />
           </label>

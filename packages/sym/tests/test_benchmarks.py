@@ -140,3 +140,108 @@ def test_load_skips_msci_only_and_loads_yahoo():
     assert summary.instruments == 2
     assert summary.deferred == 1          # MSCI-only deferred
     assert summary.levels_written == 2    # the yahoo one loaded 2 levels
+
+
+class _CaptureConn:
+    """Fake conn that records each index_levels write as (session_date, level, conflict-clause)."""
+
+    def __init__(self):
+        self.writes = []
+        self._sql = ""
+
+    def execute(self, sql, params=None):
+        self._sql = sql
+        if "INSERT INTO index_levels" in sql:
+            conflict = "DO UPDATE" if "DO UPDATE" in sql else "DO NOTHING"
+            self.writes.append((params[1], params[2], conflict))  # (session_date, level, conflict)
+        return self
+
+    def transaction(self):
+        import contextlib
+
+        return contextlib.nullcontext()
+
+    def fetchone(self):
+        if "SELECT sym_id FROM instrument_xref" in self._sql:
+            return None
+        if "RETURNING sym_id" in self._sql:
+            return (1,)
+        return None
+
+    @property
+    def autocommit(self):
+        return True
+
+    @autocommit.setter
+    def autocommit(self, v):
+        pass
+
+
+def test_load_revises_latest_session_to_official_close():
+    """The latest session's candle close is revised to the vendor's OFFICIAL close (overwriteable);
+    history rows keep their candle close and stay append-only (DO NOTHING)."""
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    today = date.today()
+    d_old, d_latest = today - timedelta(days=2), today - timedelta(days=1)
+
+    class _Src:
+        SOURCE = "yahoo"
+
+        def levels(self, symbol, start):
+            return [(d_old, Decimal("100")), (d_latest, Decimal("110"))]  # candle latest = 110
+
+        def official_quote(self, symbol):
+            return d_latest.isoformat(), 108.5  # official differs from the candle
+
+    conn = _CaptureConn()
+    bms = [Benchmark("X", "USD", yahoo_symbol="^X")]
+    load_index_levels(conn, _Src(), bms, start=date(2024, 1, 1))
+    by_date = {d: (lv, c) for d, lv, c in conn.writes}
+    assert by_date[d_latest] == (Decimal("108.5"), "DO UPDATE")  # official + overwriteable
+    assert by_date[d_old] == (Decimal("100"), "DO NOTHING")  # history: candle, append-only
+
+
+def test_load_keeps_candle_when_official_date_does_not_match_latest():
+    """If the official quote is for a different session than the latest stored, keep the candle."""
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    today = date.today()
+    d_latest = today - timedelta(days=1)
+
+    class _Src:
+        SOURCE = "yahoo"
+
+        def levels(self, symbol, start):
+            return [(d_latest, Decimal("110"))]
+
+        def official_quote(self, symbol):
+            return today.isoformat(), 108.5  # official is for TODAY (newer) — must not apply
+
+    conn = _CaptureConn()
+    bms = [Benchmark("X", "USD", yahoo_symbol="^X")]
+    load_index_levels(conn, _Src(), bms, start=date(2024, 1, 1))
+    assert {d: lv for d, lv, _ in conn.writes}[d_latest] == Decimal("110")  # candle kept
+
+
+def test_official_quote_parses_meta(monkeypatch):
+    """official_quote reads regularMarketPrice + the exchange-local date from regularMarketTime."""
+    import io
+    import json
+
+    from sym.benchmarks.levels import YahooIndexLevelSource
+
+    payload = {
+        "chart": {"result": [{"meta": {
+            "regularMarketPrice": 168333.61,
+            "regularMarketTime": 1781900220,  # 2026-06-19 20:17 UTC
+            "gmtoffset": -10800,  # São Paulo → local session date 2026-06-19
+        }}]}
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda req, timeout=30: io.BytesIO(json.dumps(payload).encode())
+    )
+    iso, price = YahooIndexLevelSource().official_quote("^BVSP")
+    assert iso == "2026-06-19" and price == 168333.61

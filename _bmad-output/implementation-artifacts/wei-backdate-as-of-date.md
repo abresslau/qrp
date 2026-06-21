@@ -115,6 +115,13 @@ day earlier) — consistent with `freshness_per_market` (per-member recency, nev
 - [x] [Review][Defer] A server region outside `REGION_ORDER` is silently dropped from the board (`region_for` only emits the 4 known regions today; latent)
 - Dismissed (3): `_period_return`/`_trailing_returns` consistency (verified identical guard+series); ISO-string date compare (safe, zero-padded); dropped Net-Chg/As-of columns (intended in-session design change).
 
+### Review Findings — round 2 (code-review of 234d6b1 + c19763c + 8bfc1ed, 2026-06-21)
+- [x] [Review][Decision] RESOLVED → **accept + monitor** (Andre). Loader stays best-effort (official close fires on overnight/pre-open/weekend runs; candle otherwise). Added `index-reconcile` as a non-critical final EOD step (drift monitor, warn-only; raises only on a ≥fail_bps break, never fails the night) so any candle-vs-official drift surfaces nightly. The `index_levels` latest-row `DO UPDATE` relaxation + the official-quote network call in the EOD path are accepted as scoped/justified.
+- [x] [Review][Patch] Added tests: write-side official-close revision (overwrite latest = official, history = candle + DO NOTHING), the no-apply-when-date-mismatches case, and `official_quote` meta parsing (monkeypatched). [packages/sym/tests/test_benchmarks.py]
+- [x] [Review][Patch] Picking a date equal to `latestDate` now keeps `asOf=""` (clean latest fetch, no redundant `?as_of_date=`); stale sort-test comment fixed. [apps/web/app/monitor/wei/page.tsx, __tests__/wei-page.test.tsx]
+- [x] [Review][Defer] `levels_written` counts the no-op latest-row rewrite + the latest row is re-touched every run (cosmetic metric; the in-place revision is by design)
+- Dismissed (6): mixed-type comparator (latent, type-stable cols); xref LIMIT 1 (one yahoo xref/index); chg_pct/chg at prev=0 (intentional); MSCI substring (MSCI-prefixed only); flat-52w sink (0/0 guard); duplicate-symbol collapse (invariant).
+
 ## Dev Notes
 
 ### Where this fits
