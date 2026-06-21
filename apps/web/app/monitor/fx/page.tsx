@@ -8,6 +8,8 @@
 
 import { type CSSProperties, type DragEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
+import { ScaleToFit } from "@/components/scale-to-fit";
+
 type Cell = { rate: number | null; chg: number | null; stale: boolean; pair: string };
 type Row = { base: string; cells: Cell[] };
 type Meta = {
@@ -43,7 +45,7 @@ function Flag({ ccy }: { ccy: string }) {
       aria-hidden
       width={15}
       height={11}
-      className="inline-block h-[11px] w-[15px] rounded-[1px] align-middle ring-1 ring-border/50 2xl:h-[13px] 2xl:w-[18px]"
+      className="inline-block h-[11px] w-[15px] rounded-[1px] align-middle ring-1 ring-border/50"
     />
   );
 }
@@ -120,14 +122,14 @@ const HEAT_BANDS: { chg: number; label: string }[] = [
 ];
 function HeatLegend({ isDark }: { isDark: boolean }) {
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[9px] text-muted 2xl:mt-3 2xl:gap-1.5 2xl:text-[10px]">
+    <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[9px] text-muted">
       <span className="mr-1 uppercase tracking-wide">% change on day</span>
       {HEAT_BANDS.map((b) => {
         const style = heatStyle(b.chg, isDark);
         return (
           <span
             key={b.label}
-            className={`rounded px-1.5 py-0.5 ${style ? "" : "border border-border text-fg"}`}
+            className={`rounded px-2 py-0.5 ${style ? "" : "border border-border text-fg"}`}
             style={style}
           >
             {b.label}
@@ -300,12 +302,12 @@ function MatrixCard({
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-surface">
       <table
-        className="w-full table-fixed text-[11px] leading-none [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap 2xl:text-xs 2xl:leading-tight"
-        style={{ minWidth: `${minWidth}px` }}
+        className="table-fixed text-[11px] leading-tight [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap"
+        style={{ width: `${minWidth}px` }}
       >
         <colgroup>
-          <col className="w-11 2xl:w-14" />
-          <col className="w-5 2xl:w-7" />
+          <col className="w-11" />
+          <col className="w-5" />
           {colCurrencies.map((c) => (
             <col key={c} />
           ))}
@@ -314,21 +316,21 @@ function MatrixCard({
           <tr className="bg-fg/5">
             <th
               colSpan={colCurrencies.length + 2}
-              className="border-b border-border/60 px-1.5 py-px text-left text-[10px] font-semibold uppercase tracking-wide text-muted 2xl:px-2 2xl:py-1 2xl:text-[11px]"
+              className="border-b border-border/60 px-2 py-0.5 text-left text-[10px] font-semibold uppercase tracking-wide text-muted"
             >
               {label}
             </th>
           </tr>
           <tr className="border-b border-border">
             {/* corner spans the currency-code + flag columns; the cell ratio is row / column */}
-            <th colSpan={2} className="px-1.5 py-0.5 text-left text-[9px] font-medium uppercase tracking-wide text-muted 2xl:px-2 2xl:py-1 2xl:text-[10px]">
+            <th colSpan={2} className="px-2 py-0.5 text-left text-[9px] font-medium uppercase tracking-wide text-muted">
               {baseAxis === "columns" ? "row / column" : "column / row"}
             </th>
             {colCurrencies.map((q) => (
               <th
                 key={q}
                 {...dragProps(q)}
-                className={`cursor-move select-none px-1.5 py-px text-center font-semibold text-fg 2xl:px-2 2xl:py-1 ${
+                className={`cursor-move select-none px-2 py-0.5 text-center font-semibold text-fg ${
                   dragCcy === q ? "opacity-40" : ""
                 }`}
               >
@@ -348,14 +350,14 @@ function MatrixCard({
         <tr key={rowCcy} className="border-b border-border/30 hover:bg-fg/5">
           <th
             {...dragProps(rowCcy)}
-            className={`cursor-move select-none px-1.5 py-px text-left font-semibold text-fg 2xl:px-2 2xl:py-1 ${
+            className={`cursor-move select-none px-2 py-0.5 text-left font-semibold text-fg ${
               dragCcy === rowCcy ? "opacity-40" : ""
             }`}
           >
             {rowCcy}
             {headerMarker(statusOf.get(rowCcy))}
           </th>
-          <th className="py-px pr-1 text-center font-normal 2xl:py-1">
+          <th className="py-0.5 pr-1 text-center font-normal">
             <Flag ccy={rowCcy} />
           </th>
           {colCurrencies.map((colCcy) => {
@@ -382,7 +384,7 @@ function MatrixCard({
               <td
                 key={colCcy}
                 className={[
-                  "px-1.5 py-px text-center tabular-nums 2xl:px-2 2xl:py-1",
+                  "px-2 py-0.5 text-center tabular-nums",
                   diag ? "bg-fg/5 text-muted" : missing ? "text-amber-500" : "text-fg",
                 ].join(" ")}
                 style={heat}
@@ -496,9 +498,9 @@ export default function FxMatrixPage() {
   const baseOptions = all.includes("USD") ? ["USD", ...all.filter((c) => c !== "USD")] : all;
 
   return (
-    <div className="w-full">
-      <header className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 2xl:mb-3">
-        <h1 className="text-base font-semibold text-fg 2xl:text-lg">FX cross-rate matrix</h1>
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <header className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <h1 className="text-base font-semibold text-fg">FX cross-rate matrix</h1>
         <p className="grow text-xs text-muted">
           Cell = units of the <span className="text-fg">{baseAxis === "columns" ? "row" : "column"}</span>{" "}
           currency per 1 <span className="text-fg">{baseAxis === "columns" ? "column" : "row"}</span>{" "}
@@ -556,7 +558,7 @@ export default function FxMatrixPage() {
             <button
               type="button"
               onClick={resetOrder}
-              className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
+              className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
               title="Discard the saved drag order and return to the default ordering"
             >
               Reset order
@@ -575,14 +577,14 @@ export default function FxMatrixPage() {
               value={asOf || latestDate}
               max={latestDate || undefined}
               onChange={(e) => setAsOf(e.target.value === latestDate ? "" : e.target.value)}
-              className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg"
+              className="rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg"
             />
           </label>
           {backdated ? (
             <button
               type="button"
               onClick={() => setAsOf("")}
-              className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
+              className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
             >
               Latest
             </button>
@@ -590,27 +592,32 @@ export default function FxMatrixPage() {
         </div>
       </header>
 
-      {error ? (
-        <p className="rounded-lg border border-border bg-surface p-4 text-sm text-rose-500">
-          Could not load the matrix: {error}
-        </p>
-      ) : data == null ? (
-        <p className="text-sm text-muted">Loading…</p>
-      ) : !hasData ? (
-        <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
-          No FX data yet. Populate rates with <code className="rounded bg-fg/10 px-1">sym fx load</code>.
-        </p>
-      ) : (
-        // Two separate cards (spot rate · % change). table-fixed + identical colgroup keeps the
-        // currency columns aligned across both cards.
-        <div className="space-y-1 2xl:space-y-3">
-          <MatrixCard mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
-          <MatrixCard mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
-          <HeatLegend isDark={isDark} />
-        </div>
-      )}
+      <div className="min-h-0 flex-1">
+        {error ? (
+          <p className="rounded-lg border border-border bg-surface p-4 text-sm text-rose-500">
+            Could not load the matrix: {error}
+          </p>
+        ) : data == null ? (
+          <p className="text-sm text-muted">Loading…</p>
+        ) : !hasData ? (
+          <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
+            No FX data yet. Populate rates with <code className="rounded bg-fg/10 px-1">sym fx load</code>.
+          </p>
+        ) : (
+          // Scale the two cards (spot rate · % change) to fit the available height — identical layout on
+          // a laptop and a large screen, just larger. table-fixed + identical colgroup keeps the
+          // currency columns aligned across both cards.
+          <ScaleToFit>
+            <div className="space-y-1">
+              <MatrixCard mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+              <MatrixCard mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+              <HeatLegend isDark={isDark} />
+            </div>
+          </ScaleToFit>
+        )}
+      </div>
 
-      <p className="mt-1.5 text-[10px] leading-snug text-muted 2xl:mt-3 2xl:text-[11px]">
+      <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-muted">
         <span className="text-fg">Spot</span> (EOD) USD-base crosses (computed, not stored).{" "}
         <span className="text-fg">Drag any header</span> to reorder (both axes, saved); cells shaded by
         the day&apos;s move; <span className="text-amber-500">●</span> = stale/no rate. Hover for the pair.

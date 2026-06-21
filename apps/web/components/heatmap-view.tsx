@@ -49,14 +49,11 @@ type WindowOpt = { code: string; label: string };
 type Node = any;
 
 const W = 1000;
-// Two-tier density (see memory: responsive-density-two-tier). H is the map's height in viewBox units
-// (W=1000); rendered height = contentWidth × H/W, so a smaller H = flatter map. Large external monitors
-// are proportionally WIDER/SHORTER than laptops (mostly 16:9 / 21:9, and the fixed sidebar is a small
-// fraction → content aspect ≈ 1.55–1.6:1), whereas laptops trend 16:10 / 3:2 with a chunkier sidebar
-// (content aspect ≈ 1.4:1). So the map must be FLATTER on large screens to fit their shorter height,
-// not taller. Both tiers keep ~the same fraction of the viewport so neither scrolls.
-const H_LAPTOP = 540; // ratio 0.54 — fits a 16:9 1366×768 laptop (the tight case)
-const H_LARGE = 470; // ratio 0.47 — flatter for wide/short large monitors (≥1536px)
+// The map is a fixed-aspect canvas (W×H viewBox) that scales with the viewport via w-full — so it looks
+// IDENTICAL on a laptop and a large screen, just larger (consistent/proportional, like the scaled tables).
+// One aspect ratio for every screen. H/W = 0.52 fits a 16:9 1366×768 laptop (the binding case) and fills
+// the width on large monitors with only a sliver of height to spare.
+const H = 520;
 const HEADER = 16;
 const CLAMP = 0.03; // ±3% saturates the color scale (matches the legend)
 
@@ -86,21 +83,6 @@ function useIsDark(): boolean {
     return () => obs.disconnect();
   }, []);
   return dark;
-}
-
-// True on large screens (Tailwind 2xl, ≥1536px). Drives the two-tier density: laptops get the tighter
-// layout (shorter map), large monitors the roomier one. Defaults to false (laptop) for SSR/first paint.
-function useIsLarge(): boolean {
-  const [large, setLarge] = useState(false);
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia("(min-width: 1536px)");
-    const update = () => setLarge(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
-  return large;
 }
 
 // Dark text on light tiles, white text on saturated/dark tiles — keeps labels readable.
@@ -149,8 +131,6 @@ export function HeatmapView({
   // in render (react-hooks/refs).
   const [pos, setPos] = useState<{ x: number; y: number; w: number }>({ x: 0, y: 0, w: 0 });
   const isDark = useIsDark();
-  const isLarge = useIsLarge(); // two-tier density: shorter map on laptops, taller on large screens
-  const H = isLarge ? H_LARGE : H_LAPTOP;
   const online = useOnline(); // sidebar offline toggle pauses LIVE auto-refresh
 
   useEffect(() => {
@@ -233,7 +213,7 @@ export function HeatmapView({
       .paddingTop((d: Node) => (d.depth === 1 ? HEADER : 0))
       .round(true)(h);
     return h;
-  }, [data, H]);
+  }, [data]);
 
   const selectCls =
     "rounded-md border border-border bg-surface px-2 py-0.5 text-fg outline-none focus:border-fg/40 2xl:py-1";
