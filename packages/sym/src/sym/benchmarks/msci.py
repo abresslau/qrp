@@ -68,7 +68,9 @@ def parse_msci_graph_json(payload: object) -> list[tuple[date, Decimal]]:
     if not isinstance(payload, dict):
         raise ValueError("MSCI response was not a JSON object")
     err = payload.get("error_code")
-    if err is not None and str(err).strip():
+    # A present, non-empty, non-"0" error_code is a real error. "0"/0 is the common success
+    # sentinel some APIs send alongside valid data — don't treat it as a failure.
+    if err is not None and str(err).strip() not in ("", "0"):
         msg = str(payload.get("error_message") or "").strip()
         raise ValueError(f"MSCI error {str(err).strip()}: {msg}")
     levels = (payload.get("indexes") or {}).get("INDEX_LEVELS") or []

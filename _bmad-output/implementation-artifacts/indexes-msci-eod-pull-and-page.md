@@ -1,6 +1,6 @@
 # Story: MSCI index EOD — direct pull from MSCI + an Indexes page to see the series
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -48,6 +48,16 @@ Returns JSON: `{"msci_index_code","index_variant_type","ISO_currency_symbol","in
 - [x] Task 4: API `GET /api/sym/indexes` + `GET /api/sym/indexes/{sym_id}/levels` (AC: #5, #9d) — added `indexes()`/`index_levels()` to the sym gateway + router (variant split from the xref; since-start return; 404 on empty). Read-only.
 - [x] Task 5: Console `app/sym/indexes/` page under the sym subnav (AC: #6, #7, #9e) — index list + SVG level chart (theme via currentColor, SSR-safe) + stats (latest/as-of/since-start/from) + MSCI provenance & 1997-floor caveat; honest empty state with the `sym msci-pull` hint.
 - [x] Task 6: Verify (AC: #8) — 809 sym + 148 api + 96 web tests green; ruff/tsc/eslint clean. Real-Chrome CDP `/sym/indexes`: 18 indexes listed, MSCI World Net selectable, 6,649-vertex level curve renders, stats populate.
+
+### Review Findings (code review 2026-06-21, range fc9eddb..HEAD)
+
+- [x] [Review][Decision→Resolved] **Variant-encoded xref vs bare code → two instruments for one MSCI series.** RESOLVED (Andre, 2026-06-21): accept the split — `msci-pull` is canonical — and **deleted the dead bare stub** sym_id 2059 "MSCI World" (`990100`, 0 levels / 0 returns / 0 benchmark links). Only that one bare stub existed. Caveat logged for a follow-up: the `levels.py` benchmark seed still uses bare `990100`, so a re-seed could recreate an empty stub — durable fix is to make the seed/`msci-import` variant-xref-aware (light reconcile). `msci-pull` writes the `msci` xref as `<code>:<VARIANT>` (e.g. `990100:NETR`), but the B4 file importer `sym msci-import --msci-code 990100` and the benchmark registry `levels.py:62` use the **bare** code `990100`. So the documented importer and the new pull resolve to DIFFERENT `sym_id`s for the same MSCI World NR series (no `XrefConflictError` — different strings). Currently invisible (only the pull's instrument carries levels; the bare one is identity-only), but it's a latent identity split that undercuts the one-instrument-per-variant invariant. (Edge Case Hunter, Med.) **Decision:** migrate `msci-import` + the `levels.py` registry to the variant-encoded xref (reconcile), vs accept the split (pull is canonical going forward).
+- [x] [Review][Patch] **Stat cards show the previous index's numbers under the new index's header while switching** — FIXED: `setData(null)` at the top of the select-change async effect so the prior index's series is dropped immediately (stats then fall back to the new index's `last_level`/dates until the fetch lands). (Edge Case Hunter, Med.)
+- [x] [Review][Patch] **Footer asserts "history from 1997" while loaded daily data starts 2000-12-29** — FIXED: footer now reads "from 1997 where available — see each index's 'From'"; the per-instrument From stat already shows the true first_date. (Acceptance Auditor, Med.)
+- [x] [Review][Patch] **Harden the MSCI `error_code` guard against a "0"/0 success sentinel** — FIXED: `parse_msci_graph_json` now treats a `"0"`/`0`/empty `error_code` as success (`str(err).strip() not in ("", "0")`); added a regression test. (Blind + Edge, Low/defensive.)
+- [x] [Review][Defer] `msci-pull` recomputes only a trailing 365-day `fact_index_returns` window — a fresh ~26y backfill leaves deep-history index returns uncomputed until a full recompute. **Identical to the B4 `msci-import` predecessor** (not a new regression); the Indexes page reads trailing returns from raw levels via the API, so it's unaffected. Deferred — logged for a future full-history index-returns recompute.
+
+Dismissed as noise (9): YTD base = prior year-end close (conventional/correct; mid-year-start → honest None); negative-level divisor (parser drops non-positive + DB CHECK level>0); silent floor clamp (intentional, documented); variant partition on a colon-less xref (controlled writer); 404 on empty date-range (unreachable from the UI); no end<start guard (garbage-in); route under `/sym` not top-level (sanctioned by Open Q#3); backfill/seed "unverifiable from diff" (verified live — sym_id 2210, 25 indexes); macro-population legend gradient sampled linearly vs √ fills (cosmetic, it's a ramp legend not a scale axis); macro-compare unused `short` field (harmless dead value).
 
 ## Dev Notes
 
@@ -113,4 +123,5 @@ claude-opus-4-8[1m]
 |---|---|
 | 2026-06-20 | Created story: pull MSCI index EOD levels directly from MSCI's free public `getLevelDataForGraph` endpoint (verified reachable; variants STRD/NETR/GRTR; history floor 1997) into `index_levels` via B4's immutable loader (one instrument per variant), backfill MSCI World NR, expose a read API, and add a new console **Indexes** page with a level time-series chart. Replaces the rejected chatbot-scraping approach with the authoritative free source. Status → ready-for-dev. |
 | 2026-06-21 | Implemented all 6 tasks: sym pull/CLI, live MSCI World NR backfill (sym_id 2210, 6,646 levels), API index endpoints, Indexes console page. 809 sym + 148 api + 96 web tests green; ruff/tsc/eslint clean; real-Chrome verified. Status → review. Committed `5f00af7`. |
+| 2026-06-21 | Code review (3 layers): all 9 ACs confirmed, no crashes/security holes. 1 decision (xref split → accept-pull-canonical + deleted dead stub sym_id 2059) + 3 patches applied (clear stale stats on index switch; footer "from 1997 where available"; error_code "0"-sentinel guard + test) + 1 defer (trailing-365d recompute, pre-existing) + 9 dismissed. Status → done. |
 | 2026-06-21 | Follow-ups (committed): seeded 7 MSCI variants (World PR `2211`/GR `2212`, ACWI `2213`, EAFE `2214`, EM `2215`, Europe `2216`, USA `2217`) — 25 indexes now on the page; **trailing returns** YTD/1Y/3Y/5Y on the API + page (`ce0be9c`); **marquee default** (MSCI World Net) + MSCI-first sort + filter box (`75ccb69`); chart **1Y/5Y/Max range selector** (`d8aa146`). All real-Chrome verified; 149 api + web index tests green. |

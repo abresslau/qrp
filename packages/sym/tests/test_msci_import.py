@@ -100,6 +100,15 @@ def test_parse_graph_json_raises_on_msci_error():
         parse_msci_graph_json(payload)
 
 
+def test_parse_graph_json_treats_zero_error_code_as_success():
+    # "0"/0 is a common success sentinel — must NOT raise; the levels still parse.
+    payload = {
+        "error_code": "0", "error_message": "",
+        "indexes": {"INDEX_LEVELS": [{"level_eod": 100.0, "calc_date": 20240102}]},
+    }
+    assert parse_msci_graph_json(payload) == [(date(2024, 1, 2), Decimal("100.0"))]
+
+
 def test_parse_graph_json_empty_levels_ok():
     assert parse_msci_graph_json({"indexes": {"INDEX_LEVELS": []}}) == []
 

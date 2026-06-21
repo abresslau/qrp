@@ -153,6 +153,7 @@ export default function IndexesPage() {
     void (async () => {
       setLoading(true);
       setDataErr(null);
+      setData(null); // drop the previous index's series so its stats don't show under the new header
       try {
         const r = await fetch(`/api/sym/indexes/${selected}/levels`, {
           cache: "no-store",
@@ -300,8 +301,9 @@ export default function IndexesPage() {
       )}
 
       <p className="mt-4 text-xs text-muted">
-        Source: MSCI — free published end-of-day index levels (history from 1997; full
-        since-inception requires a licensed MSCI feed). Levels are immutable and source-tagged.
+        Source: MSCI — free published end-of-day index levels (from 1997 where available — see each
+        index&apos;s &ldquo;From&rdquo;; full since-inception requires a licensed MSCI feed). Levels are
+        immutable and source-tagged.
       </p>
     </div>
   );
