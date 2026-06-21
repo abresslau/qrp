@@ -13,7 +13,7 @@ const INDEXES = [
 const LEVELS = {
   sym_id: 2210, name: "MSCI World Net (USD)", currency: "USD", msci_code: "990100",
   variant: "NETR", n_levels: 3, since_start_return: 3.715,
-  trailing: { ytd: 0.082, "1y": 0.151, "3y": 0.274, "5y": 0.663 },
+  trailing: { mtd: 0.011, qtd: 0.045, ytd: 0.082, "1y": 0.151, "2y": 0.205, "3y": 0.274, "5y": 0.663, "10y": 1.234 },
   series: [
     { date: "2000-12-29", level: 2487.61 },
     { date: "2013-06-19", level: 5000.0 },
@@ -49,10 +49,14 @@ describe("Indexes page", () => {
     expect(screen.getAllByText("11,731.17").length).toBeGreaterThan(0);
     // since-start return formatted as a percent (2 decimals)
     expect(screen.getByText("+371.50%")).toBeInTheDocument();
-    // trailing returns rendered (YTD / 1Y / 3Y / 5Y from the series), 2 decimals
-    expect(screen.getAllByText("YTD").length).toBeGreaterThan(0);
+    // trailing returns rendered (MTD/QTD/YTD/1Y/2Y/3Y/5Y/10Y from the series), 2 decimals.
+    // MTD/QTD are stat-only labels (not range buttons), so unique; the rest are asserted by value.
+    expect(screen.getByText("MTD")).toBeInTheDocument();
+    expect(screen.getByText("QTD")).toBeInTheDocument();
+    expect(screen.getByText("+1.10%")).toBeInTheDocument(); // mtd 0.011
     expect(screen.getByText("+8.20%")).toBeInTheDocument(); // ytd 0.082
     expect(screen.getByText("+66.30%")).toBeInTheDocument(); // 5y 0.663
+    expect(screen.getByText("+123.40%")).toBeInTheDocument(); // 10y 1.234
     // chart range selector present; switching range keeps the chart rendered
     fireEvent.click(screen.getByRole("button", { name: /^Max$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^1Y$/ }));

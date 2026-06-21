@@ -18,7 +18,16 @@ type IndexSummary = {
   last_level: number | null;
 };
 type LevelPoint = { date: string; level: number };
-type Trailing = { ytd: number | null; "1y": number | null; "3y": number | null; "5y": number | null };
+type Trailing = {
+  mtd: number | null;
+  qtd: number | null;
+  ytd: number | null;
+  "1y": number | null;
+  "2y": number | null;
+  "3y": number | null;
+  "5y": number | null;
+  "10y": number | null;
+};
 type LevelSeries = {
   sym_id: number;
   name: string | null;
@@ -193,7 +202,7 @@ export default function IndexesPage() {
   const [data, setData] = useState<LevelSeries | null>(null);
   const [dataErr, setDataErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [range, setRange] = useState<"1Y" | "5Y" | "Max">("Max");
+  const [range, setRange] = useState<"YTD" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y" | "Max">("Max");
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -253,9 +262,14 @@ export default function IndexesPage() {
   const chartSeries = useMemo(() => {
     const s = data?.series ?? [];
     if (range === "Max" || s.length < 2) return s;
-    const lastT = new Date(s[s.length - 1].date).getTime();
-    const days = range === "1Y" ? 365 : 5 * 365;
-    const cutoff = new Date(lastT - days * 864e5).toISOString().slice(0, 10);
+    const last = s[s.length - 1];
+    let cutoff: string;
+    if (range === "YTD") {
+      cutoff = `${last.date.slice(0, 4)}-01-01`;
+    } else {
+      const yrs = { "1Y": 1, "2Y": 2, "3Y": 3, "5Y": 5, "10Y": 10 }[range];
+      cutoff = new Date(new Date(last.date).getTime() - yrs * 365 * 864e5).toISOString().slice(0, 10);
+    }
     const sliced = s.filter((p) => p.date >= cutoff);
     return sliced.length >= 2 ? sliced : s;
   }, [data, range]);
@@ -336,12 +350,16 @@ export default function IndexesPage() {
                   <Stat label="Since start" value={fmtPct(data?.since_start_return)} />
                   <Stat label="From" value={sel.first_date ?? "—"} />
                 </div>
-                {/* trailing returns (computed from the level series): YTD / 1Y / 3Y / 5Y */}
-                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {/* trailing returns (computed from the level series) */}
+                <div className="mb-4 grid grid-cols-4 gap-2 lg:grid-cols-8">
+                  <Stat label="MTD" value={<Ret v={data?.trailing?.mtd} />} />
+                  <Stat label="QTD" value={<Ret v={data?.trailing?.qtd} />} />
                   <Stat label="YTD" value={<Ret v={data?.trailing?.ytd} />} />
                   <Stat label="1Y" value={<Ret v={data?.trailing?.["1y"]} />} />
+                  <Stat label="2Y" value={<Ret v={data?.trailing?.["2y"]} />} />
                   <Stat label="3Y" value={<Ret v={data?.trailing?.["3y"]} />} />
                   <Stat label="5Y" value={<Ret v={data?.trailing?.["5y"]} />} />
+                  <Stat label="10Y" value={<Ret v={data?.trailing?.["10y"]} />} />
                 </div>
                 {dataErr ? (
                   <p className="text-sm text-rose-500">Could not load levels: {dataErr}</p>
@@ -351,7 +369,7 @@ export default function IndexesPage() {
                   <>
                     <div className="mb-1 flex justify-end">
                       <div className="inline-flex overflow-hidden rounded-md border border-border text-xs">
-                        {(["1Y", "5Y", "Max"] as const).map((rg) => (
+                        {(["YTD", "1Y", "2Y", "3Y", "5Y", "10Y", "Max"] as const).map((rg) => (
                           <button
                             key={rg}
                             type="button"

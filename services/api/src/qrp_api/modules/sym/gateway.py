@@ -63,12 +63,16 @@ class UniverseRef:
     members_resolved: int
 
 
+_TRAILING_KEYS = ("mtd", "qtd", "ytd", "1y", "2y", "3y", "5y", "10y")
+
+
 def _trailing_returns(series: list[dict]) -> dict:
-    """Trailing returns (YTD/1Y/3Y/5Y) from a date-ascending level series — latest level vs the
-    last observation on-or-before the window-start date. None when the series doesn't reach back
-    far enough. Pure helper (no DB)."""
+    """Trailing returns (MTD/QTD/YTD/1Y/2Y/3Y/5Y/10Y) from a date-ascending level series — latest
+    level vs the last observation on-or-before each window's start date. MTD/QTD/YTD anchor on the
+    prior month/quarter/year end; the year windows on latest − N×365d. None when the series doesn't
+    reach back far enough. Pure helper (no DB)."""
     if len(series) < 2:
-        return {"ytd": None, "1y": None, "3y": None, "5y": None}
+        return dict.fromkeys(_TRAILING_KEYS)
     last = series[-1]
     last_date = date.fromisoformat(last["date"])
 
@@ -82,11 +86,17 @@ def _trailing_returns(series: list[dict]) -> dict:
         # require a real lookback (a base strictly before the latest point) + a positive divisor
         return last["level"] / base["level"] - 1.0 if base and base["level"] and base["date"] < last["date"] else None
 
+    y, m = last_date.year, last_date.month
+    q_start_month = ((m - 1) // 3) * 3 + 1  # 1/4/7/10 — first month of the current quarter
     return {
-        "ytd": ret(f"{last_date.year}-01-01"),
+        "mtd": ret(f"{y:04d}-{m:02d}-01"),
+        "qtd": ret(f"{y:04d}-{q_start_month:02d}-01"),
+        "ytd": ret(f"{y:04d}-01-01"),
         "1y": ret((last_date - timedelta(days=365)).isoformat()),
+        "2y": ret((last_date - timedelta(days=2 * 365)).isoformat()),
         "3y": ret((last_date - timedelta(days=3 * 365)).isoformat()),
         "5y": ret((last_date - timedelta(days=5 * 365)).isoformat()),
+        "10y": ret((last_date - timedelta(days=10 * 365)).isoformat()),
     }
 
 

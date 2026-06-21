@@ -85,9 +85,16 @@ def test_index_levels_series_and_since_start_return():
 def test_index_levels_trailing_returns():
     out = DbSymGateway(_FakeConn()).index_levels(2210)
     tr = out["trailing"]
-    # latest 2026-06-19 = 11731.17; bases: YTD/1Y -> 2025-06-19 (10000), 3Y -> 2023-06-19 (9000),
-    # 5Y -> 2021-06-19 (8000). Each = latest/base - 1.
-    assert abs(tr["1y"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
+    # all 8 windows present
+    assert set(tr) == {"mtd", "qtd", "ytd", "1y", "2y", "3y", "5y", "10y"}
+    # latest 2026-06-19 = 11731.17. Bases (last obs on-or-before the window start):
+    # MTD/QTD/YTD/1Y -> 2025-06-19 (10000); 2Y/3Y -> 2023-06-19 (9000); 5Y -> 2021-06-19 (8000);
+    # 10Y -> 2000-12-29 (2487.61). Each = latest/base - 1.
+    assert abs(tr["mtd"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
+    assert abs(tr["qtd"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
     assert abs(tr["ytd"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
+    assert abs(tr["1y"] - (11731.17 / 10000.0 - 1.0)) < 1e-9
+    assert abs(tr["2y"] - (11731.17 / 9000.0 - 1.0)) < 1e-9
     assert abs(tr["3y"] - (11731.17 / 9000.0 - 1.0)) < 1e-9
     assert abs(tr["5y"] - (11731.17 / 8000.0 - 1.0)) < 1e-9
+    assert abs(tr["10y"] - (11731.17 / 2487.61 - 1.0)) < 1e-9
