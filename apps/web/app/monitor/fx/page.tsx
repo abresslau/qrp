@@ -6,7 +6,7 @@
 // "Base" control flips the base axis (columns ⟷ rows). Derived from QRP's USD-base fx_rate star
 // (crosses computed, never stored); per-currency as-of staleness is marked. No vendor IP.
 
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, type DragEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 type Cell = { rate: number | null; chg: number | null; stale: boolean; pair: string };
 type Row = { base: string; cells: Cell[] };
@@ -41,9 +41,9 @@ function Flag({ ccy }: { ccy: string }) {
       src={`/flags/${cc}.svg`}
       alt=""
       aria-hidden
-      width={18}
-      height={13}
-      className="inline-block rounded-[1px] ring-1 ring-border/50 align-middle"
+      width={15}
+      height={11}
+      className="inline-block h-[11px] w-[15px] rounded-[1px] align-middle ring-1 ring-border/50 2xl:h-[13px] 2xl:w-[18px]"
     />
   );
 }
@@ -120,7 +120,7 @@ const HEAT_BANDS: { chg: number; label: string }[] = [
 ];
 function HeatLegend({ isDark }: { isDark: boolean }) {
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[10px] text-muted">
+    <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[9px] text-muted 2xl:mt-3 2xl:gap-1.5 2xl:text-[10px]">
       <span className="mr-1 uppercase tracking-wide">% change on day</span>
       {HEAT_BANDS.map((b) => {
         const style = heatStyle(b.chg, isDark);
@@ -149,9 +149,98 @@ function headerMarker(m: Meta | undefined) {
   );
 }
 
-// One grid as a <tbody> (a full-width banner row + the matrix rows). Both grids live in ONE table so
-// their columns line up exactly. `mode` picks rate vs % change.
-function MatrixBody({
+// The manual currency order lives in localStorage and is read via useSyncExternalStore (like the
+// sidebar/theme) — no set-state-in-effect, a stable server snapshot (empty = default order) so
+// hydration never mismatches, and the snapshot is cached so a re-render only happens on real change.
+const ORDER_KEY = "qrp.fx.order";
+const EMPTY_ORDER: string[] = [];
+const orderListeners = new Set<() => void>();
+let orderCacheRaw: string | null = null;
+let orderCacheVal: string[] = EMPTY_ORDER;
+function subscribeOrder(cb: () => void): () => void {
+  orderListeners.add(cb);
+  window.addEventListener("storage", cb); // cross-tab
+  return () => {
+    orderListeners.delete(cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+function getOrderSnapshot(): string[] {
+  try {
+    const raw = localStorage.getItem(ORDER_KEY);
+    if (raw !== orderCacheRaw) {
+      const parsed = raw ? (JSON.parse(raw) as string[]) : EMPTY_ORDER;
+      orderCacheRaw = raw;
+      orderCacheVal = Array.isArray(parsed) ? parsed : EMPTY_ORDER;
+    }
+    return orderCacheVal;
+  } catch {
+    return EMPTY_ORDER;
+  }
+}
+function getOrderServerSnapshot(): string[] {
+  return EMPTY_ORDER;
+}
+function setOrderStored(next: string[]): void {
+  try {
+    localStorage.setItem(ORDER_KEY, JSON.stringify(next));
+    orderListeners.forEach((l) => l()); // notify this tab (the storage event is cross-tab only)
+  } catch {
+    /* storage unavailable — the order just won't persist */
+  }
+}
+function clearOrderStored(): void {
+  try {
+    localStorage.removeItem(ORDER_KEY);
+    orderListeners.forEach((l) => l());
+  } catch {
+    /* ignore */
+  }
+}
+
+// Small localStorage-backed store for a single string preference, read via useSyncExternalStore
+// (same contract as the order store): stable server snapshot = the fallback (no hydration mismatch),
+// scalar snapshot so React only re-renders on a real change. Used for base currency / sorting / axis.
+function makeStringStore(key: string, fallback: string) {
+  const listeners = new Set<() => void>();
+  return {
+    subscribe(cb: () => void): () => void {
+      listeners.add(cb);
+      window.addEventListener("storage", cb); // cross-tab
+      return () => {
+        listeners.delete(cb);
+        window.removeEventListener("storage", cb);
+      };
+    },
+    getSnapshot(): string {
+      try {
+        return localStorage.getItem(key) ?? fallback;
+      } catch {
+        return fallback;
+      }
+    },
+    getServerSnapshot(): string {
+      return fallback;
+    },
+    set(value: string): void {
+      try {
+        localStorage.setItem(key, value);
+        listeners.forEach((l) => l()); // notify this tab (storage event is cross-tab only)
+      } catch {
+        /* storage unavailable — the choice just won't persist */
+      }
+    },
+  };
+}
+// Module-level (stable refs) so useSyncExternalStore doesn't resubscribe every render.
+const baseCcyStore = makeStringStore("qrp.fx.baseCcy", "USD");
+const sortingStore = makeStringStore("qrp.fx.sorting", "lf");
+const baseAxisStore = makeStringStore("qrp.fx.baseAxis", "columns");
+
+// One grid as its own card (title + its own column headers + matrix rows). Each card is an
+// independent <table> using table-fixed + an identical <colgroup>, so the two cards' currency
+// columns line up exactly even though they live in separate cards. `mode` picks rate vs % change.
+function MatrixCard({
   mode,
   label,
   rowCurrencies,
@@ -160,6 +249,9 @@ function MatrixBody({
   cellOf,
   statusOf,
   isDark,
+  dragCcy,
+  setDragCcy,
+  onReorder,
 }: {
   mode: "rate" | "chg";
   label: string;
@@ -169,24 +261,101 @@ function MatrixBody({
   cellOf: (base: string, quote: string) => Cell | undefined;
   statusOf: Map<string, Meta>;
   isDark: boolean;
+  dragCcy: string | null;
+  setDragCcy: (c: string | null) => void;
+  onReorder: (from: string, to: string) => void;
 }) {
+  // identical min width on both cards (≥52px per currency col) → same column widths → aligned + scrolls
+  const minWidth = colCurrencies.length * 52 + 80;
+  // Drag a currency header to reorder; rows + columns share one order, so the other axis moves too.
+  // The dragged currency travels in dataTransfer (browser-managed) so the drop reads it reliably
+  // regardless of re-render timing; dragCcy state is just the visual (dimmed) cue.
+  const dragProps = (ccy: string) => ({
+    draggable: true,
+    onDragStart: (e: DragEvent) => {
+      setDragCcy(ccy);
+      try {
+        e.dataTransfer.setData("text/plain", ccy);
+        e.dataTransfer.effectAllowed = "move";
+      } catch {
+        /* dataTransfer may be unavailable in some environments — dragCcy fallback covers it */
+      }
+    },
+    onDragOver: (e: DragEvent) => e.preventDefault(), // mark every header a valid drop target
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      let from: string | null = null;
+      try {
+        from = e.dataTransfer.getData("text/plain") || null;
+      } catch {
+        from = null;
+      }
+      from = from || dragCcy;
+      if (from && from !== ccy) onReorder(from, ccy);
+      setDragCcy(null);
+    },
+    onDragEnd: () => setDragCcy(null),
+    title: "Drag to reorder — rows and columns move together",
+  });
   return (
-    <tbody>
-      <tr className="bg-fg/5">
-        <th
-          colSpan={colCurrencies.length + 2}
-          className="border-y border-border/60 px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-muted"
-        >
-          {label}
-        </th>
-      </tr>
+    <div className="overflow-x-auto rounded-lg border border-border bg-surface">
+      <table
+        className="w-full table-fixed text-[11px] leading-none [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap 2xl:text-xs 2xl:leading-tight"
+        style={{ minWidth: `${minWidth}px` }}
+      >
+        <colgroup>
+          <col className="w-11 2xl:w-14" />
+          <col className="w-5 2xl:w-7" />
+          {colCurrencies.map((c) => (
+            <col key={c} />
+          ))}
+        </colgroup>
+        <thead>
+          <tr className="bg-fg/5">
+            <th
+              colSpan={colCurrencies.length + 2}
+              className="border-b border-border/60 px-1.5 py-px text-left text-[10px] font-semibold uppercase tracking-wide text-muted 2xl:px-2 2xl:py-1 2xl:text-[11px]"
+            >
+              {label}
+            </th>
+          </tr>
+          <tr className="border-b border-border">
+            {/* corner spans the currency-code + flag columns; the cell ratio is row / column */}
+            <th colSpan={2} className="px-1.5 py-0.5 text-left text-[9px] font-medium uppercase tracking-wide text-muted 2xl:px-2 2xl:py-1 2xl:text-[10px]">
+              {baseAxis === "columns" ? "row / column" : "column / row"}
+            </th>
+            {colCurrencies.map((q) => (
+              <th
+                key={q}
+                {...dragProps(q)}
+                className={`cursor-move select-none px-1.5 py-px text-center font-semibold text-fg 2xl:px-2 2xl:py-1 ${
+                  dragCcy === q ? "opacity-40" : ""
+                }`}
+              >
+                <span className="inline-flex items-center justify-center gap-1">
+                  <Flag ccy={q} />
+                  <span>
+                    {q}
+                    {headerMarker(statusOf.get(q))}
+                  </span>
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
       {rowCurrencies.map((rowCcy) => (
         <tr key={rowCcy} className="border-b border-border/30 hover:bg-fg/5">
-          <th className="px-2 py-1 text-left font-semibold text-fg">
+          <th
+            {...dragProps(rowCcy)}
+            className={`cursor-move select-none px-1.5 py-px text-left font-semibold text-fg 2xl:px-2 2xl:py-1 ${
+              dragCcy === rowCcy ? "opacity-40" : ""
+            }`}
+          >
             {rowCcy}
             {headerMarker(statusOf.get(rowCcy))}
           </th>
-          <th className="py-1 pr-1 text-center font-normal">
+          <th className="py-px pr-1 text-center font-normal 2xl:py-1">
             <Flag ccy={rowCcy} />
           </th>
           {colCurrencies.map((colCcy) => {
@@ -213,7 +382,7 @@ function MatrixBody({
               <td
                 key={colCcy}
                 className={[
-                  "px-2 py-1 text-right tabular-nums",
+                  "px-1.5 py-px text-center tabular-nums 2xl:px-2 2xl:py-1",
                   diag ? "bg-fg/5 text-muted" : missing ? "text-amber-500" : "text-fg",
                 ].join(" ")}
                 style={heat}
@@ -226,7 +395,9 @@ function MatrixBody({
           })}
         </tr>
       ))}
-    </tbody>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -235,11 +406,15 @@ export default function FxMatrixPage() {
   const [error, setError] = useState<string | null>(null);
   const [asOf, setAsOf] = useState<string>(""); // "" = latest FX date; YYYY-MM-DD = backdated
   const [latestDate, setLatestDate] = useState<string>("");
-  const [baseCcy, setBaseCcy] = useState<string>("USD"); // the reference currency to position
-  // where the base currency sits on each axis: first char = row, second = column ("f" = 1st, "l" = last)
-  const [sorting, setSorting] = useState<"ff" | "fl" | "lf" | "ll">("lf"); // default: row last, col first
-  const [baseAxis, setBaseAxis] = useState<BaseAxis>("columns"); // which axis is the cross base
+  // Base currency / sorting / base axis — persisted to localStorage (like the column order) so a
+  // refresh keeps the user's layout. first char of sorting = row, second = column ("f" 1st, "l" last).
+  const baseCcy = useSyncExternalStore(baseCcyStore.subscribe, baseCcyStore.getSnapshot, baseCcyStore.getServerSnapshot);
+  const sorting = useSyncExternalStore(sortingStore.subscribe, sortingStore.getSnapshot, sortingStore.getServerSnapshot) as "ff" | "fl" | "lf" | "ll";
+  const baseAxis = useSyncExternalStore(baseAxisStore.subscribe, baseAxisStore.getSnapshot, baseAxisStore.getServerSnapshot) as BaseAxis;
   const isDark = useIsDark(); // heat scale follows the active theme
+  // Manual currency order, shared by BOTH axes and persisted to localStorage. Empty = warehouse order.
+  const order = useSyncExternalStore(subscribeOrder, getOrderSnapshot, getOrderServerSnapshot);
+  const [dragCcy, setDragCcy] = useState<string | null>(null);
 
   // Re-fetch on as-of change; newest-wins guard. Capture the latest FX date on an un-backdated load
   // so the picker can default to (and be bounded by) it. Pure: state set only in async callbacks.
@@ -282,19 +457,48 @@ export default function FxMatrixPage() {
   // reads "X per USD" — the natural reference. (Important-first rows trade away a clean anti-diagonal.)
   // Place the base currency 1st or last on each axis (Sorting); the rest keep the warehouse importance
   // order. e.g. base=USD, row-last/col-first → USD bottom row + first column (the classic FX matrix).
-  const all = data?.currencies ?? [];
+  const all = useMemo(() => data?.currencies ?? [], [data]);
   const hasData = all.length > 0;
-  const base = all.includes(baseCcy) ? baseCcy : null;
+
+  // Effective base sequence, derived (no effect): the saved custom order reconciled against the
+  // currencies actually present — keep saved sequence, drop departed, append any new — else warehouse.
+  const sequence = useMemo(() => {
+    if (!order.length || !all.length) return all;
+    const present = new Set(all);
+    const kept = order.filter((c) => present.has(c));
+    if (!kept.length) return all;
+    const added = all.filter((c) => !kept.includes(c));
+    return [...kept, ...added];
+  }, [order, all]);
+  const customised = order.length > 0;
+
+  // Drag a header to move a currency; persist. Both axes share `sequence`, so the other axis moves too.
+  const reorder = (from: string, to: string) => {
+    const fi = sequence.indexOf(from);
+    const ti = sequence.indexOf(to);
+    if (fi < 0 || ti < 0 || fi === ti) return;
+    const next = [...sequence];
+    next.splice(fi, 1);
+    next.splice(ti, 0, from);
+    setOrderStored(next); // persists + notifies the external store, which re-renders
+  };
+  const resetOrder = () => clearOrderStored();
+
+  const base = sequence.includes(baseCcy) ? baseCcy : null;
   const placed = (atFirst: boolean) =>
-    base ? (atFirst ? [base, ...all.filter((c) => c !== base)] : [...all.filter((c) => c !== base), base]) : all;
+    base
+      ? atFirst
+        ? [base, ...sequence.filter((c) => c !== base)]
+        : [...sequence.filter((c) => c !== base), base]
+      : sequence;
   const rowCurrencies = placed(sorting[0] === "f");
   const colCurrencies = placed(sorting[1] === "f");
   const baseOptions = all.includes("USD") ? ["USD", ...all.filter((c) => c !== "USD")] : all;
 
   return (
     <div className="w-full">
-      <header className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <h1 className="text-lg font-semibold text-fg">FX cross-rate matrix</h1>
+      <header className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 2xl:mb-3">
+        <h1 className="text-base font-semibold text-fg 2xl:text-lg">FX cross-rate matrix</h1>
         <p className="grow text-xs text-muted">
           Cell = units of the <span className="text-fg">{baseAxis === "columns" ? "row" : "column"}</span>{" "}
           currency per 1 <span className="text-fg">{baseAxis === "columns" ? "column" : "row"}</span>{" "}
@@ -306,7 +510,7 @@ export default function FxMatrixPage() {
             <span className="relative inline-flex items-center">
               <select
                 value={baseCcy}
-                onChange={(e) => setBaseCcy(e.target.value)}
+                onChange={(e) => baseCcyStore.set(e.target.value)}
                 className="appearance-none rounded border border-border bg-bg py-0.5 pl-1.5 pr-5 text-xs text-fg"
               >
                 {baseOptions.map((c) => (
@@ -323,7 +527,7 @@ export default function FxMatrixPage() {
             <span className="relative inline-flex items-center">
               <select
                 value={sorting}
-                onChange={(e) => setSorting(e.target.value as "ff" | "fl" | "lf" | "ll")}
+                onChange={(e) => sortingStore.set(e.target.value)}
                 className="appearance-none rounded border border-border bg-bg py-0.5 pl-1.5 pr-5 text-xs text-fg"
               >
                 <option value="ff">Row · Base 1st / Column · Base 1st</option>
@@ -339,7 +543,7 @@ export default function FxMatrixPage() {
             <span className="relative inline-flex items-center">
               <select
                 value={baseAxis}
-                onChange={(e) => setBaseAxis(e.target.value as BaseAxis)}
+                onChange={(e) => baseAxisStore.set(e.target.value)}
                 className="appearance-none rounded border border-border bg-bg py-0.5 pl-1.5 pr-5 text-xs text-fg"
               >
                 <option value="columns">columns</option>
@@ -348,6 +552,16 @@ export default function FxMatrixPage() {
               <span aria-hidden className="pointer-events-none absolute right-1.5 text-[9px] text-muted">▾</span>
             </span>
           </label>
+          {customised ? (
+            <button
+              type="button"
+              onClick={resetOrder}
+              className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
+              title="Discard the saved drag order and return to the default ordering"
+            >
+              Reset order
+            </button>
+          ) : null}
           {boardDate ? (
             <span className="text-xs text-muted">
               EOD · as of {boardDate}
@@ -387,47 +601,19 @@ export default function FxMatrixPage() {
           No FX data yet. Populate rates with <code className="rounded bg-fg/10 px-1">sym fx load</code>.
         </p>
       ) : (
-        // Both grids in ONE table so the currency columns line up exactly across Rate and % change.
-        <div className="overflow-x-auto rounded-lg border border-border bg-surface">
-          <table className="text-xs [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
-            <thead>
-              <tr className="border-b border-border">
-                {/* corner spans the currency-code + flag columns; the cell is this ratio: row / column */}
-                <th colSpan={2} className="px-2 py-1 text-left text-[10px] font-medium uppercase tracking-wide text-muted">
-                  {baseAxis === "columns" ? "row / column" : "column / row"}
-                </th>
-                {colCurrencies.map((q) => (
-                  <th key={q} className="px-2 py-1 text-right font-semibold text-fg">
-                    <span className="flex flex-col items-end gap-0.5 leading-tight">
-                      <Flag ccy={q} />
-                      <span>
-                        {q}
-                        {headerMarker(statusOf.get(q))}
-                      </span>
-                    </span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <MatrixBody mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} />
-            <MatrixBody mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} />
-          </table>
+        // Two separate cards (spot rate · % change). table-fixed + identical colgroup keeps the
+        // currency columns aligned across both cards.
+        <div className="space-y-1 2xl:space-y-3">
+          <MatrixCard mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+          <MatrixCard mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
           <HeatLegend isDark={isDark} />
         </div>
       )}
 
-      <p className="mt-3 text-[11px] leading-snug text-muted">
-        Rates shown are <span className="text-fg">spot</span> (EOD) — forwards &amp; fixings are
-        planned. Derived from the USD-base star (crosses computed, never stored).
-        Pick the <span className="text-fg">Base currency</span> and where it sits with{" "}
-        <span className="text-fg">Sorting</span>; <span className="text-fg">Base axis</span> sets which
-        axis is the cross base (a cell is the row currency per 1 column when base = columns).
-        Two grids: cross rate + daily % change, both shaded{" "}
-        <span className="text-emerald-600 dark:text-emerald-400">green</span>/
-        <span className="text-rose-600 dark:text-rose-400">red</span> by the day&apos;s move in bands (see
-        key below; hover for the conventional pair). A currency marked{" "}
-        <span className="text-amber-500">●</span> is stale or
-        has no rate as-of the date — its cells are blank, never fabricated. Not affiliated with any vendor.
+      <p className="mt-1.5 text-[10px] leading-snug text-muted 2xl:mt-3 2xl:text-[11px]">
+        <span className="text-fg">Spot</span> (EOD) USD-base crosses (computed, not stored).{" "}
+        <span className="text-fg">Drag any header</span> to reorder (both axes, saved); cells shaded by
+        the day&apos;s move; <span className="text-amber-500">●</span> = stale/no rate. Hover for the pair.
       </p>
     </div>
   );

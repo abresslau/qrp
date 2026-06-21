@@ -31,7 +31,12 @@ function stub(body: unknown = MATRIX) {
 }
 // headers carry a flag emoji + ● marker; pull out just the 3-letter code
 const codeOf = (s: string | null) => (s ?? "").replace(/[^A-Z]/g, "");
-const colHeaders = (c: HTMLElement) => [...c.querySelectorAll("thead th")].slice(1).map((h) => codeOf(h.textContent));
+// each card has its own <thead>; column headers are the last header row's cells after the corner th
+const colHeaders = (c: HTMLElement) => {
+  const rows = [...c.querySelectorAll("thead")[0].querySelectorAll("tr")];
+  const headerRow = rows[rows.length - 1];
+  return [...headerRow.querySelectorAll("th")].slice(1).map((h) => codeOf(h.textContent));
+};
 const rowHeaders = (c: HTMLElement, grid = 0) =>
   [...c.querySelectorAll("tbody")[grid].querySelectorAll("tr")].filter((r) => r.querySelector("td")).map((r) => codeOf(r.querySelector("th")!.textContent));
 // the cell at (rowCcy, colCcy) in grid index (0 = rate, 1 = % change)
@@ -48,7 +53,16 @@ const rgbOf = (el: HTMLElement): [number, number, number] =>
   (el.style.backgroundColor.match(/\d+/g) ?? []).map(Number) as [number, number, number];
 
 beforeEach(() => stub());
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  localStorage.clear(); // the saved drag order persists in localStorage — don't leak across tests
+});
+
+// a row header <th> by currency code, in the given grid (card)
+const rowTh = (c: HTMLElement, ccy: string, grid = 0): HTMLElement =>
+  [...c.querySelectorAll("tbody")[grid].querySelectorAll("tr")]
+    .map((r) => r.querySelector("th") as HTMLElement)
+    .find((th) => codeOf(th.textContent) === ccy)!;
 
 describe("FX cross-rate matrix page", () => {
   it("default sorting: base USD, row last / column first (USD bottom row, USD first column)", async () => {
@@ -73,7 +87,7 @@ describe("FX cross-rate matrix page", () => {
     // diagonal USD/USD is "—" + shaded
     expect(cellAt(container, "USD", "USD").textContent).toBe("—");
     expect(cellAt(container, "USD", "USD").className).toMatch(/bg-fg/);
-    expect(container.querySelectorAll("tbody tr").length).toBe(10); // 2 grids x (1 banner + 4 rows)
+    expect(container.querySelectorAll("tbody tr").length).toBe(8); // 2 cards x 4 currency rows
   });
 
   it("shows a country flag image beside each currency (2nd column + column header)", async () => {
@@ -147,8 +161,8 @@ describe("FX cross-rate matrix page", () => {
   it("marks a stale currency and blanks its cells (never a fabricated cross)", async () => {
     const { container } = render(<FxMatrixPage />);
     await screen.findByText("FX cross-rate matrix");
-    // XXX stale -> ● on the shared column header (1) + its row header in each grid (2) = 3
-    expect(screen.getAllByTitle(/stale — last observed 2026-06-01 \(17d\)/).length).toBe(3);
+    // XXX stale -> ● on each card's column header (2) + its row header in each card (2) = 4
+    expect(screen.getAllByTitle(/stale — last observed 2026-06-01 \(17d\)/).length).toBe(4);
     // a cell touching XXX has no rate; the tooltip labels the displayed direction
     expect(cellAt(container, "USD", "XXX").textContent).toBe("—");
     expect(cellAt(container, "USD", "XXX").getAttribute("title")).toMatch(/no fresh rate for XXX\/USD/);
@@ -170,6 +184,58 @@ describe("FX cross-rate matrix page", () => {
     await waitFor(() => expect(calls.some((u) => u.includes("as_of_date=2026-03-31"))).toBe(true));
     fireEvent.click(screen.getByText("Latest"));
     await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/fx/matrix"));
+  });
+
+  it("drag-reorders a currency on both axes and persists the order", async () => {
+    const { container } = render(<FxMatrixPage />);
+    await screen.findByText("FX cross-rate matrix");
+    // default rows: EUR, JPY, XXX, USD (USD pinned last by sorting)
+    expect(rowHeaders(container)).toEqual(["EUR", "JPY", "XXX", "USD"]);
+    // drag EUR onto JPY → EUR moves after JPY in the shared sequence
+    const store: Record<string, string> = {};
+    const dt = {
+      dataTransfer: { setData: (k: string, v: string) => void (store[k] = v), getData: (k: string) => store[k] ?? "", effectAllowed: "" },
+    };
+    fireEvent.dragStart(rowTh(container, "EUR"), dt);
+    fireEvent.dragOver(rowTh(container, "JPY"), dt);
+    fireEvent.drop(rowTh(container, "JPY"), dt);
+    // both axes reflect the new order (USD still pinned by sorting; columns put USD first)
+    expect(rowHeaders(container)).toEqual(["JPY", "EUR", "XXX", "USD"]);
+    expect(rowHeaders(container, 1)).toEqual(["JPY", "EUR", "XXX", "USD"]); // the % card matches
+    expect(colHeaders(container)).toEqual(["USD", "JPY", "EUR", "XXX"]);
+    // persisted to localStorage
+    expect(JSON.parse(localStorage.getItem("qrp.fx.order")!)).toEqual(["JPY", "EUR", "XXX", "USD"]);
+    // a Reset order control appears and restores the default
+    fireEvent.click(screen.getByText("Reset order"));
+    expect(rowHeaders(container)).toEqual(["EUR", "JPY", "XXX", "USD"]);
+    expect(localStorage.getItem("qrp.fx.order")).toBeNull();
+  });
+
+  it("persists base currency / sorting / base axis and restores them on load", async () => {
+    // changing a control writes to localStorage
+    const { container, unmount } = render(<FxMatrixPage />);
+    await screen.findByText("FX cross-rate matrix");
+    fireEvent.change(container.querySelectorAll("select")[2], { target: { value: "rows" } }); // Base axis
+    fireEvent.change(container.querySelectorAll("select")[1], { target: { value: "ff" } }); // Sorting
+    fireEvent.change(container.querySelectorAll("select")[0], { target: { value: "EUR" } }); // Base currency
+    expect(localStorage.getItem("qrp.fx.baseAxis")).toBe("rows");
+    expect(localStorage.getItem("qrp.fx.sorting")).toBe("ff");
+    expect(localStorage.getItem("qrp.fx.baseCcy")).toBe("EUR");
+    unmount();
+    // a fresh mount (≈ F5) restores them
+    const { container: c2 } = render(<FxMatrixPage />);
+    await screen.findByText("FX cross-rate matrix");
+    await waitFor(() => expect(colHeaders(c2)[0]).toBe("EUR")); // base EUR + sorting ff → EUR leads both axes
+    expect(rowHeaders(c2)[0]).toBe("EUR");
+    expect(cellAt(c2, "USD", "EUR").textContent).toBe("0.9200"); // base axis = rows → EUR per 1 USD
+  });
+
+  it("restores a previously saved drag order on load", async () => {
+    localStorage.setItem("qrp.fx.order", JSON.stringify(["JPY", "EUR", "XXX", "USD"]));
+    const { container } = render(<FxMatrixPage />);
+    await screen.findByText("FX cross-rate matrix");
+    // the saved order is applied by the reconcile effect after data loads
+    await waitFor(() => expect(rowHeaders(container)).toEqual(["JPY", "EUR", "XXX", "USD"]));
   });
 
   it("shows an honest empty state when no FX data", async () => {
