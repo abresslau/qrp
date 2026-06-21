@@ -8,7 +8,7 @@ import { PortfolioHeatmap, type Composition } from "@/components/portfolio-heatm
 import { PortfolioMovers } from "@/components/portfolio-movers";
 import { PortfolioPivot } from "@/components/portfolio-pivot";
 import { PortfolioDonut } from "@/components/portfolio-donut";
-import { PortfolioRiskPnl } from "@/components/portfolio-risk-pnl";
+import { PortfolioPnlStrip } from "@/components/portfolio-pnl-strip";
 import type { Schemas } from "@/lib/api";
 
 type Portfolio = Schemas["PortfolioDetail"];
@@ -96,31 +96,40 @@ export default function PortfolioLive() {
   }, [id, nonce]);
 
   return (
-    <div className="w-full space-y-4">
-      {/* Header — title + nav buttons on the same row */}
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-fg">
-            {p?.name ?? "Portfolio"} <span className="text-muted">· Live</span>
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            {p ? `${p.client ? `${p.client} · ` : ""}${p.base_currency} · ${p.weights.length} holdings` : "Loading…"}
-            {comp && comp.n_holdings > 0 ? (
-              <>
-                {" · "}
-                <span
-                  className={`rounded px-1.5 py-0.5 text-[11px] font-medium uppercase ${
-                    compLoading ? FRESH_STYLE.unavailable : FRESH_STYLE[comp.freshness] ?? FRESH_STYLE.unavailable
-                  }`}
-                >
-                  {compLoading ? "refreshing" : comp.freshness}
-                </span>{" "}
-                {comp.n_priced}/{comp.n_holdings} priced
-                {comp.as_of && !compLoading ? ` · as of ${new Date(comp.as_of).toLocaleTimeString()}` : ""} · not
-                stored
-              </>
-            ) : null}
-          </p>
+    <div className="w-full space-y-3 2xl:space-y-4">
+      {/* Header — title + live P&L strip (left) and nav buttons (right) on one row */}
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-fg">
+              {p?.name ?? "Portfolio"} <span className="text-muted">· Live</span>
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              {p ? `${p.client ? `${p.client} · ` : ""}${p.base_currency} · ${p.weights.length} holdings` : "Loading…"}
+              {comp && comp.n_holdings > 0 ? (
+                <>
+                  {" · "}
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium uppercase ${
+                      compLoading ? FRESH_STYLE.unavailable : FRESH_STYLE[comp.freshness] ?? FRESH_STYLE.unavailable
+                    }`}
+                  >
+                    {compLoading ? "refreshing" : comp.freshness}
+                  </span>{" "}
+                  {comp.n_priced}/{comp.n_holdings} priced
+                  {comp.as_of && !compLoading ? ` · as of ${new Date(comp.as_of).toLocaleTimeString()}` : ""} · not
+                  stored
+                </>
+              ) : null}
+            </p>
+          </div>
+          {/* Live P&L moved up here, beside the title (was a separate "Risk & P&L analytics" panel) */}
+          <PortfolioPnlStrip
+            portfolio={p}
+            dailyReturn={weightedPnl(comp, (h) => h.live_return)}
+            mtdReturn={weightedPnl(comp, (h) => h.window_returns?.["MTD"] ?? null)}
+            ytdReturn={weightedPnl(comp, (h) => h.window_returns?.["YTD"] ?? null)}
+          />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Link
@@ -140,13 +149,6 @@ export default function PortfolioLive() {
         </div>
       </div>
 
-      <PortfolioRiskPnl
-        portfolio={p}
-        dailyReturn={weightedPnl(comp, (h) => h.live_return)}
-        mtdReturn={weightedPnl(comp, (h) => h.window_returns?.["MTD"] ?? null)}
-        ytdReturn={weightedPnl(comp, (h) => h.window_returns?.["YTD"] ?? null)}
-      />
-
       {compErr && (
         <div className="rounded-md border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
           Couldn&apos;t load live composition: {compErr}
@@ -155,11 +157,11 @@ export default function PortfolioLive() {
       {comp ? (
         <>
           {/* Sector donut + top movers — two separate cards, side by side */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="grid gap-3 2xl:gap-4 lg:grid-cols-2">
+            <div className="rounded-xl border border-border bg-surface p-3 2xl:p-4">
               <PortfolioDonut data={comp} />
             </div>
-            <div className="rounded-xl border border-border bg-surface p-4">
+            <div className="rounded-xl border border-border bg-surface p-3 2xl:p-4">
               <PortfolioMovers pid={String(id)} composition={comp} />
             </div>
           </div>

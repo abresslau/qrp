@@ -7,12 +7,6 @@ type Portfolio = Schemas["PortfolioDetail"];
 function pct(r: number | null | undefined): string {
   return r == null ? "—" : `${r >= 0 ? "+" : ""}${(r * 100).toFixed(2)}%`;
 }
-function expPct(w: number | null | undefined): string {
-  return w == null ? "—" : `${(w * 100).toFixed(1)}%`;
-}
-function signedExpPct(w: number | null | undefined): string {
-  return w == null ? "—" : `${w >= 0 ? "+" : ""}${(w * 100).toFixed(1)}%`;
-}
 function tone(r: number | null | undefined): string {
   if (r == null) return "text-fg";
   return r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
@@ -33,8 +27,7 @@ function money(v: number | null | undefined, ccy: string | null | undefined): st
   return `${sign}${ccy ? `${ccy} ` : ""}${mag}`;
 }
 
-// One compact label/value stat — the whole panel is a single wrapping row of these. `sub` is an
-// optional secondary line (used for the P&L amount under the return %).
+// One compact label/value stat. `sub` is an optional secondary line (the P&L amount under the return %).
 function Stat({ label, value, cls, sub }: { label: string; value: string; cls?: string; sub?: string | null }) {
   return (
     <div className="flex flex-col whitespace-nowrap">
@@ -45,23 +38,22 @@ function Stat({ label, value, cls, sub }: { label: string; value: string; cls?: 
   );
 }
 
-export function PortfolioRiskPnl({
+// Compact, chrome-less Daily/MTD/YTD P&L strip — lives in the live-page header beside the title (no
+// card border, no heading). LIVE Daily/MTD/YTD P&L = Σ weight·return from the SAME composition that
+// drives the grid, heat map and donut (FX-hedged, plain weight×return), so these match the grid's
+// grand totals. Daily uses the live return; MTD/YTD use the (live-re-based) trailing windows. The
+// risk/exposure stats (Long/Short/Net/Gross/L/S) were intentionally removed from the live cockpit.
+export function PortfolioPnlStrip({
   portfolio,
   dailyReturn,
   mtdReturn,
   ytdReturn,
 }: {
   portfolio: Portfolio | null;
-  // LIVE Daily/MTD/YTD P&L = Σ weight·return from the SAME composition that drives the grid, heat map
-  // and donut (FX-hedged, plain weight×return), so these panel figures match the grid's grand totals.
   dailyReturn: number | null;
   mtdReturn: number | null;
   ytdReturn: number | null;
 }) {
-  const long = portfolio?.long_exposure ?? null;
-  const short = portfolio?.short_exposure ?? null;
-  const ls = long != null && short != null && short > 0 ? long / short : null;
-
   // P&L amounts (base currency) shown under the % returns when the portfolio states a notional —
   // each = its return × notional, consistent with the % above. No notional → no amount (null).
   const ccy = portfolio?.base_currency ?? null;
@@ -69,19 +61,10 @@ export function PortfolioRiskPnl({
   const amt = (r: number | null): number | null => (r != null && notional != null ? r * notional : null);
 
   return (
-    <div>
-      <h2 className="text-sm font-medium uppercase tracking-wide text-muted">Risk &amp; P&amp;L analytics</h2>
-      <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-border bg-surface px-4 py-3">
-        <Stat label="Daily P&L" value={pct(dailyReturn)} cls={tone(dailyReturn)} sub={money(amt(dailyReturn), ccy)} />
-        <Stat label="MTD P&L" value={pct(mtdReturn)} cls={tone(mtdReturn)} sub={money(amt(mtdReturn), ccy)} />
-        <Stat label="YTD P&L" value={pct(ytdReturn)} cls={tone(ytdReturn)} sub={money(amt(ytdReturn), ccy)} />
-        <div className="h-8 w-px self-center bg-border" aria-hidden />
-        <Stat label="Long" value={expPct(long)} cls="text-emerald-600 dark:text-emerald-400" />
-        <Stat label="Short" value={expPct(short)} cls="text-rose-600 dark:text-rose-400" />
-        <Stat label="Net" value={signedExpPct(portfolio?.net_exposure)} cls={tone(portfolio?.net_exposure)} />
-        <Stat label="Gross" value={expPct(portfolio?.gross_exposure)} />
-        <Stat label="L/S" value={ls == null ? "—" : `${ls.toFixed(2)}×`} />
-      </div>
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+      <Stat label="Daily P&L" value={pct(dailyReturn)} cls={tone(dailyReturn)} sub={money(amt(dailyReturn), ccy)} />
+      <Stat label="MTD P&L" value={pct(mtdReturn)} cls={tone(mtdReturn)} sub={money(amt(mtdReturn), ccy)} />
+      <Stat label="YTD P&L" value={pct(ytdReturn)} cls={tone(ytdReturn)} sub={money(amt(ytdReturn), ccy)} />
     </div>
   );
 }

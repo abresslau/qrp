@@ -44,7 +44,7 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-21  # monitor-fx-cross-matrix created -> ready-for-dev (FX cross-rate matrix monitor)
+last_updated: 2026-06-21  # portfolios-live-header-pnl-declutter created + dev'd -> review (fit-to-viewport live cockpit: P&L into header, drop risk/exposure, tighten card spacing + flatter heat map)
 # 2026-06-20: retrospectively enumerated the standalone / cross-cutting stories (delivered OUTSIDE the
 #   epic decompositions) into a new development_status section below (operator: "we can add to status
 #   file retrospectively"). These are the inline-tracked extras the DERIVATION NOTE references; statuses
@@ -308,6 +308,7 @@ development_status:
   portfolios-exposure-and-layout: done
   portfolios-live-heatmap-and-pizza: done
   portfolios-live-grid-eod-returns: done  # created + implemented + reviewed 2026-06-20 (live-rebased trailing returns in the grid; 2 review patches applied)
+  portfolios-live-header-pnl-declutter: review  # created + dev'd 2026-06-21 -> review (fit-to-viewport live cockpit: lift Daily/MTD/YTD P&L into the header beside the title, remove the risk/exposure stats + "Risk & P&L analytics" panel, tighten inter-card spacing so stats+donut+movers+heat-map fit full-screen without scroll; frontend + tests only; PortfolioRiskPnl is live-page-only, non-live "Risk & return analytics" out of scope)
   portfolios-multi-column-sort: done  # created + implemented + reviewed 2026-06-20 (Ctrl/Cmd-click adds/toggles secondary sort keys; ordered Sort[] + looped compareHoldings + priority indicators; within-sector grouping preserved). Code-review: 8/8 ACs, no High/Med; 1 decision (keep fresh-single-sort) + 2 patches (indicator separator, test assertion). 6 pivot + 20 portfolio tests green, tsc+eslint clean.
   portfolios-donut-container-fit: done  # created + implemented + reviewed 2026-06-20 (donut sized by CONTAINER via Tailwind v4 container queries, not viewport; CSS-gated minor labels; matchMedia hook removed). Real-Chrome verified rail-toggle holds card height. Code-review: all ACs met, 2 patches (drop @sm grow step, harden label test). 31 portfolio tests green.
   portfolios-donut-responsive: done  # 2026-06-20 implemented then SUPERSEDED-and-folded into portfolios-donut-container-fit (viewport->container queries); intent (big donut + more labels on large screens) preserved in the final code. Committed together.

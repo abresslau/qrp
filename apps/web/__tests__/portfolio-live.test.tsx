@@ -59,15 +59,18 @@ beforeEach(() => stub());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("PortfolioLive page", () => {
-  it("renders Risk & P&L, the heat map, and the sector donut from one composition fetch", async () => {
+  it("renders the header P&L strip, the heat map, and the sector donut from one composition fetch", async () => {
     render(<PortfolioLive />);
     expect(await screen.findByText(/Long\/Short Book/)).toBeInTheDocument(); // header
 
-    // Risk & P&L panel (compact) — "Daily P&L" now appears both here and as a grid column header
+    // Live P&L now sits in the header (no risk/exposure panel). Daily/MTD/YTD P&L each appear BOTH in
+    // the header strip AND as a grid column header, so use getAllByText.
     expect(screen.getAllByText("Daily P&L").length).toBeGreaterThan(0);
-    expect(screen.getByText("Long")).toBeInTheDocument();
-    expect(screen.getByText("L/S")).toBeInTheDocument();
-    expect(screen.getByText("4.00×")).toBeInTheDocument(); // long 0.8 / short 0.2
+    expect(screen.getAllByText("MTD P&L").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("YTD P&L").length).toBeGreaterThan(0);
+    // the removed risk/exposure stats are gone
+    expect(screen.queryByText("L/S")).not.toBeInTheDocument();
+    expect(screen.queryByText("Long")).not.toBeInTheDocument();
 
     // sector donut (in-slice + legend) + heat-map tiles
     expect(screen.getAllByText("Tech").length).toBeGreaterThan(0);

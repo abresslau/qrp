@@ -50,7 +50,7 @@ afterEach(() => vi.unstubAllGlobals());
 describe("HeatmapView LIVE mode (QH.9)", () => {
   it("selecting LIVE fetches the live endpoint and shows the freshness badge + coverage", async () => {
     render(<HeatmapView universes={UNIVERSES} windows={WINDOWS} defaultUniverse="u1" defaultWindow="YTD" />);
-    await screen.findByText(/Heatmap/); // EOD mount render
+    await screen.findByText(/Heat map/); // EOD mount render
 
     fireEvent.change(windowSelect(), { target: { value: "LIVE" } });
 
@@ -68,7 +68,7 @@ describe("HeatmapView LIVE mode (QH.9)", () => {
   it("a 503 in LIVE mode surfaces the error (not a blank map) and keeps the selectors", async () => {
     stub({ liveHttpOk: false });
     render(<HeatmapView universes={UNIVERSES} windows={WINDOWS} defaultUniverse="u1" defaultWindow="YTD" />);
-    await screen.findByText(/Heatmap/);
+    await screen.findByText(/Heat map/);
 
     fireEvent.change(windowSelect(), { target: { value: "LIVE" } });
 

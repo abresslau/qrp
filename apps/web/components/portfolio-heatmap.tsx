@@ -54,7 +54,10 @@ export type Composition = {
 type Node = any;
 
 const W = 1000;
-const H = 460;
+// Flatter aspect (was 460) so the full-width heat map stays short enough that the live cockpit —
+// header P&L + donut + movers + heat map — fits a full-screen window without scrolling. Height of the
+// rendered SVG ≈ (H/W) × card width, so a smaller H buys back vertical space, more so on wide screens.
+const H = 300;
 const HEADER = 16;
 const CLAMP = 0.03; // ±3% saturates the diverging scale (matches heatmap-view + the legend)
 

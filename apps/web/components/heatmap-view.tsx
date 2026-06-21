@@ -222,7 +222,7 @@ export function HeatmapView({
     <div>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3 2xl:mb-3">
         <h1 className="text-base font-semibold tracking-tight text-fg 2xl:text-lg">
-          {data?.universe_name ?? "Universe"} Heatmap
+          {data?.universe_name ?? "Universe"} Heat map
         </h1>
         <div className="flex items-center gap-2 text-xs 2xl:text-sm">
           <select value={uni} onChange={(e) => setUni(e.target.value)} className={selectCls}>
