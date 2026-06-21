@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
+import { dateAxisTicks } from "@/lib/date-axis";
 
 type RunSummary = Schemas["RunSummary"];
 type RunDetail = Schemas["RunDetail"];
@@ -21,9 +22,9 @@ function num(v: number | null | undefined): string {
 }
 
 function EquityCurve({ detail }: { detail: RunDetail }) {
-  const { sPath, bPath, x0, x1, hi } = useMemo(() => {
+  const { sPath, bPath, xticks, hi } = useMemo(() => {
     const pts = detail.curve;
-    if (pts.length < 2) return { sPath: "", bPath: "", x0: "", x1: "", hi: 0 };
+    if (pts.length < 2) return { sPath: "", bPath: "", xticks: [], hi: 0 };
     const W = 760;
     const H = 260;
     const PAD = 30;
@@ -39,13 +40,8 @@ function EquityCurve({ detail }: { detail: RunDetail }) {
     const sy = (v: number) => H - PAD - ((v - minY) / spanY) * (H - 2 * PAD);
     const mk = (sel: (p: RunDetail["curve"][number]) => number) =>
       pts.map((p, i) => `${i ? "L" : "M"}${sx(xs[i]).toFixed(1)},${sy(sel(p)).toFixed(1)}`).join(" ");
-    return {
-      sPath: mk((p) => p.strat),
-      bPath: mk((p) => p.base),
-      x0: new Date(minX).toLocaleDateString(),
-      x1: new Date(maxX).toLocaleDateString(),
-      hi: maxY,
-    };
+    const xticks = dateAxisTicks(minX, maxX, 6).map((tk) => ({ x: sx(tk.t), label: tk.label }));
+    return { sPath: mk((p) => p.strat), bPath: mk((p) => p.base), xticks, hi: maxY };
   }, [detail]);
 
   if (detail.curve.length < 2) return <p className="text-sm text-muted">No curve.</p>;
@@ -54,13 +50,14 @@ function EquityCurve({ detail }: { detail: RunDetail }) {
       <svg viewBox="0 0 760 260" className="w-full">
         <path d={bPath} fill="none" stroke="currentColor" strokeWidth={1.5} className="text-muted" />
         <path d={sPath} fill="none" stroke="currentColor" strokeWidth={2} className="text-sky-500" />
+        {xticks.map((t, i) => (
+          <text key={i} x={t.x} y={252} textAnchor="middle" className="fill-muted" fontSize={10}>
+            {t.label}
+          </text>
+        ))}
       </svg>
-      <div className="flex justify-between text-xs text-muted">
-        <span>{x0}</span>
-        <span>
-          <span className="text-sky-500">strategy</span> vs baseline · peak ×{hi.toFixed(2)}
-        </span>
-        <span>{x1}</span>
+      <div className="text-center text-xs text-muted">
+        <span className="text-sky-500">strategy</span> vs baseline · peak ×{hi.toFixed(2)}
       </div>
     </div>
   );

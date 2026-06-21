@@ -3,6 +3,7 @@
 import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
+import { dateAxisTicks } from "@/lib/date-axis";
 
 type SeriesSummary = Schemas["SeriesSummary"];
 type SeriesDetail = Schemas["SeriesDetail"];
@@ -131,9 +132,9 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
     [plottable, hidden]
   );
 
-  const { lines, lo, hi, x0, x1, minX, maxX } = useMemo(() => {
+  const { lines, lo, hi, xticks, minX, maxX } = useMemo(() => {
     if (visible.length === 0)
-      return { lines: [], lo: 0, hi: 0, x0: "", x1: "", minX: 0, maxX: 1 };
+      return { lines: [], lo: 0, hi: 0, xticks: [], minX: 0, maxX: 1 };
     const W = 720;
     const H = 240;
     const PAD = 28;
@@ -157,15 +158,8 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
         )
         .join(" "),
     }));
-    return {
-      lines,
-      lo: minY,
-      hi: maxY,
-      x0: new Date(minX).getFullYear().toString(),
-      x1: new Date(maxX).getFullYear().toString(),
-      minX,
-      maxX,
-    };
+    const xticks = dateAxisTicks(minX, maxX, 6).map((tk) => ({ x: sx(tk.t), label: tk.label }));
+    return { lines, lo: minY, hi: maxY, xticks, minX, maxX };
   }, [visible]);
 
   const W = 720;
@@ -289,13 +283,14 @@ function CompareChart({ group, loaded }: { group: Group; loaded: Loaded[] }) {
               strokeWidth={1.6}
             />
           ))}
+          {xticks.map((t, i) => (
+            <text key={i} x={t.x} y={236} textAnchor="middle" className="fill-muted" fontSize={10}>
+              {t.label}
+            </text>
+          ))}
         </svg>
-        <div className="flex justify-between text-xs text-muted">
-          <span>{x0}</span>
-          <span>
-            range {fmt(lo, group.unit)} – {fmt(hi, group.unit)}
-          </span>
-          <span>{x1}</span>
+        <div className="text-center text-xs text-muted">
+          range {fmt(lo, group.unit)} – {fmt(hi, group.unit)}
         </div>
       </div>
       ) : (

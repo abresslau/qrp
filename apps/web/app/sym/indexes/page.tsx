@@ -6,6 +6,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { dateAxisTicks } from "@/lib/date-axis";
+
 type IndexSummary = {
   sym_id: number;
   name: string | null;
@@ -78,12 +80,25 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
     const area = `${line} L${x(n - 1).toFixed(1)},${(H - PAD_B).toFixed(1)} L${x(0).toFixed(1)},${(H - PAD_B).toFixed(1)} Z`;
     // 4 horizontal gridlines / y labels
     const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: min + f * span, yy: y(min + f * span) }));
-    return { x, y, line, area, ticks, min, max, n };
+    // "Nice" date ticks (matplotlib-style) at round boundaries across the series' date range.
+    // The chart is index-scaled (not time-scaled), so map each tick time to its nearest observation.
+    const times = series.map((p) => new Date(p.date).getTime());
+    const xticks = dateAxisTicks(times[0], times[n - 1], 6).map((tk) => {
+      let idx = 0;
+      let best = Infinity;
+      for (let i = 0; i < times.length; i++) {
+        const dd = Math.abs(times[i] - tk.t);
+        if (dd < best) {
+          best = dd;
+          idx = i;
+        }
+      }
+      return { x: x(idx), label: tk.label };
+    });
+    return { x, y, line, area, ticks, xticks, min, max, n };
   }, [series]);
 
   if (!geom) return <p className="text-sm text-muted">Not enough points to chart.</p>;
-  const first = series[0];
-  const last = series[series.length - 1];
   return (
     <div className="text-fg">
       <svg viewBox={`0 0 ${W} ${H}`} className="block w-full" role="img" aria-label="Index level time series">
@@ -97,8 +112,11 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
         ))}
         <path d={geom.area} fill="currentColor" fillOpacity={0.08} stroke="none" />
         <path d={geom.line} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" />
-        <text x={PAD_L} y={H - 8} textAnchor="start" className="fill-muted" fontSize={11}>{first.date}</text>
-        <text x={W - PAD_R} y={H - 8} textAnchor="end" className="fill-muted" fontSize={11}>{last.date}</text>
+        {geom.xticks.map((t, i) => (
+          <text key={i} x={t.x} y={H - 8} textAnchor="middle" className="fill-muted" fontSize={11}>
+            {t.label}
+          </text>
+        ))}
       </svg>
       <div className="mt-1 text-right text-xs text-muted">Level{currency ? ` (${currency})` : ""}</div>
     </div>

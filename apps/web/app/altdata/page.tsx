@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { Schemas } from "@/lib/api";
+import { dateAxisTicks } from "@/lib/date-axis";
 
 type AltSeries = Schemas["AltSeries"];
 type AltSeriesDetail = Schemas["AltSeriesDetail"];
@@ -21,9 +22,9 @@ function metricLabel(metric: string) {
 }
 
 function Spark({ detail }: { detail: AltSeriesDetail }) {
-  const path = useMemo(() => {
+  const { path, xticks } = useMemo(() => {
     const pts = detail.observations;
-    if (pts.length < 2) return "";
+    if (pts.length < 2) return { path: "", xticks: [] as { x: number; label: string }[] };
     const W = 720;
     const H = 200;
     const PAD = 24;
@@ -33,7 +34,22 @@ function Spark({ detail }: { detail: AltSeriesDetail }) {
     const spanY = maxY - minY || 1;
     const sx = (i: number) => PAD + (i / (pts.length - 1)) * (W - 2 * PAD);
     const sy = (v: number) => H - PAD - ((v - minY) / spanY) * (H - 2 * PAD);
-    return pts.map((p, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)},${sy(p.value).toFixed(1)}`).join(" ");
+    const path = pts.map((p, i) => `${i ? "L" : "M"}${sx(i).toFixed(1)},${sy(p.value).toFixed(1)}`).join(" ");
+    // "nice" date ticks mapped to nearest observation (index-scaled chart)
+    const times = pts.map((p) => new Date(p.obs_date).getTime());
+    const xticks = dateAxisTicks(times[0], times[times.length - 1], 6).map((tk) => {
+      let idx = 0;
+      let best = Infinity;
+      for (let i = 0; i < times.length; i++) {
+        const dd = Math.abs(times[i] - tk.t);
+        if (dd < best) {
+          best = dd;
+          idx = i;
+        }
+      }
+      return { x: sx(idx), label: tk.label };
+    });
+    return { path, xticks };
   }, [detail]);
   if (detail.observations.length === 0) return <p className="text-sm text-muted">No data.</p>;
   if (detail.observations.length === 1) {
@@ -47,6 +63,11 @@ function Spark({ detail }: { detail: AltSeriesDetail }) {
   return (
     <svg viewBox="0 0 720 200" className="w-full">
       <path d={path} fill="none" stroke="currentColor" strokeWidth={1.8} className="text-sky-500" />
+      {xticks.map((t, i) => (
+        <text key={i} x={t.x} y={196} textAnchor="middle" className="fill-muted" fontSize={10}>
+          {t.label}
+        </text>
+      ))}
     </svg>
   );
 }
