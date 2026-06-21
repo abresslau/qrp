@@ -4,6 +4,7 @@ import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useState } from
 
 import { COMPARISON_CATEGORIES, MacroCompare } from "@/components/macro-compare";
 import type { Schemas } from "@/lib/api";
+import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type SeriesSummary = Schemas["SeriesSummary"];
 type SeriesDetail = Schemas["SeriesDetail"];
@@ -236,10 +237,10 @@ function FeaturedChart({
       const v = minY + f * spanY;
       return { y: sy(v), v };
     });
-    const xTicks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
-      const t = minX + f * spanX;
-      return { x: sx(t), label: new Date(t).getFullYear().toString() };
-    });
+    const xTicks = dateAxisTicks(minX, maxX, axisTickCount(W - padL - padR)).map((tk) => ({
+      x: sx(tk.t),
+      label: tk.label,
+    }));
     const last = pts[pts.length - 1];
     return {
       W, H, padR, padT, padB, line, area, overlayLine, yTicks, xTicks,
@@ -300,7 +301,7 @@ function FeaturedChart({
         </g>
       ))}
       {geom.xTicks.map((t, i) => (
-        <text key={i} x={t.x} y={geom.H - 8} textAnchor="middle" className="fill-muted text-[10px]">
+        <text key={i} x={t.x} y={geom.H - 8} textAnchor={tickAnchor(i)} className="fill-muted text-[10px]">
           {t.label}
         </text>
       ))}

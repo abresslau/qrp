@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { axisTickCount, dateAxisTicks } from "@/lib/date-axis";
 import { fmtCompact, fmtPrice } from "@/lib/format";
 
 type Bar = {
@@ -26,7 +27,6 @@ const RANGES: Range[] = [
   { label: "10Y", days: 3650 },
 ];
 const CHART_TYPES: ChartType[] = ["area", "candle", "line"];
-const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // viewBox geometry (scales to container width). Price band on top, volume band below, a
 // shared index-based x-axis. Hand-rolled SVG — consistent with the heatmap (no chart lib).
@@ -143,50 +143,25 @@ export function PriceVolumeChart({ figi, currency }: { figi: string; currency?: 
     for (let k = 0; k <= 3; k++) out.push(scale.min + ((scale.max - scale.min) * k) / 3);
     return out;
   }, [scale]);
-  // Calendar-aware x-ticks: place a tick at each new year / quarter / month boundary (the unit
-  // chosen by the span), thinned to ~8, so a 10y range shows yearly ticks and a 1M range shows
-  // day-level ticks — not 3 evenly-spaced points regardless of duration.
+  // x-ticks via the shared date-axis (lib/date-axis): width-driven count, even round step phased
+  // from the start, labelled in the step's unit. Index-scaled chart -> map each tick to its nearest
+  // bar. (The render anchors the first/last labels by x-position so they don't clip.)
   const xLabels = useMemo(() => {
     if (n === 0) return [] as { i: number; label: string }[];
     if (n === 1) return [{ i: 0, label: pts[0].session_date.slice(2) }];
-    const parse = (s: string) => s.split("-").map(Number) as [number, number, number];
-    const spanDays = (new Date(pts[n - 1].session_date).getTime() - new Date(pts[0].session_date).getTime()) / 864e5;
-    const yearly = spanDays > 365 * 3;
-    const quarterly = !yearly && spanDays > 365;
-    const monthly = !yearly && !quarterly && spanDays > 70;
-    const keyOf = (s: string) => {
-      const [y, m] = parse(s);
-      if (yearly) return `${y}`;
-      if (quarterly) return `${y}-${Math.floor((m - 1) / 3)}`;
-      return `${y}-${m}`; // monthly (and the day-level fallback re-buckets below)
-    };
-    // first index of each new calendar bucket
-    const bounds: number[] = [];
-    let prev: string | null = null;
-    for (let i = 0; i < n; i++) {
-      const k = keyOf(pts[i].session_date);
-      if (k !== prev) {
-        bounds.push(i);
-        prev = k;
+    const times = pts.map((b) => new Date(b.session_date).getTime());
+    return dateAxisTicks(times[0], times[n - 1], axisTickCount(W - PAD_L - PAD_R)).map((tk) => {
+      let idx = 0;
+      let best = Infinity;
+      for (let i = 0; i < times.length; i++) {
+        const dd = Math.abs(times[i] - tk.t);
+        if (dd < best) {
+          best = dd;
+          idx = i;
+        }
       }
-    }
-    const fmt = (i: number) => {
-      const [y, m, d] = parse(pts[i].session_date);
-      if (yearly) return `${y}`;
-      if (quarterly || monthly) return `${MON[m - 1]} '${String(y).slice(2)}`;
-      return `${d} ${MON[m - 1]}`;
-    };
-    // short spans (few month boundaries) → ~6 evenly-spaced day ticks instead
-    if (bounds.length < 4) {
-      const m = Math.min(6, n);
-      const idxs = [...new Set(Array.from({ length: m }, (_, j) => Math.round((j * (n - 1)) / (m - 1))))];
-      return idxs.map((i) => {
-        const [, mo, d] = parse(pts[i].session_date);
-        return { i, label: `${d} ${MON[mo - 1]}` };
-      });
-    }
-    const step = Math.ceil(bounds.length / 8); // keep it to ~8 labels
-    return bounds.filter((_, j) => j % step === 0).map((i) => ({ i, label: fmt(i) }));
+      return { i: idx, label: tk.label };
+    });
   }, [pts, n]);
 
   const hover = hoverIdx != null && hoverIdx < n ? pts[hoverIdx] : null;

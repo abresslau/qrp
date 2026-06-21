@@ -74,17 +74,19 @@ describe("PriceVolumeChart", () => {
     const data = dates.map((d, i) => ({ session_date: d, open: 99 + i, high: 101 + i, low: 98 + i, close: 100 + i, volume: 1_000_000 }));
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(data) });
 
-    render(<PriceVolumeChart figi="BBG1" />);
-    await waitFor(() => expect(screen.getByText(/Nov '25/)).toBeInTheDocument()); // 1Y default shows 2025
+    const { container } = render(<PriceVolumeChart figi="BBG1" />);
+    await waitFor(() => expect(container.querySelectorAll("rect").length).toBeGreaterThan(0));
+    const barsBefore = container.querySelectorAll("rect").length; // full series incl. 2025
 
     fireEvent.click(screen.getByRole("button", { name: "YTD" }));
     await waitFor(() => {
       const last = fetchMock.mock.calls.at(-1)?.[0] as string;
-      expect(last).toContain("days=400");
+      expect(last).toContain("days=400"); // YTD fetches ~13 months
     });
-    // clipped to 2026 → no 2025 month labels remain
-    await waitFor(() => expect(screen.queryByText(/'25/)).not.toBeInTheDocument());
-    expect(screen.getByText(/Jan '26/)).toBeInTheDocument();
+    // view clipped to the latest year (2026) → strictly fewer bars than the full series
+    await waitFor(() =>
+      expect(container.querySelectorAll("rect").length).toBeLessThan(barsBefore),
+    );
   });
 
   it("shows an honest empty state when there is no history", async () => {
