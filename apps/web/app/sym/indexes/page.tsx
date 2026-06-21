@@ -44,7 +44,7 @@ function fmtLevel(n: number | null | undefined): string {
 }
 function fmtPct(r: number | null | undefined): string {
   if (r == null || !Number.isFinite(r)) return "—";
-  return `${r >= 0 ? "+" : ""}${(r * 100).toFixed(1)}%`;
+  return `${r >= 0 ? "+" : ""}${(r * 100).toFixed(2)}%`;
 }
 
 // --- SVG level line chart (viewBox-scaled; theme via currentColor) -------------------------------
@@ -92,6 +92,80 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
         <text x={W - PAD_R} y={H - 8} textAnchor="end" className="fill-muted" fontSize={11}>{last.date}</text>
       </svg>
       <div className="mt-1 text-right text-xs text-muted">Level{currency ? ` (${currency})` : ""}</div>
+    </div>
+  );
+}
+
+// --- monthly calendar returns (Year | Jan … Dec | YTD) from the level series ---------------------
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+type MonthRow = { year: number; months: (number | null)[]; ytd: number | null };
+
+// Month-over-month returns from month-end levels: ret(y,m) = monthEnd(y,m) / monthEnd(prev month) − 1.
+// YTD = last month-end of the year / prior year-end (or the year's first observation in the inception
+// year). Years with no computable month are dropped (e.g. a 2-day inception stub). Newest year first.
+function monthlyReturnRows(series: LevelPoint[]): MonthRow[] {
+  if (series.length < 2) return [];
+  const monthEnd = new Map<string, number>(); // "YYYY-MM" -> last level in that month
+  const firstOfYear = new Map<number, number>();
+  for (const p of series) {
+    monthEnd.set(p.date.slice(0, 7), p.level); // series is date-ascending → last write wins
+    const y = Number(p.date.slice(0, 4));
+    if (!firstOfYear.has(y)) firstOfYear.set(y, p.level);
+  }
+  const me = (y: number, m: number) => monthEnd.get(`${y}-${String(m + 1).padStart(2, "0")}`);
+  const years = [...new Set([...monthEnd.keys()].map((k) => Number(k.slice(0, 4))))].sort((a, b) => a - b);
+  const rows = years.map((y): MonthRow => {
+    const months = Array.from({ length: 12 }, (_, m) => {
+      const cur = me(y, m);
+      if (cur == null) return null;
+      const prev = m === 0 ? me(y - 1, 11) : me(y, m - 1);
+      return prev != null && prev > 0 ? cur / prev - 1 : null;
+    });
+    let lastM = -1;
+    for (let m = 11; m >= 0; m--) if (me(y, m) != null) { lastM = m; break; }
+    const cur = lastM >= 0 ? me(y, lastM)! : null;
+    const base = me(y - 1, 11) ?? firstOfYear.get(y);
+    const ytd = cur != null && base != null && base > 0 ? cur / base - 1 : null;
+    return { year: y, months, ytd };
+  });
+  return rows.filter((r) => r.months.some((m) => m != null)).reverse();
+}
+
+function MonthlyTable({ series }: { series: LevelPoint[] }) {
+  const rows = useMemo(() => monthlyReturnRows(series), [series]);
+  if (rows.length === 0) return null;
+  const cell = (r: number | null) => {
+    if (r == null) return <span className="text-muted/40">·</span>;
+    const cls = r >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400";
+    return <span className={cls}>{`${r >= 0 ? "+" : ""}${(r * 100).toFixed(2)}`}</span>;
+  };
+  return (
+    <div className="mt-5">
+      <div className="mb-1 text-xs uppercase tracking-wide text-muted">Monthly returns (%)</div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-right text-xs tabular-nums [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
+          <thead className="text-muted">
+            <tr className="border-b border-border">
+              <th className="px-2 py-1 text-left font-medium">Year</th>
+              {MONTHS.map((m) => (
+                <th key={m} className="px-2 py-1 font-medium">{m}</th>
+              ))}
+              <th className="px-2 py-1 font-semibold text-fg">YTD</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.year} className="border-b border-border/40 hover:bg-fg/5">
+                <td className="px-2 py-1 text-left font-medium text-fg">{r.year}</td>
+                {r.months.map((m, i) => (
+                  <td key={i} className="px-2 py-1">{cell(m)}</td>
+                ))}
+                <td className="px-2 py-1 font-semibold">{cell(r.ytd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -292,6 +366,7 @@ export default function IndexesPage() {
                       </div>
                     </div>
                     <LevelChart series={chartSeries} currency={sel.currency} />
+                    <MonthlyTable series={data.series} />
                   </>
                 )}
               </>

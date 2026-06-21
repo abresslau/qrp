@@ -47,16 +47,43 @@ describe("Indexes page", () => {
     expect(await screen.findByRole("img", { name: /Index level time series/i })).toBeInTheDocument();
     // latest level appears (the stat + the chart's top y-tick both format it)
     expect(screen.getAllByText("11,731.17").length).toBeGreaterThan(0);
-    // since-start return formatted as a percent
-    expect(screen.getByText("+371.5%")).toBeInTheDocument();
-    // trailing returns rendered (YTD / 1Y / 3Y / 5Y from the series)
-    expect(screen.getByText("YTD")).toBeInTheDocument();
-    expect(screen.getByText("+8.2%")).toBeInTheDocument(); // ytd 0.082
-    expect(screen.getByText("+66.3%")).toBeInTheDocument(); // 5y 0.663
+    // since-start return formatted as a percent (2 decimals)
+    expect(screen.getByText("+371.50%")).toBeInTheDocument();
+    // trailing returns rendered (YTD / 1Y / 3Y / 5Y from the series), 2 decimals
+    expect(screen.getAllByText("YTD").length).toBeGreaterThan(0);
+    expect(screen.getByText("+8.20%")).toBeInTheDocument(); // ytd 0.082
+    expect(screen.getByText("+66.30%")).toBeInTheDocument(); // 5y 0.663
     // chart range selector present; switching range keeps the chart rendered
     fireEvent.click(screen.getByRole("button", { name: /^Max$/ }));
     fireEvent.click(screen.getByRole("button", { name: /^1Y$/ }));
     expect(screen.getByRole("img", { name: /Index level time series/i })).toBeInTheDocument();
+  });
+
+  it("renders the monthly returns calendar table (Year | Jan…Dec | YTD) below the chart", async () => {
+    const DENSE = {
+      ...LEVELS,
+      series: [
+        { date: "2023-12-31", level: 100 },
+        { date: "2024-01-31", level: 110 },
+        { date: "2024-02-29", level: 121 },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        url.includes("/levels")
+          ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(DENSE) })
+          : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(INDEXES) }),
+      ),
+    );
+    render(<IndexesPage />);
+    expect(await screen.findByText("Monthly returns (%)")).toBeInTheDocument();
+    expect(screen.getByText("Year")).toBeInTheDocument();
+    expect(screen.getByText("Jan")).toBeInTheDocument();
+    expect(screen.getByText("2024")).toBeInTheDocument();
+    // Jan = 110/100−1 = +10.00, Feb = 121/110−1 = +10.00 (2 cells); YTD = 121/100−1 = +21.00
+    expect(screen.getAllByText("+10.00")).toHaveLength(2);
+    expect(screen.getByText("+21.00")).toBeInTheDocument();
   });
 
   it("defaults to the marquee MSCI World Net even when a non-MSCI index sorts first alphabetically", async () => {
