@@ -33,6 +33,13 @@ describe("dateAxisTicks (even round step, phased from the start)", () => {
     expect(new Set(stepMonths).size).toBe(1);
   });
 
+  it("2-year span uses month steps (not a 1-year step that yields just 2 ticks)", () => {
+    // regression: 730d crossed the year threshold and gave only 2 yearly ticks labelled as months.
+    const ticks = dateAxisTicks(t("2024-06-20"), t("2026-06-19"), 6);
+    expect(ticks.length).toBeGreaterThanOrEqual(5);
+    expect(ticks.every((x) => /^[A-Z][a-z]{2} \d{2}$/.test(x.label))).toBe(true); // month labels
+  });
+
   it("short span: day labels 'Mon D'", () => {
     const ticks = dateAxisTicks(t("2024-06-01"), t("2024-06-20"), 6);
     expect(ticks.every((x) => /^[A-Z][a-z]{2} \d{1,2}$/.test(x.label))).toBe(true);
