@@ -80,8 +80,8 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
     const area = `${line} L${x(n - 1).toFixed(1)},${(H - PAD_B).toFixed(1)} L${x(0).toFixed(1)},${(H - PAD_B).toFixed(1)} Z`;
     // 4 horizontal gridlines / y labels
     const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => ({ v: min + f * span, yy: y(min + f * span) }));
-    // "Nice" date ticks (matplotlib-style) at round boundaries across the series' date range.
-    // The chart is index-scaled (not time-scaled), so map each tick time to its nearest observation.
+    // Even round-step date ticks anchored at the series start (see lib/date-axis). The chart is
+    // index-scaled (not time-scaled), so map each tick time to its nearest observation.
     const times = series.map((p) => new Date(p.date).getTime());
     const xticks = dateAxisTicks(times[0], times[n - 1], 6).map((tk) => {
       let idx = 0;
@@ -113,7 +113,7 @@ function LevelChart({ series, currency }: { series: LevelPoint[]; currency: stri
         <path d={geom.area} fill="currentColor" fillOpacity={0.08} stroke="none" />
         <path d={geom.line} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" />
         {geom.xticks.map((t, i) => (
-          <text key={i} x={t.x} y={H - 8} textAnchor={tickAnchor(i, geom.xticks.length)} className="fill-muted" fontSize={11}>
+          <text key={i} x={t.x} y={H - 8} textAnchor={tickAnchor(i)} className="fill-muted" fontSize={11}>
             {t.label}
           </text>
         ))}

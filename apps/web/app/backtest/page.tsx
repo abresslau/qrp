@@ -51,7 +51,7 @@ function EquityCurve({ detail }: { detail: RunDetail }) {
         <path d={bPath} fill="none" stroke="currentColor" strokeWidth={1.5} className="text-muted" />
         <path d={sPath} fill="none" stroke="currentColor" strokeWidth={2} className="text-sky-500" />
         {xticks.map((t, i) => (
-          <text key={i} x={t.x} y={252} textAnchor={tickAnchor(i, xticks.length)} className="fill-muted" fontSize={10}>
+          <text key={i} x={t.x} y={252} textAnchor={tickAnchor(i)} className="fill-muted" fontSize={10}>
             {t.label}
           </text>
         ))}

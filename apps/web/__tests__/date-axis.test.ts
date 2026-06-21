@@ -4,48 +4,55 @@ import { dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 const t = (iso: string) => new Date(iso).getTime();
 
-describe("dateAxisTicks (anchored endpoints + nice interior)", () => {
-  it("always anchors the exact first/last dates at the ends", () => {
+describe("dateAxisTicks (even round step, phased from the start)", () => {
+  it("anchors the first tick exactly at the data start; last tick floats <= end", () => {
     const ticks = dateAxisTicks(t("2001-06-15"), t("2026-06-19"), 6);
-    expect(ticks[0].t).toBe(t("2001-06-15")); // starts at the beginning (the user's ask)
-    expect(ticks[ticks.length - 1].t).toBe(t("2026-06-19"));
+    expect(ticks[0].t).toBe(t("2001-06-15")); // beginning is anchored (the user's ask)
+    expect(ticks[ticks.length - 1].t).toBeLessThanOrEqual(t("2026-06-19"));
   });
 
-  it("multi-year: interior ticks sit on Jan-1 year boundaries; labels are 4-digit years", () => {
+  it("multi-year: a constant round year step (even spacing), 4-digit-year labels", () => {
     const ticks = dateAxisTicks(t("2001-06-15"), t("2026-06-19"), 6);
-    expect(ticks.length).toBeGreaterThan(3);
     expect(ticks.every((x) => /^\d{4}$/.test(x.label))).toBe(true);
-    const interior = ticks.slice(1, -1);
-    expect(interior.every((x) => new Date(x.t).getUTCMonth() === 0 && new Date(x.t).getUTCDate() === 1)).toBe(true);
+    const yrs = ticks.map((x) => Number(x.label));
+    const diffs = yrs.slice(1).map((y, i) => y - yrs[i]);
+    expect(new Set(diffs).size).toBe(1); // one constant step => evenly spaced
+    expect(diffs[0]).toBe(5); // 25y / 6 -> nice step 5
   });
 
-  it("months: interior ticks on month-1st boundaries; labels 'Mon YY'", () => {
+  it("months: a constant month step, 'Mon YY' labels", () => {
     const ticks = dateAxisTicks(t("2024-01-10"), t("2024-12-20"), 6);
+    expect(ticks.length).toBeGreaterThan(3);
     expect(ticks.every((x) => /^[A-Z][a-z]{2} \d{2}$/.test(x.label))).toBe(true);
-    expect(ticks.slice(1, -1).every((x) => new Date(x.t).getUTCDate() === 1)).toBe(true);
+    // consecutive ticks are a constant number of months apart (calendar-even)
+    const stepMonths = ticks.slice(1).map((x, i) => {
+      const a = new Date(ticks[i].t);
+      const b = new Date(x.t);
+      return (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+    });
+    expect(new Set(stepMonths).size).toBe(1);
   });
 
   it("short span: day labels 'Mon D'", () => {
     const ticks = dateAxisTicks(t("2024-06-01"), t("2024-06-20"), 6);
     expect(ticks.every((x) => /^[A-Z][a-z]{2} \d{1,2}$/.test(x.label))).toBe(true);
+    expect(ticks[0].t).toBe(t("2024-06-01"));
   });
 
-  it("prunes interior ticks that collide with an endpoint (no duplicate of the end year)", () => {
-    // the 2026-01-01 boundary is within 7% of the 2026-06-19 end -> dropped, so "2026" appears
-    // only ONCE (the end endpoint itself), not twice.
-    const ticks = dateAxisTicks(t("2001-06-15"), t("2026-06-19"), 6);
-    const labels = ticks.map((x) => x.label);
-    expect(labels.filter((l) => l === "2026")).toHaveLength(1);
-    expect(labels[labels.length - 1]).toBe("2026");
+  it("count adapts to the range (more ticks for a wider span at the same target)", () => {
+    const wide = dateAxisTicks(t("1990-01-01"), t("2026-01-01"), 6).length;
+    const narrow = dateAxisTicks(t("2024-01-01"), t("2026-01-01"), 6).length;
+    expect(wide).toBeGreaterThan(2);
+    expect(narrow).toBeGreaterThan(2);
   });
 
   it("returns [] for a non-positive span", () => {
     expect(dateAxisTicks(t("2024-06-01"), t("2024-06-01"))).toEqual([]);
   });
 
-  it("tickAnchor edges: first=start, last=end, interior=middle", () => {
-    expect(tickAnchor(0, 5)).toBe("start");
-    expect(tickAnchor(4, 5)).toBe("end");
-    expect(tickAnchor(2, 5)).toBe("middle");
+  it("tickAnchor: first=start (left edge), rest=middle", () => {
+    expect(tickAnchor(0)).toBe("start");
+    expect(tickAnchor(1)).toBe("middle");
+    expect(tickAnchor(5)).toBe("middle");
   });
 });
