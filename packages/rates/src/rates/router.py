@@ -45,9 +45,46 @@ class Curve(BaseModel):
     points: list[CurvePointOut]
 
 
+class SparkPoint(BaseModel):
+    as_of_date: str
+    value: float
+
+
+class SpreadSummary(BaseModel):
+    key: str
+    label: str
+    unit: str  # 'bp' (difference) | '%' (level, e.g. breakeven)
+    value: float | None  # N/A when a leg tenor isn't published
+    zscore: float | None
+    percentile: float | None
+    as_of_date: str | None
+    history: list[SparkPoint]
+
+
+class SpreadHistory(BaseModel):
+    key: str
+    label: str
+    unit: str
+    points: list[SparkPoint]
+
+
 @router.get("/curve/series", response_model=list[CurveSeries])
 def list_curve_series(gw: DbRatesGateway = Depends(_gateway)) -> list[dict]:
     return gw.curve_sets()
+
+
+@router.get("/spreads", response_model=list[SpreadSummary])
+def list_spreads(gw: DbRatesGateway = Depends(_gateway)) -> list[dict]:
+    return gw.spreads()
+
+
+@router.get("/spread/{key}", response_model=SpreadHistory)
+def get_spread(
+    key: str,
+    window: str = Query("MAX", description="1Y | 5Y | MAX"),
+    gw: DbRatesGateway = Depends(_gateway),
+) -> dict:
+    return gw.spread_history(key, window)
 
 
 @router.get("/curve", response_model=Curve)

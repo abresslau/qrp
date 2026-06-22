@@ -46,12 +46,25 @@ Each xlsx has sheets: `info`, `1. fwds, short end`, `2. fwd curve`, `3. spot, sh
 
 ## Conventions
 
-BoE fits/bootstraps and publishes the curve; we store it verbatim and derive on read. The exact
-compounding/day-count for an *exact* derive-on-read forward↔spot reconciliation lives in BoE's
-methodology doc (FAQ: `…/statistics/Documents/yieldcurve/yields_faq.pdf`) — to be pinned when the
-derive-on-read analytics layer (spreads/carry/DV01) is built (follow-on story). Until then the
-forward↔spot check is an approximate WARN-level diagnostic; inflation = nominal − real is the exact
-FAIL-level free check.
+BoE fits/bootstraps and publishes the curve; we store it verbatim and derive on read. The compounding +
+day-count are **pinned from the BoE yield-curve FAQ** (the methodology accordion on the statistics/
+yield-curves page, read in-env 2026-06-22 — authoritative):
+
+- **Compounding:** *"The yields (spot and forward) are continuously compounded and quoted on an annual
+  basis."* → a published zero/spot rate `s(t)` (% p.a.) gives the discount factor
+  **`DF(t) = exp(-s(t)/100 · t)`** with `t` in years; the instantaneous forward `f` satisfies the
+  continuous-compounding identity **`s(t)·t = ∫₀ᵗ f(u) du`** (so `spot(t)` = the average instantaneous
+  forward over `[0,t]`).
+- **Day count:** *"For UK government bonds … Actual/Actual since November 1998 (Actual/365 prior). For all
+  other instruments the convention is Actual/365."* The published curve nodes are already annualised
+  (tenor = years), so curve-level discounting uses `DF=exp(-s·t)` directly; day-count only matters when a
+  *specific instrument's* cashflow dates are converted to year fractions (gilt ACT/ACT, else ACT/365) —
+  relevant to the DV01/PV helper over a dated cashflow schedule.
+
+Consequence: the derive-on-read forward↔spot reconciliation is now the **exact** continuous-compounding
+identity (FAIL-level), not an assumed/approximate WARN — the only residual is trapezoidal discretization
+over the published tenor grid (measured ~0.02pp median, ~0.36pp max on the 0.5y grid; the FAIL tolerance
+sits above that). `inflation = nominal − real` remains the exact FAIL-level free check.
 
 ## Cadence / schedule
 

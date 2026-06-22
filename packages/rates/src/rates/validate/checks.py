@@ -1,9 +1,9 @@
 """Curve-store validation checks (the data-quality pre-mortem, as guards).
 
 Each check returns a ``CheckResult`` (PASS / WARN / FAIL), mirroring ``sym.validate``. ``run_all``
-orchestrates them in isolation. Highest-value guard: the inflation = nominal − real free check
-(exact, FAIL on breach). Forward↔spot reconciliation is a WARN-level diagnostic until a
-derive-on-read layer pins BoE's exact compounding (then it becomes exact).
+orchestrates them in isolation. Two exact FAIL-level free checks: inflation = nominal − real, and
+the forward↔spot continuous-compounding identity (BoE's compounding/day-count are pinned from the
+FAQ — see MAINTENANCE.md). The plausible-band tenor-shrink guard is WARN (a legitimate grid trim).
 """
 
 from __future__ import annotations
@@ -178,8 +178,11 @@ def check_inflation_reconcile(
 def check_forward_spot_reconcile(
     conn: psycopg.Connection, *, as_of_date: date | None = None, tol_pp: float = 0.50
 ) -> CheckResult:
-    """Diagnostic: spot(t) reconstructed from the cumulative mean of instantaneous forwards should
-    track published spot (nominal gilt). Approximate (forward grid doesn't start at 0) -> WARN."""
+    """The continuous-compounding identity s(t)·t = integral(f, 0..t) — confirmed from the BoE FAQ
+    ("spot and forward are continuously compounded, annual basis"). Reconstruct spot(t) as the mean
+    instantaneous forward over [0,t] and FAIL on a breach beyond ``tol_pp`` (which sits above the
+    trapezoidal-discretization residual on the published grid, ~0.36pp max). A large breach means a
+    convention mismatch (e.g. simple- vs continuous-compounding), not discretization."""
     latest = as_of_date or _latest_date(conn)
     if latest is None:
         return CheckResult.from_items("curve_forward_spot_reconcile", checked=0,
@@ -190,25 +193,24 @@ def check_forward_spot_reconcile(
     if len(shared) < 3:
         return CheckResult.from_items("curve_forward_spot_reconcile", checked=0,
                                       warnings=["too few shared nominal tenors"], detail="skipped")
-    warnings: list[str] = []
+    failures: list[str] = []
     checked = 0
-    # trapezoidal cumulative integral of f over the shared grid, anchored at the first node.
+    # trapezoidal cumulative integral of f over the shared grid, anchored flat-to-zero at node 0.
     cum = 0.0
     prev_t = shared[0]
     for t in shared[1:]:
         cum += 0.5 * (fwd[t] + fwd[prev_t]) * (t - prev_t)
-        # integral of f over [0, t] ~= f(t0)*t0 (flat to 0) + trapezoid(t0..t); spot(t) = that / t
-        recon = (fwd[shared[0]] * shared[0] + cum) / t
+        recon = (fwd[shared[0]] * shared[0] + cum) / t  # mean inst. forward over [0,t] = spot(t)
         checked += 1
         if abs(recon - spot[t]) > tol_pp:
-            warnings.append(
+            failures.append(
                 f"{t}y: recon {recon:.3f} vs spot {spot[t]:.3f} (d {abs(recon - spot[t]):.3f}pp)"
             )
         prev_t = t
     return CheckResult.from_items(
-        "curve_forward_spot_reconcile", checked=checked, warnings=warnings,
-        detail=f"forward->spot reconstruction within {tol_pp}pp on {latest.isoformat()} "
-        f"(approximate; exact once derive-on-read pins BoE compounding)",
+        "curve_forward_spot_reconcile", checked=checked, failures=failures,
+        detail=f"continuous-compounding fwd->spot identity within {tol_pp}pp on "
+        f"{latest.isoformat()} (BoE FAQ confirmed; residual = grid discretization)",
     )
 
 

@@ -444,3 +444,15 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 - **`/curve/series` count(DISTINCT as_of_date)** — fine now (13k rows); over full gilt history this is the count-distinct latency trap. Revisit at scale (per the freshness-per-market guidance).
 - **No download/extract size cap (zip-bomb)** — `_download`/`_parse_zip_bytes` read fully into memory with no cap. Trusted BoE host; add a ceiling if the source changes.
 - **AC#5 explicit unit-canonicalization assert** — currently the `curve_point` value CHECK (>-10 AND <30) is the de-facto write-time representation guard; an explicit parser-level assert (values look like % p.a.) is a nice-to-have.
+
+## rates-curve-analytics (2026-06-22, dev complete -> review)
+- **Web tsc/eslint/vitest not runnable locally** — `apps/web/node_modules` is an incomplete install (empty `.bin`; no top-level typescript/eslint/vitest/next). Reinstalling is the churn `feedback_minimize_dev_churn` forbids (broke lightningcss). The rates page was verified via the sanctioned method (dev-server HTTP 200 + headless-Chrome dump-dom render, no error overlay) + a written `rates-page.test.tsx`. Run `tsc --noEmit` / `eslint` / `vitest run` wherever the web toolchain is whole (CI) and fix any nits.
+- **api-types regen deferred** — needs a live API with `rates` mounted; `:8001` predates the rates install. The page uses LOCAL TS types (not `Schemas`), so this is non-blocking; regen `npm run gen:types` once the API serves `/api/rates/*`.
+- **Live page→API→DB end-to-end pending `:8001` restart** — same caveat as the store. The data path is proven in-process (gateway `spreads()` returns real values; routes registered). The page currently renders its shell but the curve/spread fetches 404 against the stale server.
+- **Full carry/roll monitor card** — `analytics.carry_roll` exists (roll-down + forward-implied carry) but the standard monitor set surfaces roll-down implicitly via spreads; a dedicated carry/roll card (with horizon selector) is a small follow-up.
+- **Asset-swap is a yield proxy** (gilt − OIS), not a true par/par ASW — upgrades when bond reference-data (cashflows) lands.
+
+## Deferred from: code review of rates-curve-analytics (2026-06-22)
+- **`spreads()` reads full per-leg history on every summary load** [rates/gateway.py] — fine now (~13k rows; 15 days), but once the full-history archive is backfilled (decades × ~80 nodes/day per leg-group) the `/api/rates/spreads` card pays full-history cost for a latest value + 60-point sparkline. Switch to a windowed z-score (e.g. trailing 5y) at scale.
+- **Leg-calendar mismatch silently thins a spread series** [rates/gateway.py `_spread_series`] — a date contributes only when ALL legs are published that day. Gilt & OIS share BoE's release calendar today, but a future 2nd source / different calendar would shrink the intersection with no diagnostic. Add a coverage/diagnostic note if that lands.
+- **`spread_history` window floor anchored to the last data date, not today** [rates/gateway.py] — intentional (chart relative to available data); document so a stale feed's "1Y" isn't surprising.

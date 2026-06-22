@@ -39,6 +39,9 @@ export const MONITOR_SUBNAV: SubItem[] = [
   { href: "/monitor/portfolio-live", label: "Portfolio live" },
 ];
 
+// rates — the fixed-income curve module (v1 is one page: curve chart + spread monitors).
+export const RATES_SUBNAV: SubItem[] = [{ href: "/rates", label: "Curves & spreads" }];
+
 // macro's submenu is data-driven: categories live in the macro DB (the category column is the
 // source of truth), so the submenu can never drift. The caller owns the fail-safe (a failed or
 // late fetch must never wipe a working submenu) — this just maps rows to SubItems.
@@ -58,5 +61,6 @@ async function loadMacroCategories(): Promise<SubItem[]> {
 export const SUBNAV_PROVIDERS: Record<string, SubnavProvider> = {
   monitor: { kind: "static", items: MONITOR_SUBNAV },
   sym: { kind: "static", items: SYM_SUBNAV },
+  rates: { kind: "static", items: RATES_SUBNAV },
   macro: { kind: "fetch", load: loadMacroCategories },
 };
