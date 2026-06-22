@@ -77,6 +77,22 @@ def test_every_registry_benchmark_has_a_region():
     assert all(b.region for b in BENCHMARKS)
 
 
+def test_regional_indices_in_registry_with_region_and_yahoo_xref():
+    by_name = {b.name: b for b in BENCHMARKS}
+    expected = {
+        "Hang Seng Index": ("^HSI", "Asia-Pacific", "HKD"),
+        "CSI 300": ("000300.SS", "Asia-Pacific", "CNY"),
+        "STOXX Europe 600": ("^STOXX", "EMEA", "EUR"),
+    }
+    for name, (ysym, region, ccy) in expected.items():
+        b = by_name.get(name)
+        assert b is not None, f"{name} should be in the benchmark registry"
+        assert b.yahoo_symbol == ysym and benchmark_xrefs(b)["yahoo"] == ysym
+        assert b.region == region and b.currency_code == ccy
+        assert b.category == "equity"  # equity → shows on the WEI board
+        assert region_for(name, ccy) == region
+
+
 def test_vix_in_registry_as_volatility_with_yahoo_xref():
     vix = next((b for b in BENCHMARKS if "VIX" in b.name), None)
     assert vix is not None, "VIX should be in the benchmark registry"
