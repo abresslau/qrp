@@ -15,6 +15,9 @@ export type CompositionHolding = {
   industry: string | null;
   mic: string | null;
   country: string | null;
+  country_iso?: string | null; // FactSet region (ADS-DE)
+  exch_code?: string | null; // Bloomberg region (ADS GR)
+  bbg_exchange_code?: string | null; // Bloomberg venue (ADS GY)
   status: string | null;
   weight: number; // SIGNED — position size is abs(weight)
   currency: string | null;

@@ -3,6 +3,7 @@
 import { Fragment, type PointerEvent as ReactPointerEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import { type Composition, type CompositionHolding } from "@/components/portfolio-heatmap";
+import { QualifiedTicker } from "@/components/qualified-ticker";
 import { fmtCompact, fmtPrice } from "@/lib/format";
 
 // A pivot-style grid: the book grouped by sector, each stock carrying the Explorer columns
@@ -201,7 +202,11 @@ type Column = { id: string; label: string; align: ColAlign; cell: (h: Compositio
 // `cell` returns the full <td> (keyed by id) so per-column classes + value coloring stay intact.
 const COLUMNS: Column[] = [
   { id: "ticker", label: "Ticker", align: "left",
-    cell: (h) => <td key="ticker" className="px-2 py-1 font-medium text-fg">{h.ticker ?? h.figi}</td> },
+    cell: (h) => (
+      <td key="ticker" className="px-2 py-1 font-medium text-fg">
+        {h.ticker ? <QualifiedTicker codes={h} /> : h.figi}
+      </td>
+    ) },
   { id: "name", label: "Name", align: "left",
     cell: (h) => <td key="name" className="max-w-[16rem] truncate px-2 py-1 text-muted" title={h.name ?? ""}>{h.name ?? "—"}</td> },
   { id: "country", label: "Country", align: "left",

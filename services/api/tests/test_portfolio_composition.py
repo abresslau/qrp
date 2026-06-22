@@ -46,7 +46,12 @@ class _SymConn:
             return _Cur(self._ext_rows)
         if "fact_returns" in sql:
             return _Cur(self._ret_rows)
-        return _Cur(self._rows)
+        # The meta SELECT now also returns country_iso/exch_code/bbg_exchange_code (the qualified-ticker
+        # codes). These fixtures only care about weights/returns/sectors, so right-pad each row with None
+        # for the trailing code columns rather than restate all of them. (Column-count drift is guarded by
+        # the explorer/securities + ticker unit tests; these composition tests assert logic, not shape.)
+        meta_cols = 15
+        return _Cur([tuple(r) + (None,) * (meta_cols - len(r)) if len(r) < meta_cols else r for r in self._rows])
 
 
 def _wire(monkeypatch, *, weights, exists=True):

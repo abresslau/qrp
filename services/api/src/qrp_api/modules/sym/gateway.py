@@ -877,7 +877,7 @@ class DbSymGateway:
         else:
             by_source = []
         country = c.execute(
-            "SELECT country, country_iso FROM exchange WHERE mic = %s",
+            "SELECT country, country_iso, exch_code, bbg_exchange_code FROM exchange WHERE mic = %s",
             (master[1],),
         ).fetchone()
         px = c.execute(
@@ -908,7 +908,9 @@ class DbSymGateway:
             "status": master[3],
             "delist_date": master[4].isoformat() if master[4] else None,
             "country": country[0] if country else None,
-            "country_iso": country[1] if country else None,
+            "country_iso": country[1] if country else None,  # FactSet region
+            "exch_code": country[2] if country else None,  # Bloomberg region (ADS GR)
+            "bbg_exchange_code": country[3] if country else None,  # Bloomberg venue (ADS GY)
             "sector": gics[0] if gics else None,
             "industry": gics[1] if gics else None,
             "sub_industry": gics[2] if gics else None,

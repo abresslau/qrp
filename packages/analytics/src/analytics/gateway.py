@@ -371,10 +371,13 @@ class DbAnalyticsGateway:
             )
 
         figis = list(weights)
-        _MISSING = (None, None, "Unclassified", None, None, None, None, None, None, None, None)
+        _MISSING = (None, None, "Unclassified", None, None, None, None, None, None, None, None,
+                    None, None, None)
         meta = {
-            f: (tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close)
-            for f, tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close
+            f: (tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close,
+                country_iso, exch_code, bbg_exchange_code)
+            for f, tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close,
+                country_iso, exch_code, bbg_exchange_code
             in self._sym.execute(
                 """
                 SELECT s.composite_figi, tk.symbol_value, s.mic,
@@ -386,7 +389,8 @@ class DbAnalyticsGateway:
                        f.market_cap_usd,
                        ex.country,
                        px.volume,
-                       px.close AS last_close
+                       px.close AS last_close,
+                       ex.country_iso, ex.exch_code, ex.bbg_exchange_code
                   FROM securities s
                   LEFT JOIN exchange ex ON ex.mic = s.mic
                   LEFT JOIN LATERAL (
@@ -485,9 +489,8 @@ class DbAnalyticsGateway:
             aw = abs(w)
             total_abs += aw
             net += w
-            tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close = meta.get(
-                figi, _MISSING
-            )
+            (tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close,
+             country_iso, exch_code, bbg_exchange_code) = meta.get(figi, _MISSING)
             sector = sector or "Unclassified"
             ysym = ysym_by_figi.get(figi)
             q = batch.get(ysym) if ysym else None
@@ -545,6 +548,8 @@ class DbAnalyticsGateway:
                 {"figi": figi, "ticker": tk, "name": name,
                  "sector": sector, "industry": industry, "mic": mic,
                  "country": country, "status": status,
+                 "country_iso": country_iso, "exch_code": exch_code,  # qualified-ticker codes
+                 "bbg_exchange_code": bbg_exchange_code,
                  "weight": w, "currency": currency,
                  "market_cap_usd": float(mcap) if mcap is not None else None,
                  "volume": int(volume) if volume is not None else None,

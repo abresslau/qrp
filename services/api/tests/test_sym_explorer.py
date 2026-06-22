@@ -193,7 +193,7 @@ def test_security_detail_enriches_volume_country_source_and_by_source():
             ("sec_sic", "Information Technology", None, None),
             ("wikidata", "Information Technology", None, None),
         ],
-        country=("United States", "US"),
+        country=("United States", "US", "US", "UN"),
         px=(296.42, 51000000, date(2026, 6, 17)),
         fund=(None, 3.0e12, 1.6e10, "USD", date(2026, 6, 16)),
         rets=[],
@@ -220,7 +220,7 @@ def test_security_detail_falls_back_to_resolved_row_when_opinion_matrix_empty():
         name=("Apple Inc",),
         gics=("Information Technology", "Tech Hardware", None, "financedatabase"),
         opinions=[],  # matrix not populated
-        country=("United States", "US"),
+        country=("United States", "US", "US", "UN"),
         px=(296.42, 51000000, date(2026, 6, 17)),
         fund=None,
         rets=[],

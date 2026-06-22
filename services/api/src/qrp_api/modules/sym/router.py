@@ -197,7 +197,9 @@ class SecurityDetail(BaseModel):
     status: str | None
     delist_date: str | None
     country: str | None
-    country_iso: str | None
+    country_iso: str | None  # FactSet region (ADS-DE)
+    exch_code: str | None = None  # Bloomberg composite/region (ADS GR)
+    bbg_exchange_code: str | None = None  # Bloomberg primary venue (ADS GY)
     sector: str | None
     industry: str | None
     sub_industry: str | None

@@ -121,6 +121,9 @@ class CompositionHolding(BaseModel):
     industry: str | None
     mic: str | None
     country: str | None
+    country_iso: str | None = None  # FactSet region (ADS-DE)
+    exch_code: str | None = None  # Bloomberg composite/region (ADS GR)
+    bbg_exchange_code: str | None = None  # Bloomberg primary venue (ADS GY)
     status: str | None
     weight: float          # SIGNED (longs +, shorts −); position size is abs(weight)
     currency: str | None

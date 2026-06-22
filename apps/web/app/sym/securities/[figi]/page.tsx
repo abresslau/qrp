@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { NewsPanel } from "@/components/news-panel";
 import { PriceVolumeChart } from "@/components/price-volume-chart";
+import { QualifiedTicker } from "@/components/qualified-ticker";
 import { apiGet } from "@/lib/api";
 import { fmtCompact } from "@/lib/format";
 
@@ -22,6 +23,8 @@ type Detail = {
   delist_date: string | null;
   country: string | null;
   country_iso: string | null;
+  exch_code: string | null;
+  bbg_exchange_code: string | null;
   sector: string | null;
   industry: string | null;
   sub_industry: string | null;
@@ -79,7 +82,7 @@ export default async function SecurityPage({ params }: { params: Promise<{ figi:
       <div className="mt-2 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-fg">
-            {d.ticker} <span className="text-lg font-normal text-muted">· {d.name ?? "—"}</span>
+            <QualifiedTicker codes={d} /> <span className="text-lg font-normal text-muted">· {d.name ?? "—"}</span>
           </h1>
           <p className="mt-1 text-sm text-muted">
             {[d.sector, d.industry, d.sub_industry].filter(Boolean).join(" · ") || "Unclassified"}

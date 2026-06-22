@@ -1197,6 +1197,12 @@ export interface components {
             mic: string | null;
             /** Country */
             country: string | null;
+            /** Country Iso */
+            country_iso?: string | null;
+            /** Exch Code */
+            exch_code?: string | null;
+            /** Bbg Exchange Code */
+            bbg_exchange_code?: string | null;
             /** Status */
             status: string | null;
             /** Weight */
@@ -2538,6 +2544,10 @@ export interface components {
             country: string | null;
             /** Country Iso */
             country_iso: string | null;
+            /** Exch Code */
+            exch_code?: string | null;
+            /** Bbg Exchange Code */
+            bbg_exchange_code?: string | null;
             /** Sector */
             sector: string | null;
             /** Industry */
