@@ -22,6 +22,7 @@ members = [
     "portfolios",
     "qrp",
     "qrp-api",
+    "rates",
     "signals",
     "sym",
 ]
@@ -1754,6 +1755,7 @@ dependencies = [
     { name = "optimiser" },
     { name = "portfolios" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "rates" },
     { name = "signals" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1775,12 +1777,44 @@ requires-dist = [
     { name = "optimiser", editable = "packages/optimiser" },
     { name = "portfolios", editable = "packages/portfolios" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "rates", editable = "packages/rates" },
     { name = "signals", editable = "packages/signals" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
 [package.metadata.requires-dev]
 dev = [{ name = "httpx2", specifier = ">=2.3.0" }]
+
+[[package]]
+name = "rates"
+version = "0.1.0"
+source = { editable = "packages/rates" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "openpyxl" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "openpyxl", specifier = ">=3.1" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.15.16" },
+]
 
 [[package]]
 name = "requests"

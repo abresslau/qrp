@@ -1,0 +1,42 @@
+[project]
+name = "rates"
+version = "0.1.0"
+description = "QRP rates package — fixed-income yield curves (Bank of England UK curves: gilt nominal/real/inflation + SONIA/OIS), own database."
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2",
+    "psycopg[binary]>=3.2",
+    "openpyxl>=3.1",
+]
+
+[project.scripts]
+rates = "rates.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rates"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.15.16",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# B008: `Depends(...)` in argument defaults IS the FastAPI dependency-injection idiom.
+"src/rates/router.py" = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

@@ -253,6 +253,10 @@ def create_app() -> FastAPI:
         from macro.router import router as macro_router  # standalone package (carved out)
 
         app.include_router(macro_router)
+    if "rates" in enabled:
+        from rates.router import router as rates_router  # standalone package (fixed-income curves)
+
+        app.include_router(rates_router)
     if "signals" in enabled:
         from signals.router import router as signals_router
 

@@ -9,6 +9,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     # the standalone packages (workspace members) — the gateway mounts each one's router
     "macro",
+    "rates",
     "portfolios",
     "signals",
     "optimiser",
@@ -21,6 +22,7 @@ dependencies = [
 
 [tool.uv.sources]
 macro = { workspace = true }
+rates = { workspace = true }
 portfolios = { workspace = true }
 signals = { workspace = true }
 optimiser = { workspace = true }

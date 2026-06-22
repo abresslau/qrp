@@ -29,6 +29,12 @@ description = "Macroeconomic / central-bank data"
 enabled = true
 
 [[modules]]
+key = "rates"
+name = "rates"
+description = "Fixed-income yield curves (Bank of England UK curves)"
+enabled = true
+
+[[modules]]
 key = "altdata"
 name = "alt data"
 description = "Alternative data"

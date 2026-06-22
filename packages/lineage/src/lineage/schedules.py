@@ -97,3 +97,45 @@ sym_eod_daily = ScheduleDefinition(
     execution_timezone="America/New_York",
     default_status=DefaultScheduleStatus.STOPPED,
 )
+
+
+@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
+def rates_curve_load(context) -> None:
+    """Load BoE UK yield curves then validate (rates owns its steps; trigger-only here).
+
+    Manual: ``uv run rates curve load`` then ``uv run rates validate``. The load tails the
+    latest BoE bundle (gating a desynced current-day publish); validate runs the reconciliation
+    + stale guards. A FAIL in validate (exit 2) turns the run red and triggers the retry.
+    """
+    root = str(repo_root())
+    load = subprocess.run(
+        [sys.executable, "-m", "rates.cli", "curve", "load"],
+        cwd=root, capture_output=True, text=True, timeout=3600,
+    )
+    context.log.info((load.stdout or "")[-4000:])
+    if load.returncode != 0:
+        context.log.error(f"rates curve load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
+        raise RuntimeError(f"`rates curve load` exited {load.returncode}")
+    val = subprocess.run(
+        [sys.executable, "-m", "rates.cli", "validate"],
+        cwd=root, capture_output=True, text=True, timeout=600,
+    )
+    context.log.info((val.stdout or "")[-4000:])
+    if val.returncode != 0:
+        raise RuntimeError(f"`rates validate` exited {val.returncode} (a curve check FAILED)")
+
+
+@job(description="BoE UK yield-curve daily load + validate. Manual: `uv run rates curve load`.")
+def rates_curve_job():
+    rates_curve_load()
+
+
+# Weekdays 17:15 Europe/London — after BoE's daily yield-curve publish (London time, DST-aware).
+# Timezone is ALWAYS set explicitly (the hard requirement for every schedule). STOPPED until enabled.
+rates_curve_daily = ScheduleDefinition(
+    name="rates_curve_daily",
+    job=rates_curve_job,
+    cron_schedule="15 17 * * 1-5",
+    execution_timezone="Europe/London",
+    default_status=DefaultScheduleStatus.STOPPED,
+)

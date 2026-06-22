@@ -426,3 +426,21 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 
 ## Deferred from: code review of portfolio-returns-skip-gated (2026-06-22)
 - **Behavioral test for the returns date-pin skip-null** — the portfolios returns tests use a DB-free fake conn that can't execute SQL, so the gated-skip is only guarded by an SQL-text assertion (`"pr IS NOT NULL" in sql`), like the existing `"0.9"` broadly-complete guard. A true behavioral test (gated latest date → pin falls back to the earlier clean date → constituents populated) would need a SQL-capable fake (SQLite/in-memory pg). Behavior was verified live (3→100/100). Same harness limitation as the composition skip-null test.
+
+## uk-rates-curve-store (2026-06-22, dev complete -> review)
+- **sqitch deploy pending (Docker down):** `rates` DB + `curve_point` schema applied directly to the dev instance (deploy SQL is `IF NOT EXISTS`). Run `sqitch deploy` for project `rates` (db:pg://…/rates) once Docker is up — no-op-pending (the ticker-region-codes precedent).
+- **Running API server (:8001) predates the `rates` install** → serves `/api/rates/curve` + `/curve/series` only after its next restart. Endpoint verified in-process (router mounts, gateway correct); not force-restarted per the minimize-churn rule.
+- **api-types regen deferred** to the follow-on console story — no web consumer of `/api/rates` exists yet (run `npm run gen:types` against a live API that has rates mounted when the rates page lands).
+- **Full-history backfill not run** — only the latest (current-month) BoE bundle loaded (13,140 nodes, 2026-06). One-time `rates curve load --start_date <floor>` pulls the ~39 MB per-curve archive zips when wanted.
+- **Derived analytics layer (the big follow-on):** spreads (2s10s/flies/breakeven/asset-swap) + carry/roll off the forward curve + DV01/dirty-price + a console page. Pin BoE's exact compounding/day-count (methodology FAQ) first → makes the forward→spot reconciliation EXACT (currently an approximate WARN-level diagnostic). Then bond reference-data (cashflows) for specific-gilt pricing (curve→position bridge). See uk-rates-curve-store.md "OUT of scope" + the brainstorm doc.
+- **`curve_point_review` queue has no promote tool yet** — implausible prints land there but there's no `rates curve review --accept` CLI (mirror `sym fx review`). Add when the first real flag appears.
+
+## Deferred from: code review of uk-rates-curve-store (2026-06-22)
+- **AC#6 stale check: UK bank-holiday calendar** — `check_staleness` excludes weekends only; a curve last published before a Bank Holiday Monday reads false-stale. WARN-only (no data/gating impact). Add a UK holiday calendar (e.g. exchange_calendars XLON) when building the derived-analytics layer.
+- **AC#1 BoE compounding/day-count convention** — not captured from the BoE methodology FAQ; needed to make the forward→spot reconciliation EXACT (currently approximate WARN). Pin it in the derive-on-read story.
+- **Ingest: `prev` not chained on a flagged point** — a sustained real >5pp daily move would flag every subsequent day. Theoretical for gilt curves (500bp/day doesn't happen); revisit only if the review queue fills.
+- **Desync gate blind spot** — `expected_pairs` is derived from the most-complete day IN THE BATCH, so a wholesale-missing-basis bundle or a single-day premature publish can land a half-curve. Persist the expected basis-set (or compare to the last stored complete day) to close it.
+- **`/api/rates/curve` enum validation** — params are free `str`; a typo returns HTTP 200 + empty curve instead of 422. Add `Literal` types when the rates console page is built.
+- **`/curve/series` count(DISTINCT as_of_date)** — fine now (13k rows); over full gilt history this is the count-distinct latency trap. Revisit at scale (per the freshness-per-market guidance).
+- **No download/extract size cap (zip-bomb)** — `_download`/`_parse_zip_bytes` read fully into memory with no cap. Trusted BoE host; add a ceiling if the source changes.
+- **AC#5 explicit unit-canonicalization assert** — currently the `curve_point` value CHECK (>-10 AND <30) is the de-facto write-time representation guard; an explicit parser-level assert (values look like % p.a.) is a nice-to-have.
