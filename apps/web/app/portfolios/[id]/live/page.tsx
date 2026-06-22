@@ -9,6 +9,7 @@ import { PortfolioMovers } from "@/components/portfolio-movers";
 import { PortfolioPivot } from "@/components/portfolio-pivot";
 import { PortfolioDonut } from "@/components/portfolio-donut";
 import { PortfolioPnlStrip } from "@/components/portfolio-pnl-strip";
+import { useOnline } from "@/lib/connection";
 import type { Schemas } from "@/lib/api";
 
 type Portfolio = Schemas["PortfolioDetail"];
@@ -48,6 +49,9 @@ export default function PortfolioLive() {
   const [compLoading, setCompLoading] = useState(true);
   const [compErr, setCompErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [autoSec, setAutoSec] = useState(0); // auto-refresh interval in seconds; 0 = off
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null); // local clock of the last live pull
+  const online = useOnline(); // sidebar offline toggle pauses auto-refresh
 
   // Portfolio header (name + exposure); independent of the live pull.
   useEffect(() => {
@@ -83,6 +87,9 @@ export default function PortfolioLive() {
         if (!ac.signal.aborted) {
           setComp(d);
           setCompLoading(false);
+          // Stamp the LOCAL clock each settle so an auto-refresh shows visible confirmation even when
+          // the data's own `as_of` (sim-clock) doesn't move — mirrors the WEI/FX/heatmap live boards.
+          setRefreshedAt(new Date().toLocaleTimeString());
         }
       } catch (e) {
         // An aborted request is a superseded fetch, not a failure — leave the last good view.
@@ -94,6 +101,16 @@ export default function PortfolioLive() {
     })();
     return () => ac.abort();
   }, [id, nonce]);
+
+  // Auto-refresh: while a positive interval is set AND the app is online (sidebar toggle), bump the
+  // refresh nonce on a timer (re-pulls via the effect above). setState lives in the timer callback, not
+  // the effect body (react-hooks/set-state-in-effect). Floored at 3s to stay polite; going offline
+  // clears the timer (deps). Mirrors the WEI/FX boards + the heatmap-view LIVE refresh.
+  useEffect(() => {
+    if (autoSec <= 0 || !online) return;
+    const tid = setInterval(() => setNonce((n) => n + 1), Math.max(3, autoSec) * 1000);
+    return () => clearInterval(tid);
+  }, [autoSec, online]);
 
   return (
     <div className="w-full space-y-3 2xl:space-y-4">
@@ -117,8 +134,8 @@ export default function PortfolioLive() {
                     {compLoading ? "refreshing" : comp.freshness}
                   </span>{" "}
                   {comp.n_priced}/{comp.n_holdings} priced
-                  {comp.as_of && !compLoading ? ` · as of ${new Date(comp.as_of).toLocaleTimeString()}` : ""} · not
-                  stored
+                  {comp.as_of && !compLoading ? ` · as of ${new Date(comp.as_of).toLocaleTimeString()}` : ""}
+                  {refreshedAt ? ` · refreshed ${refreshedAt}` : ""} · not stored
                 </>
               ) : null}
             </p>
@@ -138,6 +155,22 @@ export default function PortfolioLive() {
           >
             ← Portfolio
           </Link>
+          <label
+            className="flex items-center gap-1 text-sm text-muted"
+            title="Auto-refresh interval (seconds); blank or 0 = off. Floored at 3s. Pauses when offline."
+          >
+            auto
+            <input
+              type="number"
+              min={0}
+              value={autoSec || ""}
+              onChange={(e) => setAutoSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+              placeholder="off"
+              aria-label="Auto-refresh interval in seconds"
+              className="w-14 rounded border border-border bg-bg px-1 py-0.5 text-fg outline-none focus:border-fg/40"
+            />
+            s{autoSec > 0 ? ` (every ${Math.max(3, autoSec)}s)` : ""}
+          </label>
           <button
             type="button"
             onClick={() => setNonce((n) => n + 1)}

@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PortfolioLive from "@/app/portfolios/[id]/live/page";
@@ -87,5 +87,36 @@ describe("PortfolioLive page", () => {
     render(<PortfolioLive />);
     expect(await screen.findByText(/Couldn.t load live composition/)).toBeInTheDocument();
     expect(screen.getByText(/← Portfolio/)).toBeInTheDocument(); // page chrome intact
+  });
+
+  it("has an auto-refresh control that is off by default and floors at 3s (WEI/FX parity)", async () => {
+    render(<PortfolioLive />);
+    await screen.findByText(/Long\/Short Book/);
+    const auto = screen.getByLabelText("Auto-refresh interval in seconds") as HTMLInputElement;
+    expect(auto.value).toBe(""); // off by default
+    expect(document.body.textContent).not.toMatch(/every \d+s/);
+    fireEvent.change(auto, { target: { value: "5" } });
+    expect(document.body.textContent).toMatch(/every 5s/);
+    fireEvent.change(auto, { target: { value: "1" } }); // floored at 3s
+    expect(document.body.textContent).toMatch(/every 3s/);
+  });
+
+  it("stamps a `refreshed` time on the freshness badge after a live pull", async () => {
+    render(<PortfolioLive />);
+    await waitFor(() => expect(document.body.textContent).toMatch(/refreshed \d/));
+    expect(document.body.textContent).toMatch(/not stored/); // suffix sits before "not stored"
+  });
+
+  it("the manual ↻ refresh re-fetches the composition", async () => {
+    render(<PortfolioLive />);
+    await screen.findByText(/Long\/Short Book/);
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/composition")).length).toBe(1),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /refresh/i }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter((c) => String(c[0]).includes("/composition")).length).toBe(2),
+    );
   });
 });
