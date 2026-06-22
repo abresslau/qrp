@@ -218,10 +218,55 @@ def test_indexes_lists_with_variant_split():
     assert out == [
         {
             "sym_id": 2210, "name": "MSCI World Net (USD)", "currency": "USD",
-            "msci_code": "990100", "variant": "NETR", "n_levels": 6646,
+            "msci_code": "990100", "variant": "NETR", "category": "equity", "n_levels": 6646,
             "first_date": "2000-12-29", "last_date": "2026-06-19", "last_level": 11731.17,
         }
     ]
+
+
+class _VixListConn:
+    """indexes() list query returning the VIX (a volatility index) alongside an equity index."""
+
+    def execute(self, sql, params=()):
+        s = " ".join(sql.split())
+        if "JOIN index_levels l" in s:
+            return _Result([
+                (1, "S&P 500", "USD", None, 5000, date(2020, 1, 1), date(2026, 6, 19), 5000.0),
+                (99, "CBOE Volatility Index (VIX)", "USD", None, 4000,
+                 date(2010, 1, 1), date(2026, 6, 19), 17.5),
+            ])
+        return _Result([])
+
+
+def test_indexes_list_includes_vix_tagged_volatility():
+    out = DbSymGateway(_VixListConn()).indexes()
+    by = {r["sym_id"]: r for r in out}
+    assert by[1]["category"] == "equity"
+    assert by[99]["category"] == "volatility"  # the Indexes-page list SHOWS the VIX
+
+
+class _VixBoardConn:
+    """index_board() ranked + recent queries returning an equity index and the VIX."""
+
+    def execute(self, sql, params=()):
+        s = " ".join(sql.split())
+        if "JOIN ranked r" in s:
+            return _Result([
+                (1, "S&P 500", "USD", None, 5000.0, date(2026, 6, 19), 4950.0),
+                (99, "CBOE Volatility Index (VIX)", "USD", None, 17.5, date(2026, 6, 19), 18.0),
+            ])
+        if "session_date >= (SELECT max(session_date)" in s:
+            return _Result([
+                (1, date(2025, 12, 31), 4500.0), (1, date(2026, 6, 19), 5000.0),
+                (99, date(2025, 12, 31), 20.0), (99, date(2026, 6, 19), 17.5),
+            ])
+        return _Result([])
+
+
+def test_index_board_excludes_volatility_indexes():
+    out = DbSymGateway(_VixBoardConn()).index_board()
+    by = {r["sym_id"]: r for r in out}
+    assert set(by) == {1}  # the VIX (volatility) is kept OFF the equity board; only S&P 500 shows
 
 
 def test_index_levels_series_and_since_start_return():

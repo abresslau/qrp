@@ -10,6 +10,7 @@ from sym.benchmarks.levels import (
     BENCHMARKS,
     Benchmark,
     benchmark_xrefs,
+    category_for,
     country_for,
     load_index_levels,
     region_for,
@@ -74,6 +75,26 @@ def test_region_for_known_and_msci_and_currency_fallback():
 
 def test_every_registry_benchmark_has_a_region():
     assert all(b.region for b in BENCHMARKS)
+
+
+def test_vix_in_registry_as_volatility_with_yahoo_xref():
+    vix = next((b for b in BENCHMARKS if "VIX" in b.name), None)
+    assert vix is not None, "VIX should be in the benchmark registry"
+    assert vix.yahoo_symbol == "^VIX"
+    assert vix.category == "volatility"
+    assert benchmark_xrefs(vix)["yahoo"] == "^VIX"
+
+
+def test_category_for_defaults_equity_and_flags_vix():
+    # the VIX is tagged volatility; everything else (incl. unknown names) is equity
+    assert category_for("CBOE Volatility Index (VIX)") == "volatility"
+    assert category_for("S&P 500") == "equity"
+    assert category_for("FTSE 100") == "equity"
+    assert category_for("Some Unknown Index") == "equity"
+    assert category_for(None) == "equity"
+    # every equity benchmark is category 'equity' (only the VIX is excluded from the board)
+    non_equity = {b.name for b in BENCHMARKS if b.category != "equity"}
+    assert non_equity == {"CBOE Volatility Index (VIX)"}
 
 
 def test_benchmark_xrefs_yahoo_and_legacy_bare_msci():

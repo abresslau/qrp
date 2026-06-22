@@ -14,6 +14,7 @@ type IndexSummary = {
   currency: string | null;
   msci_code: string | null;
   variant: string | null; // NETR / STRD / GRTR
+  category: string; // "equity" | "volatility"
   n_levels: number;
   first_date: string | null;
   last_date: string | null;
@@ -158,7 +159,7 @@ function monthlyReturnRows(series: LevelPoint[]): MonthRow[] {
   return rows.filter((r) => r.months.some((m) => m != null)).reverse();
 }
 
-function MonthlyTable({ series }: { series: LevelPoint[] }) {
+function MonthlyTable({ series, levelMode = false }: { series: LevelPoint[]; levelMode?: boolean }) {
   const rows = useMemo(() => monthlyReturnRows(series), [series]);
   if (rows.length === 0) return null;
   const cell = (r: number | null) => {
@@ -168,7 +169,9 @@ function MonthlyTable({ series }: { series: LevelPoint[] }) {
   };
   return (
     <div className="mt-5">
-      <div className="mb-1 text-xs uppercase tracking-wide text-muted">Monthly returns (%)</div>
+      <div className="mb-1 text-xs uppercase tracking-wide text-muted">
+        {levelMode ? "Monthly level change (%)" : "Monthly returns (%)"}
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-right text-xs tabular-nums [&_td]:whitespace-nowrap [&_th]:whitespace-nowrap">
           <thead className="text-muted">
@@ -292,6 +295,10 @@ export default function IndexesPage() {
   }, [selected]);
 
   const sel = useMemo(() => list?.find((i) => i.sym_id === selected) ?? null, [list, selected]);
+  // VIX et al. are volatility LEVEL indexes — their % figures are level changes, not investment
+  // returns, and an annualised CAGR is meaningless for a mean-reverting series. Drive the framing
+  // off the (data-driven) category, never a name check.
+  const isVol = sel?.category === "volatility";
 
   // chart slice for the selected range (stats stay full-history; only the chart zooms)
   const chartSeries = useMemo(() => {
@@ -385,16 +392,28 @@ export default function IndexesPage() {
                   <Stat label="Since start" value={fmtPct(data?.since_start_return)} />
                   <Stat label="From" value={sel.first_date ?? "—"} />
                 </div>
-                {/* trailing returns (computed from the level series) */}
+                {isVol ? (
+                  <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    {sel.name?.includes("VIX") ? "VIX" : "This"} is a volatility <strong>level</strong>{" "}
+                    index — the figures below are % <strong>changes in the level</strong>, not investment
+                    returns, and multi-year <strong>annualised (CAGR)</strong> figures are omitted (they
+                    are not meaningful for a mean-reverting index). The level chart and period % change
+                    are the useful read.
+                  </p>
+                ) : null}
+                {/* trailing figures (computed from the level series; "returns" for equities, level
+                    changes for a volatility index — see the note above) */}
                 <div className="mb-4 grid grid-cols-4 gap-2 lg:grid-cols-8">
                   <Stat label="MTD" value={<Ret v={data?.trailing?.mtd} />} />
                   <Stat label="QTD" value={<Ret v={data?.trailing?.qtd} />} />
                   <Stat label="YTD" value={<Ret v={data?.trailing?.ytd} />} />
                   <Stat label="1Y" value={<Ret v={data?.trailing?.["1y"]} />} />
-                  <Stat label="2Y" value={<RetPa v={data?.trailing?.["2y"]} years={2} />} />
-                  <Stat label="3Y" value={<RetPa v={data?.trailing?.["3y"]} years={3} />} />
-                  <Stat label="5Y" value={<RetPa v={data?.trailing?.["5y"]} years={5} />} />
-                  <Stat label="10Y" value={<RetPa v={data?.trailing?.["10y"]} years={10} />} />
+                  {/* multi-year: equities show cumulative + annualised CAGR; a volatility level index
+                      shows the plain cumulative level change only (CAGR is nonsense for it). */}
+                  <Stat label="2Y" value={isVol ? <Ret v={data?.trailing?.["2y"]} /> : <RetPa v={data?.trailing?.["2y"]} years={2} />} />
+                  <Stat label="3Y" value={isVol ? <Ret v={data?.trailing?.["3y"]} /> : <RetPa v={data?.trailing?.["3y"]} years={3} />} />
+                  <Stat label="5Y" value={isVol ? <Ret v={data?.trailing?.["5y"]} /> : <RetPa v={data?.trailing?.["5y"]} years={5} />} />
+                  <Stat label="10Y" value={isVol ? <Ret v={data?.trailing?.["10y"]} /> : <RetPa v={data?.trailing?.["10y"]} years={10} />} />
                 </div>
                 {dataErr ? (
                   <p className="text-sm text-rose-500">Could not load levels: {dataErr}</p>
@@ -419,7 +438,7 @@ export default function IndexesPage() {
                       </div>
                     </div>
                     <LevelChart series={chartSeries} currency={sel.currency} />
-                    <MonthlyTable series={data.series} />
+                    <MonthlyTable series={data.series} levelMode={isVol} />
                   </>
                 )}
               </>

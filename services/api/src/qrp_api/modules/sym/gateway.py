@@ -985,7 +985,11 @@ class DbSymGateway:
 
     def indexes(self) -> list[dict]:
         """Benchmark index instruments that have level data — name, MSCI code+variant (parsed from
-        the `msci` xref `<code>:<VARIANT>`), currency, level count, first/last/latest level."""
+        the `msci` xref `<code>:<VARIANT>`), currency, asset class, level count, first/last/latest
+        level. Lists ALL index instruments incl. non-equity (VIX) — the equity-only filter is the
+        WEI board's job, not this list."""
+        from sym.benchmarks.levels import category_for
+
         rows = self._conn.execute(
             """
             SELECT i.sym_id, i.name, i.currency_code,
@@ -1013,6 +1017,7 @@ class DbSymGateway:
                     "currency": ccy,
                     "msci_code": code or None,
                     "variant": variant or None,  # NETR/STRD/GRTR (None for non-MSCI indexes)
+                    "category": category_for(name),
                     "n_levels": n,
                     "first_date": first_d.isoformat() if first_d else None,
                     "last_date": last_d.isoformat() if last_d else None,
@@ -1076,7 +1081,7 @@ class DbSymGateway:
         and every window re-bases to that anchor (the trailing helpers anchor on the clipped series'
         last point, so no formula changes). Omitted ⇒ the latest session (unchanged behaviour); an
         index with no session on-or-before the date drops out (inner join), never a fabricated row."""
-        from sym.benchmarks.levels import country_for, region_for
+        from sym.benchmarks.levels import category_for, country_for, region_for
 
         c = self._conn
         # The anchor is the latest session per index ≤ as_of_date (or the global latest when omitted).
@@ -1127,6 +1132,9 @@ class DbSymGateway:
 
         out: list[dict] = []
         for sym_id, name, ccy, xref, last, last_date, prev in rows:
+            if category_for(name) != "equity":
+                continue  # non-equity (e.g. the VIX volatility index) — kept off the equity board
+                # (its up/down colour semantics invert); it still shows on the Indexes page.
             _code, _sep, variant = (xref or "").partition(":")
             if xref and variant and variant != "NETR":
                 continue  # MSCI PR/GR triplets — board shows the Net variant only

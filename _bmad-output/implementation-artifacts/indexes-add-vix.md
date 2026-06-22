@@ -1,6 +1,6 @@
 # Story: Add VIX to the Indexes page
 
-Status: ready-for-dev
+Status: review
 
 <!-- Created via bmad-create-story 2026-06-22 (Andre: "add VIX to the indexes page"). Surfaces the
 CBOE Volatility Index on the sym Indexes page. VIX is ALREADY ingested in the `macro` module
@@ -68,21 +68,23 @@ so that I can track the market's "fear gauge" from the same index surface I use 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Registry entry + asset-class field (AC: #1, #4, #6a) — add a `category`/`asset_class`
-  field to `Benchmark` (default `"equity"`); add `Benchmark("CBOE Volatility Index (VIX)", "USD",
-  yahoo_symbol="^VIX", region="Americas", category="volatility")`. (Currency `"USD"` is a convention —
-  VIX is unitless index points; document the white lie in a comment. Region `"Americas"` for the
-  registry derivation even though it's excluded from the board.)
-- [ ] Task 2: Exclude non-equity from the WEI board (AC: #4, #6b) — `index_board()` filters to
-  `category="equity"` (or excludes `"volatility"`); `indexes()` (the Indexes-page list) keeps ALL.
-  Mirror the existing MSCI-NETR-only filtering idiom; data-driven, no React name-check.
-- [ ] Task 3: Honest VIX framing on the Indexes page (AC: #3, #6c) — when the selected instrument is
-  a volatility index, label its figures "level change (not total return)" and suppress/relabel the
-  multi-year annualised-CAGR cards. Keep the level chart + absolute level + period % change.
-- [ ] Task 4: Load + verify (AC: #1, #2, #5) — `sym benchmarks` to pull `^VIX` levels into
-  `index_levels` + recompute index returns; verify `/api/sym/indexes` lists VIX and `/levels` returns
-  its series; real-Chrome CDP `/sym/indexes` shows VIX with the honest framing and `/monitor/wei` does
-  NOT show VIX. Run suites + lint.
+- [x] Task 1: Registry entry + asset-class field (AC: #1, #4, #6a) — added `category: str = "equity"`
+  to `Benchmark` + `Benchmark("CBOE Volatility Index (VIX)", "USD", yahoo_symbol="^VIX",
+  region="Americas", category="volatility")` + `category_for(name)` (mirrors `region_for`: data-driven,
+  defaults "equity"). USD-is-a-convention documented in a comment. 2 new registry tests.
+- [x] Task 2: Exclude non-equity from the WEI board (AC: #4, #6b) — `index_board()` now skips
+  `category_for(name) != "equity"` (next to the MSCI-NETR skip); `indexes()` keeps ALL + returns
+  `category`. Data-driven, no React name-check. 2 new gateway tests (board excludes VIX, list includes
+  it tagged volatility). `IndexSummary` model gained `category`.
+- [x] Task 3: Honest VIX framing on the Indexes page (AC: #3, #6c) — page reads `sel.category`; for a
+  volatility index it shows a "figures are % changes in the level, not investment returns; CAGR omitted"
+  note, swaps the multi-year `RetPa` (cumulative + annualised CAGR p.a.) cards for plain `Ret` (level
+  change only), and relabels the monthly table "Monthly level change (%)". 1 new web test.
+- [x] Task 4: Load + verify (AC: #1, #2, #5) — `sym benchmarks` loaded `^VIX` → instrument sym_id
+  **2218**, 9,184 levels (1990→2026), idempotent. Live API verified (restarted uvicorn): `/api/sym/indexes`
+  lists VIX (`category="volatility"`, 26 total), `/indexes/2218/levels` returns the series,
+  `/indexes/board` excludes it (23 rows). Real-Chrome `--dump-dom`: `/sym/indexes` lists VIX (1),
+  `/monitor/wei` shows 0 VIX. Full regression: 840 sym + 158 api + 132 web green; tsc/eslint clean.
 
 ## Dev Notes
 
@@ -123,7 +125,37 @@ exist (the equity indices use them); VIX rides the SAME `sym benchmarks` path as
 3. **More volatility indices?** VIX term-structure cousins (VIX9D/VIX3M/VVIX) or VSTOXX could ride the
    same `category="volatility"` path if wanted — flag and I'll add them in this story.
 
+## Dev Agent Record
+
+### Agent Model Used
+claude-opus-4-8 (Claude Code), 2026-06-22
+
+### Completion Notes
+- VIX rode the existing `sym benchmarks` path exactly as planned — no new ingestion/migration. The only
+  net-new code: a `category` field + `category_for()` (mirroring `region_for`, so the board filter is
+  data-driven, not a React name-check), a one-line `index_board()` skip, a `category` field on the
+  indexes list response/model, and the page's level-vs-return framing.
+- **`category` had to be surfaced in the API** (`IndexSummary` + `indexes()` dict) so the page detects a
+  volatility index data-driven — `region` is also derived this way, so it's the consistent pattern.
+- **Honesty (AC3) is the substance, not polish**: VIX's multi-year CAGR cards are replaced with plain
+  cumulative level-change, a note explains the figures are level changes (not returns), and the monthly
+  table is relabelled. Driven off `category`, never a name match.
+- **Duplication with macro `MKT:VIX` is intentional** (different surfaces/keyspaces) — left as-is.
+- Verified the API live (restarted uvicorn, no `--reload`) + real-Chrome `--dump-dom` on both pages
+  (puppeteer/playwright absent; one-shot dump-dom avoids the lingering-CDP zombie risk per memory).
+
+### File List
+- `packages/sym/src/sym/benchmarks/levels.py` (modified — `Benchmark.category`, VIX entry, `category_for`)
+- `packages/sym/tests/test_benchmarks.py` (modified — VIX registry + `category_for` tests)
+- `services/api/src/qrp_api/modules/sym/gateway.py` (modified — `indexes()` returns `category`; `index_board()` equity-only filter)
+- `services/api/src/qrp_api/modules/sym/router.py` (modified — `IndexSummary.category`)
+- `services/api/tests/test_indexes_route.py` (modified — board-excludes-VIX + list-includes-VIX tests; list test expects `category`)
+- `apps/web/app/sym/indexes/page.tsx` (modified — `category` type, `isVol` framing: note + no-CAGR cards + relabelled monthly)
+- `apps/web/__tests__/indexes-page.test.tsx` (modified — VIX framing test; fixtures gain `category`)
+- Data: `^VIX` levels loaded into `index_levels` via `sym benchmarks` (instrument sym_id 2218) — live in the sym DB.
+
 ## Change Log
 | Date | Change |
 |---|---|
 | 2026-06-22 | Created (bmad-create-story). Surface VIX on the sym Indexes page via a benchmark-registry entry (`^VIX`) + `index_levels` load; add a `category` field so the WEI **equity** board excludes it; label VIX honestly as a level (not a CAGR return). VIX is already in `macro` (`MKT:VIX`) — this adds it to the index spine. Status → ready-for-dev. |
+| 2026-06-22 | Dev complete → review. `Benchmark.category` + `category_for` + VIX `^VIX` entry; `index_board()` equity-only filter (VIX off the WEI board) while `indexes()` lists it with `category`; Indexes page frames VIX honestly as a level (note + plain cumulative cards, no CAGR, relabelled monthly). `sym benchmarks` loaded VIX (sym_id 2218, 9,184 levels). 840 sym + 158 api + 132 web tests green; tsc/eslint clean; live API + real-Chrome dump-dom verified (Indexes lists VIX, WEI excludes it). |

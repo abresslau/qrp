@@ -6,8 +6,8 @@ import IndexesPage from "@/app/sym/indexes/page";
 const INDEXES = [
   {
     sym_id: 2210, name: "MSCI World Net (USD)", currency: "USD", msci_code: "990100",
-    variant: "NETR", n_levels: 6646, first_date: "2000-12-29", last_date: "2026-06-19",
-    last_level: 11731.17,
+    variant: "NETR", category: "equity", n_levels: 6646, first_date: "2000-12-29",
+    last_date: "2026-06-19", last_level: 11731.17,
   },
 ];
 const LEVELS = {
@@ -95,8 +95,8 @@ describe("Indexes page", () => {
 
   it("defaults to the marquee MSCI World Net even when a non-MSCI index sorts first alphabetically", async () => {
     const MULTI = [
-      { sym_id: 2064, name: "AEX", currency: "EUR", msci_code: null, variant: null, n_levels: 8585, first_date: "1992-10-12", last_date: "2026-06-05", last_level: 1041.1 },
-      { sym_id: 2210, name: "MSCI World Net (USD)", currency: "USD", msci_code: "990100", variant: "NETR", n_levels: 6646, first_date: "2000-12-29", last_date: "2026-06-19", last_level: 15585.46 },
+      { sym_id: 2064, name: "AEX", currency: "EUR", msci_code: null, variant: null, category: "equity", n_levels: 8585, first_date: "1992-10-12", last_date: "2026-06-05", last_level: 1041.1 },
+      { sym_id: 2210, name: "MSCI World Net (USD)", currency: "USD", msci_code: "990100", variant: "NETR", category: "equity", n_levels: 6646, first_date: "2000-12-29", last_date: "2026-06-19", last_level: 15585.46 },
     ];
     vi.stubGlobal(
       "fetch",
@@ -113,6 +113,46 @@ describe("Indexes page", () => {
     const section = detail.closest("section")!;
     expect(section.textContent).toMatch(/MSCI World Net/);
     expect(section.textContent).not.toMatch(/AEX/);
+  });
+
+  it("frames a volatility index (VIX) as a level — note shown, no annualised CAGR, monthly relabelled", async () => {
+    const VIX = [
+      {
+        sym_id: 99, name: "CBOE Volatility Index (VIX)", currency: "USD", msci_code: null,
+        variant: null, category: "volatility", n_levels: 4000, first_date: "2010-01-01",
+        last_date: "2026-06-19", last_level: 17.5,
+      },
+    ];
+    const VIX_LEVELS = {
+      sym_id: 99, name: "CBOE Volatility Index (VIX)", currency: "USD", msci_code: null,
+      variant: null, n_levels: 4, since_start_return: -0.3,
+      trailing: { mtd: 0.02, qtd: -0.05, ytd: 0.1, "1y": -0.2, "2y": 0.3, "3y": -0.1, "5y": 0.5, "10y": -0.4 },
+      series: [
+        { date: "2023-12-31", level: 20 },
+        { date: "2024-01-31", level: 22 },
+        { date: "2024-02-29", level: 18 },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        url.includes("/levels")
+          ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(VIX_LEVELS) })
+          : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(VIX) }),
+      ),
+    );
+    render(<IndexesPage />);
+    // the level-not-return note is shown (renders from the list selection)
+    expect(await screen.findByText(/changes in the level/i)).toBeInTheDocument();
+    // wait for the /levels data to resolve (the chart is data-dependent) before asserting figures
+    await screen.findByRole("img", { name: /Index level time series/i });
+    // the multi-year cumulative level changes still render (5y 0.5 → +50.00%)
+    expect(screen.getByText("+50.00%")).toBeInTheDocument();
+    // NO annualised CAGR "p.a." card for a volatility index (the nonsense framing is suppressed)
+    expect(screen.queryByText(/p\.a\./)).toBeNull();
+    // the monthly table is relabelled "level change", not "returns"
+    expect(screen.getByText("Monthly level change (%)")).toBeInTheDocument();
+    expect(screen.queryByText("Monthly returns (%)")).toBeNull();
   });
 
   it("shows an honest empty state with the msci-pull hint when no index data", async () => {

@@ -42,6 +42,10 @@ class Benchmark:
     variant: str | None = None
     # Geographic region for the World-Equity-Indices board: Americas | EMEA | Asia-Pacific | Global.
     region: str | None = None
+    # Asset class — drives the equity-only WEI board filter. "equity" (default) for the headline
+    # equity indices; "volatility" for the VIX (a volatility LEVEL index whose up/down colour
+    # semantics invert, so it is shown on the Indexes page but kept OFF the equity board).
+    category: str = "equity"
 
 
 def benchmark_xrefs(b: Benchmark) -> dict[str, str]:
@@ -78,6 +82,14 @@ BENCHMARKS: tuple[Benchmark, ...] = (
     Benchmark("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI", region="EMEA"),
     Benchmark("Nikkei 225", "JPY", yahoo_symbol="^N225", region="Asia-Pacific"),
     Benchmark("IBOVESPA", "BRL", yahoo_symbol="^BVSP", region="Americas"),
+    # CBOE Volatility Index — a volatility LEVEL index (not an investable price-return index). Shown
+    # on the Indexes page but kept OFF the equity WEI board (category="volatility"). currency="USD" is
+    # a convention: the VIX is unitless index points, not dollars — but the instrument table needs a
+    # currency and USD (its home market) is the harmless, consistent choice.
+    Benchmark(
+        "CBOE Volatility Index (VIX)", "USD", yahoo_symbol="^VIX",
+        region="Americas", category="volatility",
+    ),
     # MSCI World Net — no Yahoo; levels come from `sym msci-pull` (or a file import). variant="NR"
     # → msci xref 990100:NETR, the SAME instrument the pull creates (no bare-code stub on re-seed).
     Benchmark(
@@ -136,6 +148,18 @@ def country_for(name: str | None, currency: str | None = None) -> str:
         return "United States" if "USA" in u else "Europe" if "EUROPE" in u else "Global"
     by_ccy = _COUNTRY_BY_CCY.get((currency or "").upper())
     return _COUNTRY_BY_NAME.get(name or "") or by_ccy or "—"
+
+
+# Asset class by name (data-driven, reused by the API to keep non-equity indexes off the equity
+# WEI board). Defaults to "equity" for any name not in the registry — the board stays equity-only
+# without a hardcoded React name-check, mirroring `region_for`/`country_for`.
+_CATEGORY_BY_NAME = {b.name: b.category for b in BENCHMARKS}
+
+
+def category_for(name: str | None) -> str:
+    """Asset class for an index by name — "equity" (default) | "volatility". Unknown names default
+    to "equity" so only an explicitly-tagged non-equity index (the VIX) leaves the equity board."""
+    return _CATEGORY_BY_NAME.get(name or "", "equity")
 
 
 class IndexLevelSource(Protocol):
