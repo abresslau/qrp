@@ -710,7 +710,8 @@ class DbSymGateway:
                    coalesce(tk.symbol_value, s.composite_figi) AS ticker,
                    sn.name, s.mic, s.currency_code, s.status,
                    px.close, px.volume, px.session_date,
-                   fu.market_cap_usd, ex.country, ex.country_iso, gx.sector_name
+                   fu.market_cap_usd, ex.country, ex.country_iso, gx.sector_name,
+                   ex.exch_code, ex.bbg_exchange_code
             {self._SEC_FROM}
             LEFT JOIN exchange ex ON ex.mic = s.mic
             LEFT JOIN LATERAL (
@@ -751,12 +752,15 @@ class DbSymGateway:
                     "session_date": session_date.isoformat() if session_date else None,
                     "market_cap_usd": float(mcap) if mcap is not None else None,
                     "country": country,
-                    "country_iso": country_iso,
+                    "country_iso": country_iso,  # FactSet region (ADS-DE)
                     "sector": sector,
+                    "exch_code": exch_code,  # Bloomberg composite/region (ADS GR)
+                    "bbg_exchange_code": bbg_exchange_code,  # Bloomberg primary venue (ADS GY)
                 }
                 for (
                     figi, ticker, name, mic, currency, status,
                     close, volume, session_date, mcap, country, country_iso, sector,
+                    exch_code, bbg_exchange_code,
                 ) in rows
             ],
         }

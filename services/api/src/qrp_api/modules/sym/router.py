@@ -145,8 +145,10 @@ class SecurityRow(BaseModel):
     volume: int | None
     market_cap_usd: float | None
     country: str | None
-    country_iso: str | None
+    country_iso: str | None  # FactSet region (TICKER-REGION, e.g. ADS-DE)
     sector: str | None
+    exch_code: str | None = None  # Bloomberg composite/region code (ADS GR)
+    bbg_exchange_code: str | None = None  # Bloomberg primary-venue code (ADS GY)
 
 
 class SecuritiesPage(BaseModel):

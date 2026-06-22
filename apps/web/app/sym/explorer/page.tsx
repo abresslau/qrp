@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { fmtCompact, fmtPrice } from "@/lib/format";
+import { allQualifiedTickers, qualifiedTicker, TICKER_CONVENTIONS, type TickerConvention } from "@/lib/ticker";
 
 type Row = {
   figi: string;
@@ -18,11 +19,49 @@ type Row = {
   country: string | null;
   country_iso: string | null;
   sector: string | null;
+  exch_code: string | null; // Bloomberg region (ADS GR)
+  bbg_exchange_code: string | null; // Bloomberg venue (ADS GY)
 };
 type Resp = { total: number; limit: number; offset: number; rows: Row[] };
 type Uni = { universe_id: string; name: string | null; members_resolved: number };
 
 const LIMIT = 50;
+
+// Ticker convention preference — persisted to localStorage, read via useSyncExternalStore (same
+// contract as the FX matrix prefs): stable server snapshot = the default (no hydration mismatch),
+// default = Bloomberg Region ("ADS GR"). The bare ticker stays searchable regardless of the display.
+const CONV_KEY = "qrp.ticker.convention";
+const CONV_DEFAULT: TickerConvention = "bbg-region";
+const convListeners = new Set<() => void>();
+function subscribeConv(cb: () => void): () => void {
+  convListeners.add(cb);
+  window.addEventListener("storage", cb); // cross-tab
+  return () => {
+    convListeners.delete(cb);
+    window.removeEventListener("storage", cb);
+  };
+}
+function getConv(): TickerConvention {
+  try {
+    const v = localStorage.getItem(CONV_KEY);
+    // Validate against the known conventions — a stale/garbage value must not flow into the
+    // controlled <select> (which would render blank) or the formatter.
+    return TICKER_CONVENTIONS.some((c) => c.value === v) ? (v as TickerConvention) : CONV_DEFAULT;
+  } catch {
+    return CONV_DEFAULT;
+  }
+}
+function getConvServer(): TickerConvention {
+  return CONV_DEFAULT;
+}
+function setConv(v: TickerConvention): void {
+  try {
+    localStorage.setItem(CONV_KEY, v);
+    convListeners.forEach((l) => l()); // notify this tab (storage event is cross-tab only)
+  } catch {
+    /* storage unavailable — the choice just won't persist */
+  }
+}
 
 export default function ExplorerPage() {
   const [q, setQ] = useState("");
@@ -32,6 +71,7 @@ export default function ExplorerPage() {
   const [universe, setUniverse] = useState("");
   const [universes, setUniverses] = useState<Uni[]>([]);
   const [gap, setGap] = useState(""); // a layer (prices/returns/fundamentals) to show only the gap names
+  const convention = useSyncExternalStore(subscribeConv, getConv, getConvServer); // ticker display convention
 
   // universe options for the dropdown + the initial filter from the ?u= deep-link (the
   // Universes landing links here with it). Both are set inside the fetch's async callback —
@@ -86,6 +126,19 @@ export default function ExplorerPage() {
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold tracking-tight text-fg">Securities</h1>
         <div className="flex items-center gap-2">
+          <select
+            value={convention}
+            onChange={(e) => setConv(e.target.value as TickerConvention)}
+            title="How to qualify the ticker with its exchange/region (e.g. ADS GR · ADS GY · ADS-DE)"
+            aria-label="Ticker convention"
+            className="rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-fg outline-none focus:border-fg/40"
+          >
+            {TICKER_CONVENTIONS.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
+              </option>
+            ))}
+          </select>
           <select
             value={universe}
             onChange={(e) => {
@@ -160,8 +213,12 @@ export default function ExplorerPage() {
             {(data?.rows ?? []).map((r) => (
               <tr key={r.figi} className="hover:bg-fg/5">
                 <td className="px-4 py-2 font-medium">
-                  <Link href={`/sym/securities/${r.figi}`} className="hover:underline">
-                    {r.ticker}
+                  <Link
+                    href={`/sym/securities/${r.figi}`}
+                    className="tabular-nums hover:underline"
+                    title={allQualifiedTickers(r)}
+                  >
+                    {qualifiedTicker(r, convention)}
                   </Link>
                 </td>
                 <td className="px-4 py-2 text-muted">{r.name ?? "—"}</td>

@@ -2581,6 +2581,10 @@ export interface components {
             country_iso: string | null;
             /** Sector */
             sector: string | null;
+            /** Exch Code */
+            exch_code?: string | null;
+            /** Bbg Exchange Code */
+            bbg_exchange_code?: string | null;
         };
         /** SeriesDetail */
         SeriesDetail: {

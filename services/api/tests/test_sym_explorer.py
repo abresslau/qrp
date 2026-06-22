@@ -42,11 +42,13 @@ class _ListConn:
         return _Cur(rows=self._rows)
 
 
-def _list_row(figi, ticker, *, close, volume, sdate, mcap, country, ciso, sector):
-    # shape matches the gateway's 13-column rows SELECT, in order
+def _list_row(figi, ticker, *, close, volume, sdate, mcap, country, ciso, sector,
+              exch_code="US", bbg_exchange_code="UW"):
+    # shape matches the gateway's 15-column rows SELECT, in order
     return (
         figi, ticker, f"{ticker} Inc", "XNAS", "USD", "active",
         close, volume, sdate, mcap, country, ciso, sector,
+        exch_code, bbg_exchange_code,
     )
 
 
@@ -67,6 +69,8 @@ def test_securities_maps_enrichment_columns():
     assert r["market_cap_usd"] == 3.0e12
     assert r["country"] == "United States" and r["country_iso"] == "US"
     assert r["sector"] == "Information Technology"
+    # qualified-ticker codes (Bloomberg region/venue) surfaced
+    assert r["exch_code"] == "US" and r["bbg_exchange_code"] == "UW"
     # existing fields untouched
     assert r["mic"] == "XNAS" and r["currency"] == "USD" and r["status"] == "active"
 
@@ -77,6 +81,7 @@ def test_securities_enrichment_is_null_safe():
         _list_row(
             "F2", "OBSCURE", close=None, volume=None, sdate=None,
             mcap=None, country=None, ciso=None, sector=None,
+            exch_code=None, bbg_exchange_code=None,
         )
     ]
     out = DbSymGateway(_ListConn(1, rows)).securities(None, 50, 0)
@@ -84,6 +89,8 @@ def test_securities_enrichment_is_null_safe():
     assert r["price"] is None and r["volume"] is None and r["session_date"] is None
     assert r["market_cap_usd"] is None
     assert r["country"] is None and r["country_iso"] is None and r["sector"] is None
+    # qualified-ticker codes degrade to None (display falls back to the bare ticker)
+    assert r["exch_code"] is None and r["bbg_exchange_code"] is None
 
 
 def test_securities_count_query_does_not_carry_enrichment_joins():

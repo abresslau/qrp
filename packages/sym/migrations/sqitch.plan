@@ -58,3 +58,4 @@ fx_rate_review_superseded [fx_rate_review] 2026-06-10T23:00:00Z Andre <ab@gladst
 gics_source_opinion [gics_scd] 2026-06-18T12:00:00Z Andre <ab@gladstone-management.com> # Per-source GICS opinion matrix (multi-source classification; gics_scd stays the resolved truth)
 fact_price_extremes [fact_returns] 2026-06-20T12:00:00Z Andre <ab@gladstone-management.com> # 52-week high/low of the adjusted close + pct-off (Story 3.2-ext)
 fact_index_extremes [fact_index_returns] 2026-06-20T12:30:00Z Andre <ab@gladstone-management.com> # 52-week high/low of the index level + pct-off (Story 3.2-ext)
+exchange_bbg_exchange_code [exchange_figi_exch_code] 2026-06-22T16:00:00Z Andre <ab@gladstone-management.com> # Bloomberg primary-venue exchange code (GY/UN/UW) for the "exchange" qualified ticker
