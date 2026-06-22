@@ -140,13 +140,6 @@ export default function PortfolioLive() {
               ) : null}
             </p>
           </div>
-          {/* Live P&L moved up here, beside the title (was a separate "Risk & P&L analytics" panel) */}
-          <PortfolioPnlStrip
-            portfolio={p}
-            dailyReturn={weightedPnl(comp, (h) => h.live_return)}
-            mtdReturn={weightedPnl(comp, (h) => h.window_returns?.["MTD"] ?? null)}
-            ytdReturn={weightedPnl(comp, (h) => h.window_returns?.["YTD"] ?? null)}
-          />
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Link
@@ -191,11 +184,24 @@ export default function PortfolioLive() {
         <>
           {/* Sector donut + top movers — two separate cards, side by side */}
           <div className="grid gap-3 2xl:gap-4 lg:grid-cols-2">
-            <div className="rounded-xl border border-border bg-surface p-3 2xl:p-4">
-              <PortfolioDonut data={comp} />
+            {/* Left column: the Daily/MTD/YTD P&L stats card stacked above the movers card. The
+                cards hug their content (no min-h), so any slack sits at the bottom — room for
+                another card. */}
+            <div className="flex flex-col gap-3 2xl:gap-4">
+              <div className="rounded-xl border border-border bg-surface p-3 2xl:p-4">
+                <PortfolioPnlStrip
+                  portfolio={p}
+                  dailyReturn={weightedPnl(comp, (h) => h.live_return)}
+                  mtdReturn={weightedPnl(comp, (h) => h.window_returns?.["MTD"] ?? null)}
+                  ytdReturn={weightedPnl(comp, (h) => h.window_returns?.["YTD"] ?? null)}
+                />
+              </div>
+              <div className="rounded-xl border border-border bg-surface p-3 2xl:p-4">
+                <PortfolioMovers pid={String(id)} composition={comp} />
+              </div>
             </div>
             <div className="rounded-xl border border-border bg-surface p-3 2xl:p-4">
-              <PortfolioMovers pid={String(id)} composition={comp} />
+              <PortfolioDonut data={comp} />
             </div>
           </div>
           <PortfolioHeatmap data={comp} />

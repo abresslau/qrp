@@ -70,9 +70,14 @@ describe("PortfolioLive page", () => {
     expect(strip.getByText("Daily P&L")).toBeInTheDocument();
     expect(strip.getByText("MTD P&L")).toBeInTheDocument();
     expect(strip.getByText("YTD P&L")).toBeInTheDocument();
-    // the removed risk/exposure stats are gone
-    expect(screen.queryByText("L/S")).not.toBeInTheDocument();
-    expect(screen.queryByText("Long")).not.toBeInTheDocument();
+    // NAV + book-exposure stats sit in the strip alongside the P&L
+    expect(strip.getByText("NAV")).toBeInTheDocument();
+    expect(strip.getByText("Net")).toBeInTheDocument();
+    expect(strip.getByText("Gross")).toBeInTheDocument();
+    expect(strip.getByText("Long")).toBeInTheDocument();
+    expect(strip.getByText("Short")).toBeInTheDocument();
+    expect(strip.getByText("L/S")).toBeInTheDocument();
+    expect(strip.getByText("4.0x")).toBeInTheDocument(); // long 0.8 / short 0.2
 
     // sector donut (in-slice + legend) + heat-map tiles
     expect(screen.getAllByText("Tech").length).toBeGreaterThan(0);

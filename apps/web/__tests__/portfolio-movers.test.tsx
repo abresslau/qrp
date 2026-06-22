@@ -80,7 +80,8 @@ describe("PortfolioMovers", () => {
     );
     render(<PortfolioMovers pid="1" composition={COMP} />);
     fireEvent.mouseEnter(screen.getByText("AAPL")); // AAPL (figi F1) is a Daily winner
-    expect(await screen.findByText("1Y price · close")).toBeInTheDocument(); // tooltip label
+    // the fixture holding carries a live price, so the chart/label reflect "live" (not just close)
+    expect(await screen.findByText("1Y price · live")).toBeInTheDocument(); // tooltip label
     const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
     expect(calls.some((u) => u.includes("/securities/F1/prices"))).toBe(true);
   });

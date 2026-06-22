@@ -32,13 +32,17 @@ describe("PortfolioPnlStrip", () => {
     expect(screen.getByText("+12.12%")).toBeInTheDocument(); // YTD
   });
 
-  it("no longer renders the risk/exposure stats (Long/Short/Net/Gross/L/S)", () => {
+  it("renders NAV + book-exposure stats (Net/Gross/Long/Short/L-S) alongside the P&L", () => {
     render(<PortfolioPnlStrip portfolio={portfolio()} {...RETURNS} />);
-    expect(screen.queryByText("L/S")).not.toBeInTheDocument();
-    expect(screen.queryByText("Long")).not.toBeInTheDocument();
-    expect(screen.queryByText("Short")).not.toBeInTheDocument();
-    expect(screen.queryByText("Net")).not.toBeInTheDocument();
-    expect(screen.queryByText("Gross")).not.toBeInTheDocument();
+    for (const label of ["NAV", "Net", "Gross", "Long", "Short", "L/S"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    // values from the fixture (net .6 / gross 1.0 / long .8 / short .2)
+    expect(screen.getByText("60.0%")).toBeInTheDocument(); // net
+    expect(screen.getByText("100.0%")).toBeInTheDocument(); // gross
+    expect(screen.getByText("80.0%")).toBeInTheDocument(); // long
+    expect(screen.getByText("20.0%")).toBeInTheDocument(); // short
+    expect(screen.getByText("4.0x")).toBeInTheDocument(); // L/S = long 0.8 / short 0.2
   });
 
   it("shows the % return AND the base-currency P&L amount when a notional is set", () => {
