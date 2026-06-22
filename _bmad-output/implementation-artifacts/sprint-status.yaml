@@ -44,7 +44,7 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-22  # Monitor arc code-review (bmad-code-review, 3 adversarial layers x 3 groups): the 4 Monitor stories (wei-world-equity-indices, wei-backdate-as-of-date, monitor-fx-cross-matrix, portfolios-live-header-pnl-declutter) reviewed -> done. 4 patches applied (FX ccys dedupe, WEI stale-tooltip honesty, canonical as_of_date SQL placeholder, live-page test-masking fix), 9 deferred to deferred-work.md, ~14 dismissed. 11 api + 27 web tests green, tsc clean.
+last_updated: 2026-06-22  # QL-1-lineage-dagster-foundation finished off -> done (AC10/12/13 delivered by QL-2/QL-3, verified + 22 lineage tests green; status-housekeeping close). Earlier 2026-06-22: Monitor arc code-review (bmad-code-review, 3 adversarial layers x 3 groups): the 4 Monitor stories (wei-world-equity-indices, wei-backdate-as-of-date, monitor-fx-cross-matrix, portfolios-live-header-pnl-declutter) reviewed -> done. 4 patches applied (FX ccys dedupe, WEI stale-tooltip honesty, canonical as_of_date SQL placeholder, live-page test-masking fix), 9 deferred to deferred-work.md, ~14 dismissed. 11 api + 27 web tests green, tsc clean.
 # 2026-06-20: retrospectively enumerated the standalone / cross-cutting stories (delivered OUTSIDE the
 #   epic decompositions) into a new development_status section below (operator: "we can add to status
 #   file retrospectively"). These are the inline-tracked extras the DERIVATION NOTE references; statuses
@@ -278,7 +278,7 @@ development_status:
   universes-landing-coverage: done
 
   # -- lineage / Dagster (QL-series) --
-  QL-1-lineage-dagster-foundation: in-progress
+  QL-1-lineage-dagster-foundation: done  # 2026-06-22 finished off: AC1-9 built ad-hoc + AC11 here; AC10 delivered by QL-2 (generate.py→derived_lineage.py), AC12+AC13 by QL-3 (FK_REFERENTIAL merge + diagram.py→docs/field-flow.md). Verified code + 22 lineage tests green; task boxes were just never checked (status-housekeeping per deferred-work 2026-06-10).
   QL-2-auto-feeder-rollout: done
   QL-3-fk-referential-and-visual: done
   QL-4-console-wiring: done

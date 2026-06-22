@@ -218,7 +218,7 @@ Pre-existing component issues surfaced by the QH.7 review (NOT introduced by it 
 
 - Backup verification + rotation: no `pg_restore --list` sanity, no dump-size floor, no retention policy. (Partial-dump cleanup, numeric pg_dump version sort, and PGPASSWORD-via-env were fixed in-review.)
 - `fact_index_returns` backup-exclusion review: recomputable like `fact_returns` but deliberately kept in the dump (small/conservative) — revisit if dump size matters.
-- QL-1 story-status housekeeping: still "in-progress" with delivered AC task boxes unchecked.
+- ~~QL-1 story-status housekeeping: still "in-progress" with delivered AC task boxes unchecked.~~ ✅ DONE (2026-06-22): AC10 delivered by QL-2, AC12/AC13 by QL-3; verified (code + 22 lineage tests) and QL-1 closed → done.
 - Schedule evaluation knobs: the `sym_eod` op derives as_of_date from the scheduled tick now; finer control (skip-holidays, catch-up policy for missed ticks) undesigned.
 - Yahoo symbol normalization asymmetry (carried from chunk 4's ledger; surfaced again here via the resolver): HK zero re-padding + indiscriminate '.'->'-'.
 

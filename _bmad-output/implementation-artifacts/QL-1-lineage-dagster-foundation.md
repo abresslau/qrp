@@ -1,6 +1,6 @@
 # Story QL.1: Lineage — Dagster foundation + auto-feeder
 
-Status: in-progress
+Status: done
 
 <!-- Brownfield capture: the foundation (Dagster lineage layer) was built ad-hoc in Claude Code
 and is being formalized here. ACs/tasks are split into BUILT (satisfied) and REMAINING (open).
@@ -40,7 +40,8 @@ for schema** — a prototype is proven (see AC-7..9).
 8. **Lineage is auto-derived from captured SQL.** Given captured statements + Postgres schema (`derive.pg_schema` from `information_schema`), when `derive.derive_edges` runs, then it produces table-level + cross-DB edges classified by basis (`sql` vs `run-correlation`), with `composite_figi`/`sym_id` flagged as pass-through keys.
 9. **Proven on real code.** Given the real optimiser read functions are run through `CapturingConnection`, then `optimiser.weight ← {fact_returns, fundamentals, security_symbology, universe_membership}` is derived automatically (incl. inputs the hand-model missed), with `composite_figi` traced.
 
-### Remaining (open)
+### Remaining — CLOSED (delivered by QL-2 / QL-3; verified 2026-06-22)
+_AC10 shipped in QL-2 (auto-feeder rollout); AC12 + AC13 shipped in QL-3 (FK referential + field-flow visual). Code-confirmed (`generate.py`/`derived_lineage.py`/`diagram.py`/`docs/field-flow.md`) + 22 lineage tests green. The task boxes were left unchecked when the work shipped downstream — closed here._
 10. **Auto-feeder wired into Dagster.** Given `derive.to_dagster_metadata`, when the lineage assets are built, then the table-level deps + key column lineage are **generated from captured/parsed SQL** rather than hand-declared, for at least the cross-package edges.
 11. **sqlglot is a declared dependency.** Given `packages/lineage/pyproject.toml`, then `sqlglot` is listed (not just `uv run --with`), and `uv sync --all-packages` succeeds.
 12. **FK referential layer is auto-derived.** Given Postgres FK introspection (filtered for the Sqitch registry tables), then intra-DB referential edges are generated automatically and merged with the SQL-derived derivation edges.
@@ -61,10 +62,10 @@ for schema** — a prototype is proven (see AC-7..9).
 - [x] `sql_capture.py` CapturingConnection (AC: 7)
 - [x] `derive.py` classify + correlate + `pg_schema` + `to_dagster_metadata` (AC: 8)
 - [x] Prove on real optimiser code (AC: 9)
-- [ ] Wire `derive` output into Dagster asset metadata, replacing hand-declared deps (AC: 10)
+- [x] Wire `derive` output into Dagster asset metadata, replacing hand-declared deps (AC: 10) — delivered by **QL-2** (`generate.py` captures downstream engines' read SQL → `derive.py` → `derived_lineage.py` `DERIVED` map; `assets.py` imports it to replace hand-declared cross-package deps)
 - [x] Add `sqlglot` to `pyproject.toml`; `uv sync --all-packages` (AC: 11)
-- [ ] FK introspection module (filter Sqitch tables) → referential edges (AC: 12)
-- [ ] Generate Mermaid field-flow diagram for composite_figi/sym_id (AC: 13)
+- [x] FK introspection module (filter Sqitch tables) → referential edges (AC: 12) — delivered by **QL-3** (`generate.py` introspects `pg_constraint` FKs, Sqitch registry excluded → `FK_REFERENTIAL` map, merged into asset deps with a distinct `referential` basis; 17 edges)
+- [x] Generate Mermaid field-flow diagram for composite_figi/sym_id (AC: 13) — delivered by **QL-3** (`diagram.py` → `docs/field-flow.md`, the free substitute for the Dagster+ column-lineage view)
 
 ### Review Findings
 
@@ -134,6 +135,8 @@ _Code review 2026-06-09 (Blind Hunter + Edge Case Hunter + Acceptance Auditor). 
 claude-opus-4-8 (Claude Code), 2026-06-09
 ### Debug Log References
 ### Completion Notes List
-- Foundation (AC 1–9) built + verified ad-hoc before formalization; remaining AC 10–13 open.
+- Foundation (AC 1–9) built + verified ad-hoc before formalization.
+- AC 10–13 closed downstream: **AC10** by QL-2 (`generate.py` → `derived_lineage.py`, imported by `assets.py`), **AC11** in this story, **AC12 + AC13** by QL-3 (`FK_REFERENTIAL` map merged with `referential` basis; `diagram.py` → `docs/field-flow.md`).
+- 2026-06-22 finish-off: verified the artifacts deliver AC10/12/13 (code-confirmed) + 22 lineage unit tests green (`test_derive` classify/derive, `test_graph` asset-graph integrity with merged declared+derived+FK deps); checked off the open task boxes; Status → done. The story sat `in-progress` only as status-housekeeping (delivered AC boxes unchecked — flagged in deferred-work 2026-06-10).
 ### File List
 (see Source tree above)
