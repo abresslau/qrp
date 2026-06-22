@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import PortfolioLive from "@/app/portfolios/[id]/live/page";
@@ -63,11 +63,13 @@ describe("PortfolioLive page", () => {
     render(<PortfolioLive />);
     expect(await screen.findByText(/Long\/Short Book/)).toBeInTheDocument(); // header
 
-    // Live P&L now sits in the header (no risk/exposure panel). Daily/MTD/YTD P&L each appear BOTH in
-    // the header strip AND as a grid column header, so use getAllByText.
-    expect(screen.getAllByText("Daily P&L").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("MTD P&L").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("YTD P&L").length).toBeGreaterThan(0);
+    // Live P&L now sits in the header strip (no risk/exposure panel). Scope the assertions to the
+    // strip itself — "Daily P&L" also appears as a grid column header, so a screen-wide getAllByText
+    // would pass on the grid alone and never prove the header strip actually rendered.
+    const strip = within(screen.getByTestId("pnl-strip"));
+    expect(strip.getByText("Daily P&L")).toBeInTheDocument();
+    expect(strip.getByText("MTD P&L")).toBeInTheDocument();
+    expect(strip.getByText("YTD P&L")).toBeInTheDocument();
     // the removed risk/exposure stats are gone
     expect(screen.queryByText("L/S")).not.toBeInTheDocument();
     expect(screen.queryByText("Long")).not.toBeInTheDocument();

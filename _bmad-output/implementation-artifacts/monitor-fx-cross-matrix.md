@@ -1,6 +1,6 @@
 # Story: Monitor — FX cross-rate matrix (Bloomberg-FXC-style currency grid)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -96,6 +96,13 @@ matrix of major-currency crosses, derived from the warehouse, honest about stale
   diagonal 1.0, USD→EUR 0.8725, EUR→JPY 184.44 (= USD→JPY/USD→EUR), EUR→USD = 1/0.8725 — cross-consistent.
   Real-Chrome CDP `/monitor/fx`: "FX matrix" in the rail, 10×10 grid, USD/USD "—", USD→EUR 0.8725,
   "EOD · as of 2026-06-18".
+
+### Review Findings (code-review of the Monitor arc, 2026-06-22 — Blind/Edge/Acceptance layers)
+- [x] [Review][Patch] `fx_matrix` did not dedupe `ccys` — `?currencies=USD,EUR,EUR` produced duplicate grid rows/cols and duplicate per-currency React keys (the gateway de-duped `res`/`byBase` dicts but not the `ccys` list). Now `list(dict.fromkeys(...))`, preserving order. Default set unaffected; 11 api + 14 fx-matrix-page tests green [services/api/.../sym/gateway.py].
+- [x] [Review][Defer] No leg-spread guard like `convert.triangulate`'s `WEEKEND_SPAN_DAYS` — when one leg is `is_filled` (carried-forward but within the 7-day cap), the cross rate AND the daily `chg` are built from two legs observed on different dates (a stale-vs-stale "daily" move). The cell IS flagged stale (●), so the user is warned, but the rate/chg are date-mismatched. Apply the triangulate spread guard (or null the rate beyond the weekend span) when picked up [services/api/.../sym/gateway.py `fx_matrix`].
+- [x] [Review][Defer] A persisted `baseCcy` not present in the API's returned currency set yields an uncontrolled `<select>` (React warning) + a blank selector — `order` is reconciled in `sequence` but `baseCcy` is not [apps/web/app/monitor/fx/page.tsx].
+- [x] [Review][Defer] A future `as_of_date` blanks the whole matrix server-side (every leg stale → null cells); the page bounds the picker with `max=latestDate`, but the raw API is unguarded — clamp to the latest FX date if the API is consumed directly [services/api/.../sym/gateway.py `fx_matrix`].
+- Dismissed: drag-reorder splice asymmetry (accepted insert-position behavior, sibling-story precedent); "no N²" docstring (refers to DB resolutions, which are O(N)); stale-currency diagonal reported `stale:false` (diagonal hard-rendered "—", excluded from heat); `chg` `nb` truthiness-vs-`is not None` (FX rates never 0); `conventional_pair` tie-break (no equal QUOTE_RANK values exist); empty-`fx_rate` `date.today()` fallback (only when no FX data at all; honest empty state); precision-rule/cross-direction "not documented on page" (the orientation legend + per-cell pair tooltip make the read unambiguous); subnav-not-in-diff (chunking artifact — `nav.ts` is committed).
 
 ## Dev Notes
 

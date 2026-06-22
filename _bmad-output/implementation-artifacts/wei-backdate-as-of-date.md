@@ -1,6 +1,6 @@
 # Story: WEI — backdate the World Equity Indices board to any as-of date
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -121,6 +121,10 @@ day earlier) — consistent with `freshness_per_market` (per-member recency, nev
 - [x] [Review][Patch] Picking a date equal to `latestDate` now keeps `asOf=""` (clean latest fetch, no redundant `?as_of_date=`); stale sort-test comment fixed. [apps/web/app/monitor/wei/page.tsx, __tests__/wei-page.test.tsx]
 - [x] [Review][Defer] `levels_written` counts the no-op latest-row rewrite + the latest row is re-touched every run (cosmetic metric; the in-place revision is by design)
 - Dismissed (6): mixed-type comparator (latent, type-stable cols); xref LIMIT 1 (one yahoo xref/index); chg_pct/chg at prev=0 (intentional); MSCI substring (MSCI-prefixed only); flat-52w sink (0/0 guard); duplicate-symbol collapse (invariant).
+
+### Review Findings — round 3 (code-review of the Monitor arc, 2026-06-22)
+- [x] [Review][Patch] The as-of SQL placeholder was `%(as_of)s` not the canonical `as_of_date` (the spec's Critical-conventions explicitly extends canonical naming to "SQL placeholder"; [[feedback-as-of-date-canonical-name]]). Renamed `params["as_of"]`/`%(as_of)s` → `%(as_of_date)s` in the as-of branch only (omitted/None path is untouched, byte-identical); reconciled the `test_indexes_route.py` string assertions. 11 api tests green [services/api/.../sym/gateway.py `index_board`; services/api/tests/test_indexes_route.py].
+- Dismissed: round-1/round-2 items already patched/deferred (not re-litigated); the per-index 1900-day lookback caveat stays as deferred from round 1.
 
 ## Dev Notes
 

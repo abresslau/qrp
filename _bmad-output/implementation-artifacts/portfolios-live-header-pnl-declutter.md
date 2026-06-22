@@ -1,6 +1,6 @@
 # Story: Live page — lift Daily/MTD/YTD P&L into the header next to the title, drop the risk/exposure stats, tighten card spacing
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -69,6 +69,12 @@ Interpretation (the directives together — see Open Question #1):
   - [x] Replaced `portfolio-risk-pnl.test.tsx` with `portfolio-pnl-strip.test.tsx` — P&L formatting + notional-amount cases against the new component, plus an assertion the exposure stats are gone.
 - [x] Task 5: Verify (AC: #5, #6, #7)
   - [x] `tsc` clean; `eslint` 0 errors (1 pre-existing warning in `fx-matrix-page.test.tsx`, not mine). Targeted vitest (portfolio-live, portfolio-pnl-strip, portfolio-pivot, portfolio-detail, analytics-panel, portfolio-heatmap) all green. Full-suite flakes are load-induced in unrelated files (fx-matrix/indexes) that pass in isolation; clean-tree full run = 135/135. Real-Chrome CDP at 1366×768 / 1536×864 / 1920×1080 — see Completion Notes for the fit measurements.
+
+### Review Findings (code-review of the Monitor arc, 2026-06-22 — Blind/Edge/Acceptance layers)
+- [x] [Review][Patch] `portfolio-live.test.tsx` asserted `getAllByText("Daily P&L").length > 0` — satisfied by the grid's own column header alone, so the test never proved the new header P&L strip rendered at all (High, test-masking). Added `data-testid="pnl-strip"` to `PortfolioPnlStrip` and scoped all three P&L assertions to it via `within(...)`. 2 portfolio-live + 4 pnl-strip tests green [apps/web/components/portfolio-pnl-strip.tsx; apps/web/__tests__/portfolio-live.test.tsx].
+- [x] [Review][Defer] The header title block has no `min-w-0`/`truncate`, so a pathological long unbroken portfolio name can force horizontal overflow of the header (real names have spaces → wrap fine). Truncate the name when picked up [apps/web/app/portfolios/[id]/live/page.tsx].
+- [x] [Review][Defer] Removing the old numeric-returns case left the `pct(null) → "—"` placeholder path (the common pre-comp-load state) uncovered in the strip suite — add a `—`-placeholder assertion [apps/web/__tests__/portfolio-pnl-strip.test.tsx].
+- Dismissed: `weightedPnl(null,…)` null-safety (verified — guards `if (!comp?.holdings?.length) return null`); heatmap `viewBox` distortion from H 460→300 (verified — `viewBox` uses the `${H}` constant, treemap re-laid, no clip/stretch); `scale-to-fit.tsx` "dead code" (it IS imported by the monitor WEI/FX pages); negative/zero-notional money line + zero-total-weight heatmap copy (pre-existing, beyond this story); scope-bleed of the Monitor-area scaffolding into the arc diff (arc-review artifact — sibling commits).
 
 ## Dev Notes
 

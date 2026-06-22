@@ -1,6 +1,6 @@
 # Story: WEI — World Equity Indices monitor (Bloomberg-WEI-style board)
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -95,6 +95,14 @@ console design, sourced from our warehouse.
 - [x] Task 4: Verify (AC: #6) — 814 sym + 150 api + 113 web tests green; ruff/tsc/eslint clean.
   Real-Chrome CDP `/sym/wei`: 4 region sections in order, 23 rows, 27 sparklines, "EOD · as of
   2026-06-19", 31 green/38 red cells, 17 per-market stale markers.
+
+### Review Findings (code-review of the Monitor arc, 2026-06-22 — Blind/Edge/Acceptance layers)
+- [x] [Review][Patch] Stale ● tooltip asserted "(market holiday)" as fact — a lagging `last_date` can be a data gap, not a holiday (3 layers flagged; honesty). Reworded to "No session on {boardDate} — showing the last close, {last_date} (this market's calendar lags the board date)" [apps/web/app/monitor/wei/page.tsx]. 7 wei-page tests green.
+- [x] [Review][Defer] "1D" net/chg can silently span a multi-day/multi-year gap for a dormant/sparse index — `prev` is the 2nd-newest session ≤ anchor regardless of how far back; such a row is also stale-flagged + has empty spark/52w. Real indices are daily; gate `prev` to an adjacent session if a sparse index ever appears [services/api/.../sym/gateway.py `index_board`].
+- [x] [Review][Defer] Pre-history as-of date shows the "Seed indices with sym msci-pull" empty state (implies the warehouse is empty when it just has no data ≤ that date) — recoverable via Latest; copy-only fix when picked up [apps/web/app/monitor/wei/page.tsx].
+- [x] [Review][Defer] MSCI single-country names (e.g. "MSCI Japan") resolve region/country → "Global" — only USA/Europe are special-cased; latent (only MSCI World Net is seeded today) [packages/sym/src/sym/benchmarks/levels.py `region_for`/`country_for`].
+- [x] [Review][Defer] `d5` uses 7 calendar days so it drifts vs "5 trading sessions" across holidays; `compareRows` sinks nulls regardless of sort direction while the header arrow flips (cosmetic, untested null-descending path) [services/api/.../sym/gateway.py; apps/web/app/monitor/wei/page.tsx].
+- Dismissed: region_for/REGION_ORDER latent-drop (already ledgered round 1); the as-of YTD fake-conn test can't catch a `_trailing_returns` "today" anchor (accepted DB-free unit convention); scope-bleed of sibling FX/reconcile code into the arc diff (arc-review artifact).
 
 ## Dev Notes
 

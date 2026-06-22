@@ -144,9 +144,9 @@ class _BoardConnAsOf:
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
         if "JOIN ranked r" in s:  # anchored = latest session ≤ as_of (and the prior)
-            assert "session_date <= %(as_of)s" in s  # the as-of filter is applied before ranking
+            assert "session_date <= %(as_of_date)s" in s  # the as-of filter is applied before ranking
             return _Result([(1, "S&P 500", "USD", None, 4800.0, date(2026, 3, 19), 4750.0)])
-        if "session_date <= %(as_of)s AND session_date >=" in s:  # recent levels clipped to ≤ as_of
+        if "session_date <= %(as_of_date)s AND session_date >=" in s:  # recent levels clipped to ≤ as_of
             return _Result([
                 (1, date(2025, 3, 19), 4200.0),   # 52w-window start (~1y before the anchor) + 1Y base
                 (1, date(2025, 12, 31), 4500.0),  # prior year-end (YTD base)

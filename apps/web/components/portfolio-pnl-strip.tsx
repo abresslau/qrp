@@ -61,7 +61,7 @@ export function PortfolioPnlStrip({
   const amt = (r: number | null): number | null => (r != null && notional != null ? r * notional : null);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1" data-testid="pnl-strip">
       <Stat label="Daily P&L" value={pct(dailyReturn)} cls={tone(dailyReturn)} sub={money(amt(dailyReturn), ccy)} />
       <Stat label="MTD P&L" value={pct(mtdReturn)} cls={tone(mtdReturn)} sub={money(amt(mtdReturn), ccy)} />
       <Stat label="YTD P&L" value={pct(ytdReturn)} cls={tone(ytdReturn)} sub={money(amt(ytdReturn), ccy)} />

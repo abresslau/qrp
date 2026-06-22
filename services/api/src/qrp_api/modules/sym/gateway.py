@@ -1083,11 +1083,11 @@ class DbSymGateway:
         # Both queries stay relative to that anchor so the omitted path is byte-for-byte as before.
         params: dict = {}
         if as_of_date is not None:
-            params["as_of"] = as_of_date
-            ranked_filter = "WHERE session_date <= %(as_of)s"
+            params["as_of_date"] = as_of_date
+            ranked_filter = "WHERE session_date <= %(as_of_date)s"
             recent_sql = """
                 SELECT sym_id, session_date, level FROM index_levels
-                 WHERE session_date <= %(as_of)s AND session_date >= %(as_of)s - 1900
+                 WHERE session_date <= %(as_of_date)s AND session_date >= %(as_of_date)s - 1900
                  ORDER BY sym_id, session_date
                 """
         else:
@@ -1195,7 +1195,9 @@ class DbSymGateway:
         from sym.fx.resolve import fx_rate
 
         c = self._conn
-        ccys = [x.strip().upper() for x in (currencies or DEFAULT_FX_MATRIX) if x and x.strip()]
+        # Dedupe preserving order — a repeated code (e.g. ?currencies=USD,EUR,EUR) must not produce
+        # duplicate grid rows/cols (which would collide on the page's per-currency React keys).
+        ccys = list(dict.fromkeys(x.strip().upper() for x in (currencies or DEFAULT_FX_MATRIX) if x and x.strip()))
         if as_of_date is None:
             row = c.execute("SELECT max(as_of_date) FROM fx_rate").fetchone()
             as_of_date = row[0] if row and row[0] else date.today()

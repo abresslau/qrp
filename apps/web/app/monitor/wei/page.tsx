@@ -294,7 +294,7 @@ export default function WeiPage() {
                         {stale ? (
                           <span
                             className="ml-1 text-amber-500"
-                            title={`No session on ${boardDate} (market holiday) — showing the last close, ${r.last_date}`}
+                            title={`No session on ${boardDate} — showing the last close, ${r.last_date} (this market's calendar lags the board date)`}
                           >
                             ●
                           </span>
