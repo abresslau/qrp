@@ -1,6 +1,25 @@
 # Add Nasdaq-100 (`nasdaq100`) as an index universe
 
-Status: in-progress (2026-06-16, autonomous)
+Status: done
+
+## Finish-off re-verification (2026-06-22)
+
+Re-verified the live DB state before closing (the work + Andre's accept were 2026-06-16/17; the story
+just never flipped to done):
+- **`sym universe members nasdaq100` → 102 current members** (matches the post-PCLN-fix count; PCLN
+  correction held, BKNG retained).
+- **`sym validate --universe nasdaq100` → 10 pass / 3 warn / 1 FAIL.** The lone FAIL is
+  `unpriced_securities` (9 unexpected of 2,191) — the **pre-existing GLOBAL scan**, not this universe:
+  intersecting the unpriced FAIL figis with the 102 members is **empty**, and `universe_readiness`
+  PASSES at 90% returns coverage (which requires the members priced). `identity_completeness` now
+  **PASSES** (the names backfill held); `classification_coverage` **PASSES** at 99.1% (HON's missing
+  GICS is the ledgered non-Brazil-GICS gap, below the fail threshold).
+- **Net:** functionally complete, live, sound, and renders in the heatmap. No nasdaq100-specific FAIL.
+  Closed → done (the residual non-PASS is the deferred non-Brazil-GICS story + pre-existing global
+  unpriced — neither introduced by this add).
+
+---
+_Original status: in-progress (2026-06-16, autonomous)_
 
 ## Population log (2026-06-16)
 

@@ -44,7 +44,7 @@
 # inline in those epics' build-status sections + deferred-work.md, not here.
 
 generated: 2026-06-13
-last_updated: 2026-06-22  # QL-1-lineage-dagster-foundation finished off -> done (AC10/12/13 delivered by QL-2/QL-3, verified + 22 lineage tests green; status-housekeeping close). Earlier 2026-06-22: Monitor arc code-review (bmad-code-review, 3 adversarial layers x 3 groups): the 4 Monitor stories (wei-world-equity-indices, wei-backdate-as-of-date, monitor-fx-cross-matrix, portfolios-live-header-pnl-declutter) reviewed -> done. 4 patches applied (FX ccys dedupe, WEI stale-tooltip honesty, canonical as_of_date SQL placeholder, live-page test-masking fix), 9 deferred to deferred-work.md, ~14 dismissed. 11 api + 27 web tests green, tsc clean.
+last_updated: 2026-06-22  # nasdaq100-universe finished off -> done (re-verified live: 102 members, validate 10/3/1, lone FAIL is pre-existing global unpriced — 0 nasdaq100 members affected). Earlier 2026-06-22: QL-1-lineage-dagster-foundation finished off -> done (AC10/12/13 delivered by QL-2/QL-3, verified + 22 lineage tests green; status-housekeeping close). Earlier 2026-06-22: Monitor arc code-review (bmad-code-review, 3 adversarial layers x 3 groups): the 4 Monitor stories (wei-world-equity-indices, wei-backdate-as-of-date, monitor-fx-cross-matrix, portfolios-live-header-pnl-declutter) reviewed -> done. 4 patches applied (FX ccys dedupe, WEI stale-tooltip honesty, canonical as_of_date SQL placeholder, live-page test-masking fix), 9 deferred to deferred-work.md, ~14 dismissed. 11 api + 27 web tests green, tsc clean.
 # 2026-06-20: retrospectively enumerated the standalone / cross-cutting stories (delivered OUTSIDE the
 #   epic decompositions) into a new development_status section below (operator: "we can add to status
 #   file retrospectively"). These are the inline-tracked extras the DERIVATION NOTE references; statuses
@@ -274,7 +274,7 @@ development_status:
   U3-5-wire-safety-machinery: done
   U3-6-maintenance-plans: done
   U3-7-provenance-aware-correct: done
-  nasdaq100-universe: in-progress
+  nasdaq100-universe: done  # 2026-06-22 finished off (work + Andre's accept were 2026-06-16/17; never flipped). Re-verified live: 102 current members, validate 10 pass/3 warn/1 fail — lone FAIL is the pre-existing GLOBAL unpriced_securities scan (0 nasdaq100 members affected; universe_readiness PASS). identity_completeness now PASS, classification 99.1% PASS. Residual non-PASS = deferred non-Brazil-GICS (HON) + pre-existing global unpriced, neither this add's doing.
   universes-landing-coverage: done
 
   # -- lineage / Dagster (QL-series) --
