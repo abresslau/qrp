@@ -244,4 +244,55 @@ describe("FX cross-rate matrix page", () => {
     expect(await screen.findByText(/No FX data yet/)).toBeInTheDocument();
     expect(screen.getByText(/sym fx load/)).toBeInTheDocument();
   });
+
+  // LIVE matrix body (Story fx-matrix-live): same grid shape + per-currency freshness/quote_time and a
+  // rollup; no as_of_date. EUR/USD read live (no marker), JPY delayed, XXX unavailable (3/4 priced).
+  const LIVE_MATRIX = {
+    currencies: ["EUR", "JPY", "XXX", "USD"],
+    meta: [
+      { currency: "EUR", status: "ok", observed_date: "2026-06-18", days_stale: 0, quote_rank: 10, freshness: "live", quote_time: "2026-06-22T12:00:00Z" },
+      { currency: "JPY", status: "ok", observed_date: "2026-06-18", days_stale: 0, quote_rank: 100, freshness: "delayed", quote_time: "2026-06-22T11:59:00Z" },
+      { currency: "XXX", status: "stale", observed_date: "2026-06-01", days_stale: 17, quote_rank: 10000, freshness: "unavailable", quote_time: null },
+      { currency: "USD", status: "ok", observed_date: "2026-06-18", days_stale: 0, quote_rank: 50, freshness: "live", quote_time: null },
+    ],
+    rows: MATRIX.rows,
+    as_of: "2026-06-22T12:00:00Z",
+    freshness: "delayed",
+    priced: 3,
+    total: 4,
+  };
+
+  it("LIVE toggle fetches /fx/matrix/live, shows the live badge + per-currency freshness, swaps the as-of control for auto-refresh", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        calls.push(url);
+        const body = url.includes("/fx/matrix/live") ? LIVE_MATRIX : MATRIX;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      }),
+    );
+    const { container } = render(<FxMatrixPage />);
+    await screen.findByText("FX cross-rate matrix");
+    // EOD (default): the as-of date control is present; no auto-refresh control
+    expect(container.querySelector('input[type="date"]')).not.toBeNull();
+    expect(screen.queryByLabelText("Auto-refresh interval in seconds")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "LIVE" }));
+    await waitFor(() => expect(calls.some((u) => u.includes("/fx/matrix/live"))).toBe(true));
+
+    // live badge with worst freshness + coverage
+    await screen.findByText(/LIVE · delayed · 3\/4 priced/);
+    // per-currency freshness markers: JPY delayed (amber) + XXX unavailable (muted), across both cards
+    expect(screen.getAllByTitle(/delayed quote/).length).toBeGreaterThan(0);
+    expect(screen.getAllByTitle(/no live quote — showing the EOD rate/).length).toBeGreaterThan(0);
+    // controls swap: auto-refresh appears, the as-of date control is gone (LIVE is "now")
+    expect(screen.getByLabelText("Auto-refresh interval in seconds")).toBeInTheDocument();
+    expect(container.querySelector('input[type="date"]')).toBeNull();
+
+    // back to EOD restores the as-of control + drops the live badge
+    fireEvent.click(screen.getByRole("button", { name: "EOD" }));
+    await waitFor(() => expect(container.querySelector('input[type="date"]')).not.toBeNull());
+    expect(screen.queryByText(/LIVE · delayed/)).toBeNull();
+  });
 });

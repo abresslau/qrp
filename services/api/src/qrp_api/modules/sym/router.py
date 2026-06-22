@@ -305,6 +305,28 @@ class FxMatrix(BaseModel):
     rows: list[FxMatrixRow]
 
 
+class FxCurrencyMetaLive(FxCurrencyMeta):
+    """A currency's matrix meta plus its LIVE quote state (Story fx-matrix-live)."""
+
+    freshness: str  # live | delayed | unavailable
+    quote_time: str | None  # ISO-8601 UTC of the live quote, or null
+
+
+class FxMatrixLive(BaseModel):
+    """The FX matrix re-marked to LIVE intraday spot quotes (Story fx-matrix-live). Same grid shape as
+    `FxMatrix` (rows/cells) but no `as_of_date` (LIVE is "now"); per-currency `freshness`/`quote_time`
+    on `meta`; `as_of` = most-recent priced quote (ISO-8601 UTC), `freshness` = worst-of, `priced`/`total`
+    = currency coverage."""
+
+    currencies: list[str]
+    meta: list[FxCurrencyMetaLive]
+    rows: list[FxMatrixRow]
+    as_of: str | None
+    freshness: str  # live | delayed | unavailable
+    priced: int
+    total: int
+
+
 @router.get("/health", response_model=SymHealth)
 def sym_health(gw: DbSymGateway = Depends(_gateway)) -> dict:
     return {"module": "sym", "healthy": gw.healthy()}
@@ -492,6 +514,22 @@ def fx_matrix(
     (derived from the USD-base fx_rate star, diagonal 1.0). EOD; per-currency as-of staleness."""
     ccys = [c.strip() for c in currencies.split(",")] if currencies else None
     return gw.fx_matrix(ccys, as_of_date)
+
+
+@router.get("/fx/matrix/live", response_model=FxMatrixLive)
+def fx_matrix_live(
+    currencies: str | None = Query(None, description="CSV currency set; default = G10 majors + CNY/BRL."),
+    gw: DbSymGateway = Depends(_gateway),
+) -> dict:
+    """LIVE FX cross-rate matrix (Story fx-matrix-live): the EOD matrix re-marked to intraday spot
+    quotes (USD{ccy}=X via the Yahoo chart REST), crosses re-derived, 1D = live cross vs the latest EOD
+    cross, per-currency freshness + a matrix rollup. External fan-out at serve time; degrades to a 503
+    only if the provider is wholly unreachable (a per-currency miss is an `unavailable` leg). Never persisted."""
+    ccys = [c.strip() for c in currencies.split(",")] if currencies else None
+    try:
+        return gw.fx_matrix_live(ccys)
+    except QuoteSourceUnreachable as exc:
+        raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
 # ---- benchmark indices (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----

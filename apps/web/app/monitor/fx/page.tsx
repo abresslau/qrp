@@ -8,6 +8,8 @@
 
 import { type CSSProperties, type DragEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
+import { useOnline } from "@/lib/connection";
+
 
 type Cell = { rate: number | null; chg: number | null; stale: boolean; pair: string };
 type Row = { base: string; cells: Cell[] };
@@ -17,9 +19,31 @@ type Meta = {
   observed_date: string | null;
   days_stale: number;
   quote_rank: number;
+  freshness?: string; // LIVE mode only: live | delayed | unavailable
+  quote_time?: string | null;
 };
-type Matrix = { as_of_date: string; currencies: string[]; meta: Meta[]; rows: Row[] };
+// EOD has `as_of_date`; LIVE drops it and adds a freshness rollup (as_of / freshness / priced / total).
+type Matrix = {
+  as_of_date?: string;
+  currencies: string[];
+  meta: Meta[];
+  rows: Row[];
+  as_of?: string | null;
+  freshness?: string;
+  priced?: number;
+  total?: number;
+};
+type LiveMeta = { as_of: string | null; freshness: string; priced: number; total: number };
+type Mode = "EOD" | "LIVE";
 type BaseAxis = "columns" | "rows"; // which axis is the cross base (cell orientation)
+
+// LIVE-mode freshness → colour (mirrors the WEI board): live = fresh (no marker), delayed = amber,
+// unavailable = muted. Used by the per-currency axis-header marker in LIVE mode.
+const LIVE_TONE: Record<string, string> = {
+  live: "text-emerald-500",
+  delayed: "text-amber-500",
+  unavailable: "text-muted",
+};
 
 // Pairs quoted in these (large-value) currencies read at 2 dp; everything else at 4 dp.
 const TWO_DP_QUOTE = new Set(["JPY", "HUF", "KRW", "IDR", "CLP", "COP"]);
@@ -139,8 +163,25 @@ function HeatLegend({ isDark }: { isDark: boolean }) {
   );
 }
 
-function headerMarker(m: Meta | undefined) {
-  if (!m || m.status === "ok") return null;
+function headerMarker(m: Meta | undefined, mode: Mode) {
+  if (!m) return null;
+  // LIVE: mark the per-currency quote freshness (live = no marker; delayed = amber; unavailable =
+  // muted — showing the EOD rate). USD is the exact pivot and always reads "live" (no marker).
+  if (mode === "LIVE") {
+    const f = m.freshness;
+    if (!f || f === "live") return null;
+    const title =
+      f === "unavailable"
+        ? `no live quote — showing the EOD rate${m.observed_date ? ` (${m.observed_date})` : ""}`
+        : `delayed quote${m.quote_time ? ` · as of ${new Date(m.quote_time).toLocaleTimeString()}` : ""}`;
+    return (
+      <span className={`ml-0.5 ${LIVE_TONE[f] ?? "text-muted"}`} title={title}>
+        ●
+      </span>
+    );
+  }
+  // EOD: mark a carried-forward / withheld as-of resolution.
+  if (m.status === "ok") return null;
   const title =
     m.status === "stale" ? `stale — last observed ${m.observed_date} (${m.days_stale}d)` : "no data";
   return (
@@ -243,6 +284,7 @@ const baseAxisStore = makeStringStore("qrp.fx.baseAxis", "columns");
 // columns line up exactly even though they live in separate cards. `mode` picks rate vs % change.
 function MatrixCard({
   mode,
+  boardMode,
   label,
   rowCurrencies,
   colCurrencies,
@@ -255,6 +297,7 @@ function MatrixCard({
   onReorder,
 }: {
   mode: "rate" | "chg";
+  boardMode: Mode;
   label: string;
   rowCurrencies: string[];
   colCurrencies: string[];
@@ -337,7 +380,7 @@ function MatrixCard({
                   <Flag ccy={q} />
                   <span>
                     {q}
-                    {headerMarker(statusOf.get(q))}
+                    {headerMarker(statusOf.get(q), boardMode)}
                   </span>
                 </span>
               </th>
@@ -354,7 +397,7 @@ function MatrixCard({
             }`}
           >
             {rowCcy}
-            {headerMarker(statusOf.get(rowCcy))}
+            {headerMarker(statusOf.get(rowCcy), boardMode)}
           </th>
           <th className="py-0.5 pr-1 text-center font-normal">
             <Flag ccy={rowCcy} />
@@ -416,26 +459,64 @@ export default function FxMatrixPage() {
   // Manual currency order, shared by BOTH axes and persisted to localStorage. Empty = warehouse order.
   const order = useSyncExternalStore(subscribeOrder, getOrderSnapshot, getOrderServerSnapshot);
   const [dragCcy, setDragCcy] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>("EOD"); // LIVE = intraday spot quotes (best-effort, not stored)
+  const [live, setLive] = useState<LiveMeta | null>(null); // LIVE rollup (worst freshness + as_of + coverage)
+  const [nonce, setNonce] = useState(0); // bump to force a LIVE re-fetch (↻ / auto-refresh tick)
+  const [loading, setLoading] = useState(false);
+  const [autoSec, setAutoSec] = useState(0); // LIVE auto-refresh interval in seconds; 0 = off
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null); // local clock of the last LIVE pull
+  const online = useOnline(); // sidebar offline toggle pauses LIVE auto-refresh
 
-  // Re-fetch on as-of change; newest-wins guard. Capture the latest FX date on an un-backdated load
-  // so the picker can default to (and be bounded by) it. Pure: state set only in async callbacks.
+  // Re-fetch on mode / as-of / refresh. Newest-wins via AbortController so a slow earlier load can't
+  // clobber a newer one. EOD: an as-of date backdates the matrix (empty ⇒ latest; capture the latest FX
+  // date for the picker bound). LIVE: fetch the live matrix (spot quotes re-marked onto the EOD legs) +
+  // its freshness rollup; as-of is EOD-only (LIVE is "now"). Quotes are best-effort and never persisted.
   useEffect(() => {
-    let alive = true;
-    const qs = asOf ? `?as_of_date=${encodeURIComponent(asOf)}` : "";
-    fetch(`/api/sym/fx/matrix${qs}`, { cache: "no-store" })
+    const ac = new AbortController();
+    const url =
+      mode === "LIVE"
+        ? "/api/sym/fx/matrix/live"
+        : `/api/sym/fx/matrix${asOf ? `?as_of_date=${encodeURIComponent(asOf)}` : ""}`;
+    fetch(url, { cache: "no-store", signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`fx matrix -> ${r.status}`))))
       .then((d: Matrix) => {
-        if (alive) {
-          setData(d);
-          setError(null);
+        // clear the refresh spinner on every settle (incl. a superseded/aborted request) so a rapid
+        // toggle mid-refresh can't leave the ↻ button stuck disabled.
+        setLoading(false);
+        if (ac.signal.aborted) return;
+        setData(d);
+        setError(null);
+        if (mode === "LIVE") {
+          setLive({
+            as_of: d.as_of ?? null,
+            freshness: d.freshness ?? "unavailable",
+            priced: d.priced ?? 0,
+            total: d.total ?? 0,
+          });
+          // stamp the LOCAL clock each LIVE pull so an auto-refresh shows visible confirmation even
+          // when the data's own `as_of` (sim-clock) doesn't move.
+          setRefreshedAt(new Date().toLocaleTimeString());
+        } else {
+          setLive(null);
           if (!asOf) setLatestDate(d.as_of_date ?? "");
         }
       })
-      .catch((e) => alive && setError(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [asOf]);
+      .catch((e) => {
+        setLoading(false);
+        if (!ac.signal.aborted) setError(String(e));
+      });
+    return () => ac.abort();
+  }, [mode, asOf, nonce]);
+
+  // LIVE auto-refresh: while a positive interval is set, LIVE is selected, AND the app is online
+  // (sidebar toggle), bump the refresh nonce on a timer (re-pulls via the effect above). setState lives
+  // in the timer callback, not the effect body (react-hooks/set-state-in-effect). Floored at 3s to stay
+  // polite; going offline / leaving LIVE clears the timer (deps). Mirrors the WEI board LIVE refresh.
+  useEffect(() => {
+    if (mode !== "LIVE" || autoSec <= 0 || !online) return;
+    const id = setInterval(() => setNonce((n) => n + 1), Math.max(3, autoSec) * 1000);
+    return () => clearInterval(id);
+  }, [mode, autoSec, online]);
 
   const boardDate = data?.as_of_date ?? null;
   const backdated = asOf !== "" && asOf !== latestDate;
@@ -506,6 +587,20 @@ export default function FxMatrixPage() {
           (the {baseAxis === "columns" ? "column" : "row"} is the base).
         </p>
         <div className="flex items-center gap-2">
+          {/* EOD ⟷ LIVE mode toggle (mirrors the WEI board) */}
+          <div className="inline-flex overflow-hidden rounded-md border border-border text-xs" role="group" aria-label="matrix mode">
+            {(["EOD", "LIVE"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                className={`px-2 py-0.5 ${mode === m ? "bg-fg/10 font-medium text-fg" : "text-muted hover:bg-fg/5"}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
           <label className="flex items-center gap-1 text-xs text-muted" title="The reference currency to position on the axes">
             Base currency
             <span className="relative inline-flex items-center">
@@ -563,31 +658,76 @@ export default function FxMatrixPage() {
               Reset order
             </button>
           ) : null}
-          {boardDate ? (
-            <span className="text-xs text-muted">
-              EOD · as of {boardDate}
-              {backdated ? " (backdated)" : ""}
-            </span>
-          ) : null}
-          <label className="flex items-center gap-1 text-xs text-muted" title="Rewind the matrix to a past date">
-            <span className="sr-only">As of date</span>
-            <input
-              type="date"
-              value={asOf || latestDate}
-              max={latestDate || undefined}
-              onChange={(e) => setAsOf(e.target.value === latestDate ? "" : e.target.value)}
-              className="rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg"
-            />
-          </label>
-          {backdated ? (
-            <button
-              type="button"
-              onClick={() => setAsOf("")}
-              className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
-            >
-              Latest
-            </button>
-          ) : null}
+          {mode === "LIVE" ? (
+            <>
+              {live ? (
+                <span
+                  className={`text-xs ${LIVE_TONE[live.freshness] ?? "text-muted"}`}
+                  title="Intraday spot quotes — best-effort, never stored"
+                >
+                  ● LIVE · {live.freshness} · {live.priced}/{live.total} priced
+                  {live.as_of ? ` · as of ${new Date(live.as_of).toLocaleTimeString()}` : ""}
+                  {refreshedAt ? ` · refreshed ${refreshedAt}` : ""}
+                </span>
+              ) : null}
+              <label
+                className="flex items-center gap-1 text-xs text-muted"
+                title="Auto-refresh interval (seconds); blank or 0 = off. Floored at 3s. Pauses when offline."
+              >
+                auto
+                <input
+                  type="number"
+                  min={0}
+                  value={autoSec || ""}
+                  onChange={(e) => setAutoSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                  placeholder="off"
+                  aria-label="Auto-refresh interval in seconds"
+                  className="w-12 rounded border border-border bg-bg px-1 py-0.5 text-xs text-fg"
+                />
+                s{autoSec > 0 ? ` (${Math.max(3, autoSec)}s)` : ""}
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoading(true);
+                  setNonce((n) => n + 1);
+                }}
+                disabled={loading}
+                aria-label="Refresh live quotes"
+                className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg disabled:opacity-50"
+              >
+                {loading ? "…" : "↻"}
+              </button>
+            </>
+          ) : (
+            <>
+              {boardDate ? (
+                <span className="text-xs text-muted">
+                  EOD · as of {boardDate}
+                  {backdated ? " (backdated)" : ""}
+                </span>
+              ) : null}
+              <label className="flex items-center gap-1 text-xs text-muted" title="Rewind the matrix to a past date">
+                <span className="sr-only">As of date</span>
+                <input
+                  type="date"
+                  value={asOf || latestDate}
+                  max={latestDate || undefined}
+                  onChange={(e) => setAsOf(e.target.value === latestDate ? "" : e.target.value)}
+                  className="rounded border border-border bg-bg px-2 py-0.5 text-xs text-fg"
+                />
+              </label>
+              {backdated ? (
+                <button
+                  type="button"
+                  onClick={() => setAsOf("")}
+                  className="rounded border border-border px-2 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
+                >
+                  Latest
+                </button>
+              ) : null}
+            </>
+          )}
         </div>
       </header>
 
@@ -609,17 +749,31 @@ export default function FxMatrixPage() {
           // shrink it to fit height and waste the width — instead it renders at full width and the page
           // scrolls to the % change grid. table-fixed + identical colgroup keeps the columns aligned.
           <div className="space-y-1">
-            <MatrixCard mode="rate" label="Spot rate" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
-            <MatrixCard mode="chg" label="Spot · daily % change" rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+            <MatrixCard mode="rate" boardMode={mode} label={mode === "LIVE" ? "Spot rate · LIVE" : "Spot rate"} rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
+            <MatrixCard mode="chg" boardMode={mode} label={mode === "LIVE" ? "Spot · % change vs prior close" : "Spot · daily % change"} rowCurrencies={rowCurrencies} colCurrencies={colCurrencies} baseAxis={baseAxis} cellOf={cellOf} statusOf={statusOf} isDark={isDark} dragCcy={dragCcy} setDragCcy={setDragCcy} onReorder={reorder} />
             <HeatLegend isDark={isDark} />
           </div>
         )}
       </div>
 
       <p className="mt-1.5 shrink-0 text-[10px] leading-snug text-muted">
-        <span className="text-fg">Spot</span> (EOD) USD-base crosses (computed, not stored).{" "}
-        <span className="text-fg">Drag any header</span> to reorder (both axes, saved); cells shaded by
-        the day&apos;s move; <span className="text-amber-500">●</span> = stale/no rate. Hover for the pair.
+        {mode === "LIVE" ? (
+          <>
+            <span className="text-fg">LIVE</span> intraday spot crosses (USD-base legs re-marked to
+            <code className="mx-0.5 rounded bg-fg/10 px-1">USD&lt;ccy&gt;=X</code> quotes, crosses
+            re-derived) — best-effort, <strong>never stored</strong>; % change is vs the latest EOD close.{" "}
+            <span className="text-amber-500">●</span> delayed / <span className="text-muted">●</span>{" "}
+            unavailable (shows the EOD rate). FX trades nearly around the clock, so spot usually reads{" "}
+            <em>live</em>; a quote behind the freshness threshold reads <em>delayed</em>.
+          </>
+        ) : (
+          <>
+            <span className="text-fg">Spot</span> (EOD) USD-base crosses (computed, not stored).{" "}
+            <span className="text-fg">Drag any header</span> to reorder (both axes, saved); cells shaded
+            by the day&apos;s move; <span className="text-amber-500">●</span> = stale/no rate. Hover for
+            the pair.
+          </>
+        )}
       </p>
     </div>
   );

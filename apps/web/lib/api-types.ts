@@ -337,6 +337,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sym/fx/matrix/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fx Matrix Live
+         * @description LIVE FX cross-rate matrix (Story fx-matrix-live): the EOD matrix re-marked to intraday spot
+         *     quotes (USD{ccy}=X via the Yahoo chart REST), crosses re-derived, 1D = live cross vs the latest EOD
+         *     cross, per-currency freshness + a matrix rollup. External fan-out at serve time; degrades to a 503
+         *     only if the provider is wholly unreachable (a per-currency miss is an `unavailable` leg). Never persisted.
+         */
+        get: operations["fx_matrix_live"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sym/indices": {
         parameters: {
             query?: never;
@@ -1365,6 +1388,26 @@ export interface components {
             /** Quote Rank */
             quote_rank: number;
         };
+        /**
+         * FxCurrencyMetaLive
+         * @description A currency's matrix meta plus its LIVE quote state (Story fx-matrix-live).
+         */
+        FxCurrencyMetaLive: {
+            /** Currency */
+            currency: string;
+            /** Status */
+            status: string;
+            /** Observed Date */
+            observed_date: string | null;
+            /** Days Stale */
+            days_stale: number;
+            /** Quote Rank */
+            quote_rank: number;
+            /** Freshness */
+            freshness: string;
+            /** Quote Time */
+            quote_time: string | null;
+        };
         /** FxMatrix */
         FxMatrix: {
             /** As Of Date */
@@ -1375,6 +1418,29 @@ export interface components {
             meta: components["schemas"]["FxCurrencyMeta"][];
             /** Rows */
             rows: components["schemas"]["FxMatrixRow"][];
+        };
+        /**
+         * FxMatrixLive
+         * @description The FX matrix re-marked to LIVE intraday spot quotes (Story fx-matrix-live). Same grid shape as
+         *     `FxMatrix` (rows/cells) but no `as_of_date` (LIVE is "now"); per-currency `freshness`/`quote_time`
+         *     on `meta`; `as_of` = most-recent priced quote (ISO-8601 UTC), `freshness` = worst-of, `priced`/`total`
+         *     = currency coverage.
+         */
+        FxMatrixLive: {
+            /** Currencies */
+            currencies: string[];
+            /** Meta */
+            meta: components["schemas"]["FxCurrencyMetaLive"][];
+            /** Rows */
+            rows: components["schemas"]["FxMatrixRow"][];
+            /** As Of */
+            as_of: string | null;
+            /** Freshness */
+            freshness: string;
+            /** Priced */
+            priced: number;
+            /** Total */
+            total: number;
         };
         /** FxMatrixRow */
         FxMatrixRow: {
@@ -3252,6 +3318,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FxMatrix"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fx_matrix_live: {
+        parameters: {
+            query?: {
+                /** @description CSV currency set; default = G10 majors + CNY/BRL. */
+                currencies?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FxMatrixLive"];
                 };
             };
             /** @description Validation Error */

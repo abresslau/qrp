@@ -132,6 +132,57 @@ def _scalar(conn: psycopg.Connection, sql: str, params: tuple = ()):
     return row[0] if row else None
 
 
+def _fx_grid(
+    ccys: list[str],
+    rate: dict[str, object],
+    prior: dict[str, object],
+    stale: dict[str, bool],
+) -> list[dict]:
+    """Build the N×N FX cross grid from per-currency USD-base rates — SHARED by the EOD
+    (``fx_matrix``) and LIVE (``fx_matrix_live``) matrices so the two can never diverge.
+
+    ``cell(base, quote).rate`` = ``rate[quote] / rate[base]`` (units of quote per 1 base; diagonal
+    1.0). ``cell.chg`` = the cross's move now-vs-prior (``(rate_now) / (prior_now) − 1`` where each is
+    the cross of the two legs), null when a prior leg is missing/zero. ``cell.stale`` = either leg
+    flagged. A leg with no current rate ⇒ a null cell (never a fabricated cross). ``cell.pair`` = the
+    conventional market direction. **All rates within one call must be ONE numeric type** (``Decimal``
+    for EOD, ``float`` for LIVE) — mixing the two would raise on division.
+    """
+    from sym.fx.convention import conventional_pair
+
+    def cross_chg(base: str, quote: str):
+        pb, pq = prior.get(base), prior.get(quote)
+        nb, nq = rate.get(base), rate.get(quote)
+        if not (pb and pq and nb is not None and nq is not None):
+            return None
+        before = pq / pb
+        return float((nq / nb) / before) - 1.0 if before else None
+
+    rows: list[dict] = []
+    for base in ccys:
+        b = rate.get(base)
+        cells = []
+        for quote in ccys:
+            q = rate.get(quote)
+            cb, cq = conventional_pair(base, quote)
+            pair = f"{cb}/{cq}"  # the market-standard direction for this pair
+            if base == quote:
+                cells.append({"rate": 1.0, "chg": 0.0, "stale": False, "pair": pair})
+            elif b is not None and q is not None:
+                cells.append(
+                    {
+                        "rate": float(q / b),
+                        "chg": cross_chg(base, quote),
+                        "stale": bool(stale.get(base) or stale.get(quote)),
+                        "pair": pair,
+                    }
+                )
+            else:
+                cells.append({"rate": None, "chg": None, "stale": True, "pair": pair})
+        rows.append({"base": base, "cells": cells})
+    return rows
+
+
 class DbSymGateway:
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
@@ -1284,7 +1335,7 @@ class DbSymGateway:
         in the cross (for the green/red heat map). ``as_of_date`` backdates the whole matrix (omitted ⇒
         the latest FX date). A cell whose base or quote leg isn't ``ok`` (stale/no_data) gets a null
         rate (never a fabricated cross)."""
-        from sym.fx.convention import conventional_pair, quote_rank
+        from sym.fx.convention import quote_rank
         from sym.fx.resolve import fx_rate
 
         c = self._conn
@@ -1315,43 +1366,129 @@ class DbSymGateway:
             for r in (res[ccy],)
         ]
 
-        def cross_chg(base: str, quote: str) -> float | None:
-            """Day's move in the cross (now vs the prior session), or None when unavailable."""
-            pb, pq = prev.get(base), prev.get(quote)
-            nb, nq = res[base].rate, res[quote].rate
-            if not (pb and pq and nb is not None and nq is not None and pb.rate and pq.rate):
-                return None
-            now, before = nq / nb, pq.rate / pb.rate
-            return float(now / before) - 1.0 if before else None
-
-        rows: list[dict] = []
-        for base in ccys:
-            b = res[base]
-            cells = []
-            for quote in ccys:
-                q = res[quote]
-                cb, cq = conventional_pair(base, quote)
-                pair = f"{cb}/{cq}"  # the market-standard direction for this pair
-                if base == quote:
-                    cells.append({"rate": 1.0, "chg": 0.0, "stale": False, "pair": pair})
-                elif b.rate is not None and q.rate is not None:
-                    # both legs resolved (ok, possibly carried-forward) — derive the cross + its move
-                    cells.append(
-                        {
-                            "rate": float(q.rate / b.rate),
-                            "chg": cross_chg(base, quote),
-                            "stale": b.is_filled or q.is_filled,
-                            "pair": pair,
-                        }
-                    )
-                else:
-                    cells.append({"rate": None, "chg": None, "stale": True, "pair": pair})
-            rows.append({"base": base, "cells": cells})
+        # The grid is built from three per-currency maps (shared with the LIVE matrix via `_fx_grid`):
+        # the resolved as-of rate, the prior-session rate (for the cross's day move), and the
+        # carried-forward (`is_filled`) flag. All EOD rates are Decimal — one numeric type per call.
+        rate = {ccy: res[ccy].rate for ccy in ccys}
+        prior = {ccy: (prev[ccy].rate if prev[ccy] is not None else None) for ccy in ccys}
+        stale = {ccy: res[ccy].is_filled for ccy in ccys}
+        rows = _fx_grid(ccys, rate, prior, stale)
         return {
             "as_of_date": as_of_date.isoformat(),
             "currencies": ccys,
             "meta": meta,
             "rows": rows,
+        }
+
+    def fx_matrix_live(
+        self, currencies: list[str] | None = None, now: float | None = None
+    ) -> dict:
+        """LIVE FX cross-rate matrix (Story fx-matrix-live): the EOD ``fx_matrix`` with each currency's
+        USD-base leg re-marked to an intraday spot quote, then the SAME cross grid re-derived.
+
+        The live per-USD leg comes from the Yahoo v8 chart REST symbol ``USD{ccy}=X`` — probed to return
+        units of ``ccy`` per 1 USD, exactly the ``fx_rate`` convention — fanned out via the QH.2
+        ``fetch_quotes_batch`` (best-effort, **never persisted**). USD is the pivot (rate = 1.0, no
+        fetch). A currency with no usable quote keeps its EOD resolved rate and is marked ``unavailable``
+        (never a fabricated live leg). The cross is re-derived, not scaled (the matrix is N legs, not N
+        per-row series); each cell's ``chg`` (1D) is the LIVE cross vs the **latest EOD cross**
+        (today's move) — ``prior`` = the EOD leg rates. Per-currency ``freshness``/``quote_time`` on
+        ``meta`` + a matrix rollup (``as_of`` = most-recent priced quote, worst ``freshness``,
+        ``priced``/``total``). Raises ``QuoteSourceUnreachable`` (→503) only when the provider is wholly
+        unreachable; a per-currency miss is an ``unavailable`` leg, not a failure.
+        """
+        from sym.fx.convention import quote_rank
+        from sym.fx.resolve import fx_rate
+
+        c = self._conn
+        ccys = list(
+            dict.fromkeys(x.strip().upper() for x in (currencies or DEFAULT_FX_MATRIX) if x and x.strip())
+        )
+        row = c.execute("SELECT max(as_of_date) FROM fx_rate").fetchone()
+        as_of_date = row[0] if row and row[0] else date.today()
+        res = {ccy: fx_rate(c, ccy, as_of_date) for ccy in ccys}  # the latest-EOD anchor per leg
+
+        # Live legs: USD{ccy}=X = units of ccy per 1 USD (probed) — the fx_rate per-USD convention.
+        # USD is the pivot (1.0, no fetch). One batched, bounded fan-out (no N+1).
+        symbols = [f"USD{ccy}=X" for ccy in ccys if ccy != "USD"]
+        now = quotes_mod.now_epoch() if now is None else now
+        batch = quotes_mod.fetch_quotes_batch(symbols) if symbols else {}
+
+        # All three maps carry FLOAT rates (the EOD anchors are cast) so the grid never mixes
+        # Decimal/float on division. cur = the live mark; prior = the latest EOD cross baseline.
+        cur: dict[str, object] = {}
+        prior: dict[str, object] = {}
+        stale: dict[str, bool] = {}
+        freshness: dict[str, str] = {}
+        quote_time: dict[str, str | None] = {}
+        priced = 0  # legs with a real live quote (the USD pivot is excluded — it's exact, not fetched)
+        any_delayed = False
+        newest_epoch: int | None = None
+        for ccy in ccys:
+            eod = float(res[ccy].rate) if res[ccy].rate is not None else None
+            if ccy == "USD":
+                cur[ccy] = 1.0  # the exact pivot — current by definition, never marked
+                prior[ccy] = eod  # 1.0; a USD-leg cross's move comes entirely from the OTHER leg
+                stale[ccy] = False
+                freshness[ccy] = "live"
+                quote_time[ccy] = None
+                continue
+            q = batch.get(f"USD{ccy}=X")
+            if q is not None and q.price is not None and q.price > 0:
+                cur[ccy] = float(q.price)
+                prior[ccy] = eod  # today's move = live vs the latest EOD close
+                stale[ccy] = False
+                fresh, _age = quotes_mod.classify_freshness(q.quote_epoch, now)
+                freshness[ccy] = fresh
+                if q.quote_epoch is not None:
+                    quote_time[ccy] = datetime.fromtimestamp(q.quote_epoch, tz=timezone.utc).isoformat()
+                    newest_epoch = (
+                        q.quote_epoch if newest_epoch is None else max(newest_epoch, q.quote_epoch)
+                    )
+                else:
+                    quote_time[ccy] = None
+                priced += 1
+                any_delayed = any_delayed or fresh == "delayed"
+            else:
+                cur[ccy] = eod  # no usable quote → fall back to the EOD rate for the displayed cross
+                prior[ccy] = None  # …but a stale leg has no trustworthy "today's move" → null chg
+                stale[ccy] = True
+                freshness[ccy] = "unavailable"
+                quote_time[ccy] = None
+
+        rows = _fx_grid(ccys, cur, prior, stale)
+        meta = [
+            {
+                "currency": ccy,
+                "status": res[ccy].status,
+                "observed_date": res[ccy].observed_date.isoformat() if res[ccy].observed_date else None,
+                "days_stale": res[ccy].days_stale,
+                "quote_rank": quote_rank(ccy),
+                "freshness": freshness[ccy],
+                "quote_time": quote_time[ccy],
+            }
+            for ccy in ccys
+        ]
+        total = sum(1 for ccy in ccys if ccy != "USD")  # fetchable legs (USD is the exact pivot)
+        return {
+            "currencies": ccys,
+            "meta": meta,
+            "rows": rows,
+            "as_of": (
+                datetime.fromtimestamp(newest_epoch, tz=timezone.utc).isoformat()
+                if newest_epoch is not None else None
+            ),
+            # only a fully-priced, all-fresh matrix reads "live"; partial coverage or any delayed leg
+            # degrades to "delayed" (amber) so the badge never overstates freshness (the WEI rule).
+            # nothing fetched (and there were legs to fetch) → "unavailable"; a USD-only matrix (no
+            # fetchable legs, total == 0) is trivially exact → "live".
+            "freshness": (
+                "unavailable" if (priced == 0 and total > 0)
+                else "delayed" if (any_delayed or priced < total)
+                else "live"
+            ),
+            "priced": priced,
+            "total": total,
         }
 
     def index_reconcile(self) -> dict:
