@@ -35,6 +35,7 @@ from sym.classification.gics import (
 )
 from sym.classification.google_gemini import GoogleGeminiGicsSource, google_enabled
 from sym.classification.llm import LlmGicsSource
+from sym.classification.manual import ManualGicsSource
 from sym.classification.opinions import OpinionSummary, apply_source_opinions
 from sym.classification.perplexity import PerplexityGicsSource, perplexity_enabled
 from sym.classification.sec_sic import SecSicGicsSource
@@ -78,6 +79,20 @@ def _header(label: str, n: int, s: ClassificationSummary, extra: str) -> str:
         f"{s.unchanged} unchanged, {s.rows_closed} superseded, {s.failed} failed"
     )
     return f"{head}; {extra}" if extra else head
+
+
+def _render_manual(src, s: ClassificationSummary, n: int) -> list[str]:
+    extra = (
+        f"{len(src.last_unmatched)} in-scope not in the manual artifact, "
+        f"{len(src.last_unused)} artifact row(s) unused (already classified / not active)"
+    )
+    lines = [_header("manual fill pass (operator-asserted)", n, s, extra)]
+    lines += [
+        f"  manual artifact row unused (figi not in scope): {figi}"
+        for figi in sorted(src.last_unused)
+    ]
+    lines += [f"  manual write failed: {fail}" for fail in s.failures]
+    return lines
 
 
 def _render_b3(src, s: ClassificationSummary, n: int) -> list[str]:
@@ -214,6 +229,7 @@ def fill_specs(*, llm_enabled: bool) -> list[FillSpec]:
     keys (keyed sources — dormant without a key). wikidata is keyless and always runs.
     """
     return [
+        FillSpec("manual", ManualGicsSource, _render_manual),
         FillSpec("b3", B3GicsSource, _render_b3),
         FillSpec("sec_sic", SecSicGicsSource, _render_sec),
         FillSpec(
@@ -338,6 +354,7 @@ def _opinion_specs(*, llm_enabled: bool) -> list[tuple]:
     """
     return [
         ("financedatabase", FinanceDatabaseGicsSource, None, ""),
+        ("manual", ManualGicsSource, None, ""),
         ("b3", B3GicsSource, None, ""),
         ("sec_sic", SecSicGicsSource, None, ""),
         ("yahoo_profile", YahooProfileGicsSource, None, ""),

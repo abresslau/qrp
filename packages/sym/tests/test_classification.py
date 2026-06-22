@@ -429,9 +429,14 @@ def test_outranks_precedence_order():
     assert not outranks("yahoo_profile", "fmp")  # free vendor never outranks the paid one
     assert not outranks("llm", "financedatabase")  # lower never outranks higher
     assert not outranks("financedatabase", "financedatabase")  # equal is not STRICTLY higher
-    assert not outranks("financedatabase", "manual")  # unknown current is preserved
-    assert not outranks("manual", "llm")  # unknown new never supersedes
+    assert not outranks("financedatabase", "legacy_import")  # unknown current is preserved
+    assert not outranks("legacy_import", "llm")  # unknown new never supersedes
     assert not outranks(None, "llm")
+    # manual (operator-asserted) ranks below only the FD primary, above every automated source
+    assert outranks("financedatabase", "manual")
+    assert outranks("manual", "b3")
+    assert outranks("manual", "yahoo_profile")
+    assert outranks("manual", "llm")
 
 
 def test_higher_precedence_source_supersedes_lower_on_later_day():
@@ -488,10 +493,10 @@ def test_lower_precedence_source_never_overwrites_higher():
 
 
 def test_unknown_source_row_is_preserved():
-    """A legacy/manual classification (source outside the precedence map) is never
+    """A legacy classification (source outside the precedence map) is never
     auto-superseded — we don't clobber rows we don't understand."""
     figi = "BBG000B9XRY4"
-    current = {figi: _row(date(2026, 1, 1), sector="Energy", source="manual")}
+    current = {figi: _row(date(2026, 1, 1), sector="Energy", source="legacy_import")}
     conn = _RouterConn(current=current)
     summary = apply_classifications(conn, [_gics(figi)], as_of_date=date(2026, 6, 6))
     assert summary.unchanged == 1
@@ -529,7 +534,7 @@ def test_read_classifiable_scope_lower_sources_by_precedence():
     conn2 = _CaptureConn()
     read_classifiable_identities(conn2, source="financedatabase")
     assert set(conn2.calls[-1][1][0]) == {
-        "b3", "sec_sic", "fmp", "yahoo_profile", "wikidata", "llm", "perplexity", "google"
+        "manual", "b3", "sec_sic", "fmp", "yahoo_profile", "wikidata", "llm", "perplexity", "google"
     }
 
     conn3 = _CaptureConn()
@@ -539,7 +544,7 @@ def test_read_classifiable_scope_lower_sources_by_precedence():
 
 def test_read_classifiable_unknown_source_falls_back_to_unclassified():
     conn = _CaptureConn()
-    read_classifiable_identities(conn, source="manual")
+    read_classifiable_identities(conn, source="legacy_import")
     sql, _params = conn.calls[-1]
     # the plain unclassified query has no source-precedence filter
     assert "<> ALL" not in sql.upper()

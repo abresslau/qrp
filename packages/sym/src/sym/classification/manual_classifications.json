@@ -1,0 +1,29 @@
+{
+  "_comment": "Operator-asserted GICS sector classifications — verifiable facts a live source cannot reach in this environment, NOT guesses. Each row names an exact security by composite_figi and the authoritative reason. Reviewable artifact: a wrong call is a one-line edit + `sym classify`. source='manual'; sector-only; fill-only; high precedence among fills (operator facts beat automated guesses, below the financedatabase primary). Sector must be one of the 11 GICS sectors.",
+  "classifications": [
+    {
+      "composite_figi": "BBG000BFZM24",
+      "ticker": "SMT",
+      "mic": "XLON",
+      "sector": "Financials",
+      "name": "Scottish Mortgage Investment Trust PLC",
+      "rationale": "FTSE-100 closed-end investment trust; FTSE/ICB and GICS both classify investment trusts as Financials. Operator-asserted because yahoo_profile (SMT.L) returns HTTP 404 in the sim env and Wikidata has no entity match; production yahoo_profile would classify it Financials."
+    },
+    {
+      "composite_figi": "BBG000HHH6S1",
+      "ticker": "PCT",
+      "mic": "XLON",
+      "sector": "Financials",
+      "name": "Polar Capital Technology Trust PLC",
+      "rationale": "FTSE-100 closed-end investment trust; FTSE/ICB and GICS classify investment trusts as Financials. Operator-asserted (yahoo_profile PCT.L → 404 in-env, Wikidata no match)."
+    },
+    {
+      "composite_figi": "BBG000BFH585",
+      "ticker": "ALW",
+      "mic": "XLON",
+      "sector": "Financials",
+      "name": "Alliance Witan PLC",
+      "rationale": "FTSE-100 closed-end investment trust (Alliance Trust + Witan merged 2024); FTSE/ICB and GICS classify investment trusts as Financials. Operator-asserted (yahoo_profile ALW.L → 404 in-env, Wikidata no match)."
+    }
+  ]
+}

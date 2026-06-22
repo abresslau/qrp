@@ -39,14 +39,17 @@ DEFAULT_COVERAGE_THRESHOLD = 0.90  # AC #2 — never silently widened.
 # (its row is preserved) and never supersedes another — so unknown rows are never clobbered.
 SOURCE_PRECEDENCE: dict[str, int] = {
     "financedatabase": 0,
-    "b3": 1,
-    "sec_sic": 2,
-    "fmp": 3,  # paid vendor profile — above the free yahoo/wikidata/llm, below official sources
-    "yahoo_profile": 4,
-    "wikidata": 5,  # free structured (community) — above the LLM tier, below vendor/official
-    "llm": 6,  # LLM tier (low-trust) ↓
-    "perplexity": 7,
-    "google": 8,
+    "manual": 1,  # operator-asserted FACTS (e.g. an index-provider taxonomy a live source can't
+    # reach in-env) — authoritative among fills: below only the curated FD primary, above every
+    # automated source so an operator fact is never silently overridden by a later automated guess.
+    "b3": 2,
+    "sec_sic": 3,
+    "fmp": 4,  # paid vendor profile — above the free yahoo/wikidata/llm, below official sources
+    "yahoo_profile": 5,
+    "wikidata": 6,  # free structured (community) — above the LLM tier, below vendor/official
+    "llm": 7,  # LLM tier (low-trust) ↓
+    "perplexity": 8,
+    "google": 9,
 }
 
 
