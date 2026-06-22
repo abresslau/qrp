@@ -1,6 +1,6 @@
 # Story: Add VIX to the Indexes page
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-22 (Andre: "add VIX to the indexes page"). Surfaces the
 CBOE Volatility Index on the sym Indexes page. VIX is ALREADY ingested in the `macro` module
@@ -85,6 +85,14 @@ so that I can track the market's "fear gauge" from the same index surface I use 
   lists VIX (`category="volatility"`, 26 total), `/indexes/2218/levels` returns the series,
   `/indexes/board` excludes it (23 rows). Real-Chrome `--dump-dom`: `/sym/indexes` lists VIX (1),
   `/monitor/wei` shows 0 VIX. Full regression: 840 sym + 158 api + 132 web green; tsc/eslint clean.
+
+## Review Findings (code-review of 0b8ac0f, 2026-06-22 — Blind/Edge/Acceptance layers)
+
+No High/Med correctness bugs. 2 low-risk patches applied (both serve AC3's honesty intent); the rest dismissed.
+
+- [x] [Review][Patch] `IndexSummary.category` was a required field whose comment claimed "(default)" — made it `category: str = "equity"` to match the documented contract + stay backward-compatible (verified `indexes()` via the `response_model` is the sole producer, so no live break — but the honest default is cheap) [services/api/.../sym/router.py].
+- [x] [Review][Patch] The honest-framing note said "the figures **below**", but the prominent "Since start" stat sits **above** it (so it was outside the note's scope, still return-framed) — reworded to "every figure on this card (including 'Since start') is a % change in the level…", which now covers it; also dropped the React `sel.name.includes("VIX")` wording branch (a stray name reference the spec steers away from) in favour of "This index" [apps/web/app/sym/indexes/page.tsx]. Web-test assertion updated to match.
+- Dismissed (3): macro `MKT:VIX` vs benchmark VIX duplication (intentional, documented — different surfaces/keyspaces, no key collision); AC1 idempotency/immutability not unit-tested (reuses the unchanged `sym benchmarks` machinery; out-of-diff live-verified — sym_id 2218, 9,184 levels, re-run idempotent); web test lacks an in-test positive-control for "p.a." (the equity test in the same suite already asserts the CAGR "p.a." renders, so the suite carries the control).
 
 ## Dev Notes
 

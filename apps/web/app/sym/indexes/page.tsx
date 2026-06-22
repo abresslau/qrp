@@ -394,11 +394,11 @@ export default function IndexesPage() {
                 </div>
                 {isVol ? (
                   <p className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                    {sel.name?.includes("VIX") ? "VIX" : "This"} is a volatility <strong>level</strong>{" "}
-                    index — the figures below are % <strong>changes in the level</strong>, not investment
-                    returns, and multi-year <strong>annualised (CAGR)</strong> figures are omitted (they
-                    are not meaningful for a mean-reverting index). The level chart and period % change
-                    are the useful read.
+                    This index is a volatility <strong>level</strong> index — every figure on this card
+                    (including &ldquo;Since start&rdquo;) is a % <strong>change in the level</strong>, not
+                    an investment return, and multi-year <strong>annualised (CAGR)</strong> figures are
+                    omitted (they are not meaningful for a mean-reverting index). The level chart and
+                    period % change are the useful read.
                   </p>
                 ) : null}
                 {/* trailing figures (computed from the level series; "returns" for equities, level

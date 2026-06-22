@@ -501,7 +501,7 @@ class IndexSummary(BaseModel):
     currency: str | None
     msci_code: str | None
     variant: str | None  # MSCI variant code (NETR net / STRD price / GRTR gross), if MSCI
-    category: str  # "equity" (default) | "volatility" — drives the page's level-vs-return framing
+    category: str = "equity"  # "equity" (default) | "volatility" — drives the page's level-vs-return framing
     n_levels: int
     first_date: str | None
     last_date: str | None

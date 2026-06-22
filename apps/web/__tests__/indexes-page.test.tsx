@@ -143,7 +143,7 @@ describe("Indexes page", () => {
     );
     render(<IndexesPage />);
     // the level-not-return note is shown (renders from the list selection)
-    expect(await screen.findByText(/changes in the level/i)).toBeInTheDocument();
+    expect(await screen.findByText(/change in the level/i)).toBeInTheDocument();
     // wait for the /levels data to resolve (the chart is data-dependent) before asserting figures
     await screen.findByRole("img", { name: /Index level time series/i });
     // the multi-year cumulative level changes still render (5y 0.5 → +50.00%)
