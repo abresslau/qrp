@@ -1,6 +1,6 @@
 # Story: WEI board — LIVE mode (intraday index quotes)
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-22 (Andre: "I want my wei page to also be able to show
 Live data"). This is the follow-up the `wei-world-equity-indices` story explicitly flagged (Open
@@ -105,6 +105,42 @@ updates live during the session.
   `delayed` (sim-clock), 6 honest `unavailable`. Real-Chrome CDP `/monitor/wei`: LIVE toggle → badge
   "LIVE · delayed · 17/23 priced", delayed + unavailable row marks present, board intact, "never stored"
   footnote; EOD unchanged.
+- [x] Task 5: LIVE auto-refresh (Open Q#1, post-review — Andre: "similar to portfolio live page") —
+  added an `autoSec` interval control (blank/0 = off, floored at 3s) + a `refreshedAt` stamp, mirroring
+  the heatmap-view LIVE auto-refresh: a timer bumps the refresh nonce while LIVE + interval>0 + online
+  (`useOnline` — the sidebar offline toggle pauses it); the control is EOD-hidden. 134 web tests green
+  (a control test: input + 3s-floor + EOD-hidden); real-Chrome CDP confirmed a 3s interval re-fetches
+  (the "refreshed" stamp advanced 12:08:19→:23→:26). Mirrors a proven pattern; not separately
+  3-layer-reviewed.
+
+## Review Findings (code-review of fad5a5b, 2026-06-22 — Blind/Edge/Acceptance layers)
+
+All three layers confirmed the **re-base math is exactly correct** (`(1+r_eod)·f − 1` moves only the
+window endpoint to the live mark). No High/Med correctness defect survived; 3 patches applied:
+
+- [x] [Review][Patch] **Rollup freshness read fully-"live" under partial coverage** (3 layers) — with
+  some indexes `unavailable` (no xref / closed / unserved) the badge showed green "live" while N/total
+  rows were stale EOD. Degraded the rollup to `delayed` when `priced < total` (or any delayed), so only
+  a fully-priced, all-fresh board reads "live" [services/api/.../sym/gateway.py]. Gateway test updated.
+- [x] [Review][Patch] **Stuck ↻ spinner on an aborted refresh** — clicking refresh then rapidly toggling
+  modes left `loading` true (the aborted `.then`/`.catch` skipped `setLoading(false)`), disabling the
+  button until a non-aborted fetch resolved. Now `setLoading(false)` runs on every settle incl. aborted
+  [apps/web/app/monitor/wei/page.tsx].
+- [x] [Review][Patch] **`eod_last` guard didn't match its "positive close" comment** — bare truthiness
+  let a (hypothetical) negative close through to a negative scale factor. Tightened to
+  `eod_last is not None and eod_last > 0` [services/api/.../sym/gateway.py].
+- [x] [Review][Defer] `as_of` is null while `priced > 0` when quotes carry no `quote_epoch`
+  (`classify_freshness(None)` → delayed but `newest_epoch` unset) — the badge degrades gracefully (no
+  "as of") and this mirrors the QH.9 `live_heatmap` precedent exactly; left as-is.
+- [x] [Review][Defer] Test-strengthening: the gateway test asserts the YTD re-base (proves the uniform
+  `_windows` loop) but not a non-YTD window / the 52w live-extension / equity-only-drops-VIX; the web
+  test doesn't assert the as-of control is *hidden* in LIVE nor that the live row is *unmarked*. Add if
+  this surface grows.
+- Dismissed (5): duplicate yahoo symbol across sym_ids (registry invariant — distinct yahoo symbol per
+  benchmark); `d.rows` non-array (FastAPI `response_model` guarantees the shape on 200; an error is a
+  non-200 caught by `r.ok`); negative-window scaling (verified algebraically correct); shallow `dict(r)`
+  aliasing on the unavailable path (nothing mutates the rows downstream); the LIVE→EOD transient
+  footer/copy flip before live data arrives (sub-second, cosmetic).
 
 ## Dev Notes
 
@@ -132,8 +168,9 @@ updates live during the session.
 - Sibling stories: `wei-world-equity-indices` (the board), `wei-backdate-as-of-date` (the re-base trick), `qh-2-live-quote-source`, `qh-9-live-heatmap`.
 
 ## Open Questions (for Andre — defaults chosen, do not block)
-1. **Auto-refresh in LIVE:** default = on-toggle fetch + a manual ↻ button. Want a polling auto-refresh
-   (e.g. every 20–30s) or SSE while LIVE? (Heatmap LIVE is pull-mark-discard; same default here.)
+1. ~~**Auto-refresh in LIVE:**~~ ✅ RESOLVED (2026-06-22, Andre) — added a polling auto-refresh
+   (`autoSec` interval, floored at 3s, off by default, `useOnline`-paused), mirroring the heatmap-view
+   LIVE refresh. See Task 5.
 2. **Window re-basing:** default = re-base ALL windows on the live mark (5D…5Y + 52w + spark), so the
    whole row moves live. Alt: keep only `last` + 1D live and leave the longer windows EOD-anchored
    (less "alive" but arguably less noisy). Say which you prefer.
@@ -173,3 +210,4 @@ claude-opus-4-8 (Claude Code), 2026-06-22
 |---|---|
 | 2026-06-22 | Created (bmad-create-story). Add a LIVE mode to the WEI board: new `GET /api/sym/indexes/board/live` (live last + live 1D vs latest EOD close + windows re-based to the live mark + per-index freshness + board rollup, equity-only, never persisted) reusing QH.2 `quotes.py` + the QH.9 `live_heatmap` pattern + the backdate re-base trick; a LIVE/EOD toggle + live badge on `/monitor/wei`. The follow-up flagged by `wei-world-equity-indices` Open Q#3. Status → ready-for-dev. |
 | 2026-06-22 | Dev complete → review. `index_board_live()` (reuses `index_board()` + endpoint-scaling re-base + QH.2/QH.9 quote fan-out over the `yahoo` xref) + `GET /api/sym/indexes/board/live` (`IndexBoardLive`/`IndexBoardLiveRow`, 503 on a dead provider) + a LIVE/EOD toggle + live badge + per-row freshness on `/monitor/wei`. 160 api + 133 web tests green; tsc/eslint clean; live API (17/23 priced) + real-Chrome CDP toggle verified. Status → review. |
+| 2026-06-22 | Code-reviewed (3 layers) → done: 3 patches (rollup freshness degrades to delayed under partial coverage; ↻ spinner unstuck on aborted refresh; eod_last guard). Then (Andre) added **LIVE auto-refresh** (Open Q#1): `autoSec` interval (3s floor, off by default, `useOnline`-paused) + `refreshedAt` stamp, mirroring heatmap-view. 134 web + 160 api green; tsc/eslint clean; CDP-verified the 3s tick re-fetches. |

@@ -1231,7 +1231,7 @@ class DbSymGateway:
             live["freshness"] = "unavailable"
             live["quote_time"] = None
             # need a positive live price AND a positive EOD close to re-base (else keep EOD, unavailable)
-            if q is not None and q.price is not None and q.price > 0 and eod_last:
+            if q is not None and q.price is not None and q.price > 0 and eod_last is not None and eod_last > 0:
                 f = q.price / eod_last
                 live["last"] = q.price
                 live["prev"] = eod_last  # today's move is vs the latest stored close
@@ -1261,7 +1261,14 @@ class DbSymGateway:
                 datetime.fromtimestamp(newest_epoch, tz=timezone.utc).isoformat()
                 if newest_epoch is not None else None
             ),
-            "freshness": ("unavailable" if priced == 0 else "delayed" if any_delayed else "live"),
+            # worst-of: nothing priced → unavailable; any delayed OR partial coverage (some indexes
+            # unavailable) → delayed (amber), so the badge never reads fully-"live" while rows are
+            # stale EOD; only a fully-priced, all-fresh board reads "live".
+            "freshness": (
+                "unavailable" if priced == 0
+                else "delayed" if (any_delayed or priced < len(rows))
+                else "live"
+            ),
             "priced": priced,
             "total": len(rows),
             "rows": rows,

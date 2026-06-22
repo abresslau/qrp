@@ -169,6 +169,30 @@ describe("WEI (world equity indices) page", () => {
     expect(document.querySelector('input[type="date"]')).toBeTruthy();
   });
 
+  it("exposes a LIVE auto-refresh interval control (floored at 3s), hidden in EOD", async () => {
+    const LIVE = { as_of: null, freshness: "delayed", priced: 1, total: 3, rows: BOARD.map((r) => ({ ...r, freshness: "delayed" })) };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) =>
+        Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(url.includes("/board/live") ? LIVE : BOARD) }),
+      ),
+    );
+    render(<WeiPage />);
+    await screen.findByText("Americas");
+    // no auto control in EOD
+    expect(screen.queryByLabelText("Auto-refresh interval in seconds")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "LIVE" }));
+    const auto = await screen.findByLabelText("Auto-refresh interval in seconds");
+    // a sub-3s value is floored to 3s in the cadence hint
+    fireEvent.change(auto, { target: { value: "1" } });
+    expect(screen.getByText(/\(3s\)/)).toBeInTheDocument();
+    fireEvent.change(auto, { target: { value: "10" } });
+    expect(screen.getByText(/\(10s\)/)).toBeInTheDocument();
+    // back to EOD hides the control again
+    fireEvent.click(screen.getByRole("button", { name: "EOD" }));
+    await waitFor(() => expect(screen.queryByLabelText("Auto-refresh interval in seconds")).toBeNull());
+  });
+
   it("shows an honest empty state when no index data", async () => {
     stub([]);
     render(<WeiPage />);

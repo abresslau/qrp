@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { ScaleToFit } from "@/components/scale-to-fit";
+import { useOnline } from "@/lib/connection";
 
 type BoardRow = {
   sym_id: number;
@@ -166,8 +167,11 @@ export default function WeiPage() {
   const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "country", dir: "asc" });
   const [mode, setMode] = useState<"EOD" | "LIVE">("EOD"); // LIVE = intraday quotes (best-effort, not stored)
   const [live, setLive] = useState<LiveMeta | null>(null); // LIVE rollup (worst freshness + as_of + coverage)
-  const [nonce, setNonce] = useState(0); // bump to force a LIVE re-fetch (↻ refresh)
+  const [nonce, setNonce] = useState(0); // bump to force a LIVE re-fetch (↻ refresh / auto-refresh tick)
   const [loading, setLoading] = useState(false);
+  const [autoSec, setAutoSec] = useState(0); // LIVE auto-refresh interval in seconds; 0 = off
+  const [refreshedAt, setRefreshedAt] = useState<string | null>(null); // local clock of the last LIVE pull
+  const online = useOnline(); // sidebar offline toggle pauses LIVE auto-refresh
 
   // Re-fetch on mode / as-of / refresh. Newest-wins via AbortController so a slow earlier load can't
   // clobber a newer one (QH.8). EOD: an as-of date backdates the board (server resolves last session ≤
@@ -183,26 +187,39 @@ export default function WeiPage() {
     fetch(url, { cache: "no-store", signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`board -> ${r.status}`))))
       .then((d) => {
+        // clear the refresh spinner on every settle (incl. a superseded/aborted request) so a rapid
+        // toggle mid-refresh can't leave the ↻ button stuck disabled.
+        setLoading(false);
         if (ac.signal.aborted) return;
         if (mode === "LIVE") {
           setRows(d.rows as BoardRow[]);
           setLive({ as_of: d.as_of, freshness: d.freshness, priced: d.priced, total: d.total });
+          // stamp the LOCAL clock each LIVE pull so an auto-refresh shows visible confirmation even
+          // when the data's own `as_of` (sim-clock) doesn't move.
+          setRefreshedAt(new Date().toLocaleTimeString());
         } else {
           setRows(d as BoardRow[]);
           setLive(null);
           if (!asOf) setLatestDate(maxLastDate(d) ?? "");
         }
         setError(null);
-        setLoading(false);
       })
       .catch((e) => {
-        if (!ac.signal.aborted) {
-          setError(String(e));
-          setLoading(false);
-        }
+        setLoading(false);
+        if (!ac.signal.aborted) setError(String(e));
       });
     return () => ac.abort();
   }, [mode, asOf, nonce]);
+
+  // LIVE auto-refresh: while a positive interval is set, LIVE is selected, AND the app is online
+  // (sidebar toggle), bump the refresh nonce on a timer (re-pulls via the effect above). setState lives
+  // in the timer callback, not the effect body (react-hooks/set-state-in-effect). Floored at 3s to stay
+  // polite; going offline / leaving LIVE clears the timer (deps). Mirrors the heatmap-view LIVE refresh.
+  useEffect(() => {
+    if (mode !== "LIVE" || autoSec <= 0 || !online) return;
+    const id = setInterval(() => setNonce((n) => n + 1), Math.max(3, autoSec) * 1000);
+    return () => clearInterval(id);
+  }, [mode, autoSec, online]);
 
   // board freshness anchor = the most recent session across all returned rows; rows behind it are stale.
   const boardDate = useMemo(() => maxLastDate(rows ?? []), [rows]);
@@ -253,8 +270,25 @@ export default function WeiPage() {
                 >
                   ● LIVE · {live.freshness} · {live.priced}/{live.total} priced
                   {live.as_of ? ` · as of ${new Date(live.as_of).toLocaleTimeString()}` : ""}
+                  {refreshedAt ? ` · refreshed ${refreshedAt}` : ""}
                 </span>
               ) : null}
+              <label
+                className="flex items-center gap-1 text-xs text-muted"
+                title="Auto-refresh interval (seconds); blank or 0 = off. Floored at 3s. Pauses when offline."
+              >
+                auto
+                <input
+                  type="number"
+                  min={0}
+                  value={autoSec || ""}
+                  onChange={(e) => setAutoSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                  placeholder="off"
+                  aria-label="Auto-refresh interval in seconds"
+                  className="w-12 rounded border border-border bg-bg px-1 py-0.5 text-xs text-fg"
+                />
+                s{autoSec > 0 ? ` (${Math.max(3, autoSec)}s)` : ""}
+              </label>
               <button
                 type="button"
                 onClick={() => {

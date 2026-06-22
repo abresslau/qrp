@@ -221,8 +221,9 @@ def test_index_board_live_rebases_to_quote_and_marks_freshness(monkeypatch):
     msci = by[2210]
     assert msci["freshness"] == "unavailable" and msci["last"] == 11000.0
     assert msci["quote_time"] is None
-    # board rollup
-    assert out["priced"] == 1 and out["total"] == 2 and out["freshness"] == "live"
+    # board rollup: 1 priced (live) + 1 unavailable → partial coverage degrades the badge to "delayed"
+    # (never reads fully-"live" while a row is stale EOD); as_of tracks the freshest priced quote.
+    assert out["priced"] == 1 and out["total"] == 2 and out["freshness"] == "delayed"
     assert out["as_of"] is not None
 
 
