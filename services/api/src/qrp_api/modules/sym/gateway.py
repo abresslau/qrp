@@ -983,7 +983,7 @@ class DbSymGateway:
             ],
         }
 
-    def indexes(self) -> list[dict]:
+    def indices(self) -> list[dict]:
         """Benchmark index instruments that have level data — name, MSCI code+variant (parsed from
         the `msci` xref `<code>:<VARIANT>`), currency, asset class, level count, first/last/latest
         level. Lists ALL index instruments incl. non-equity (VIX) — the equity-only filter is the
@@ -1016,7 +1016,7 @@ class DbSymGateway:
                     "name": name,
                     "currency": ccy,
                     "msci_code": code or None,
-                    "variant": variant or None,  # NETR/STRD/GRTR (None for non-MSCI indexes)
+                    "variant": variant or None,  # NETR/STRD/GRTR (None for non-MSCI indices)
                     "category": category_for(name),
                     "n_levels": n,
                     "first_date": first_d.isoformat() if first_d else None,
@@ -1134,7 +1134,7 @@ class DbSymGateway:
         for sym_id, name, ccy, xref, last, last_date, prev in rows:
             if category_for(name) != "equity":
                 continue  # non-equity (e.g. the VIX volatility index) — kept off the equity board
-                # (its up/down colour semantics invert); it still shows on the Indexes page.
+                # (its up/down colour semantics invert); it still shows on the Indices page.
             _code, _sep, variant = (xref or "").partition(":")
             if xref and variant and variant != "NETR":
                 continue  # MSCI PR/GR triplets — board shows the Net variant only
@@ -1261,7 +1261,7 @@ class DbSymGateway:
                 datetime.fromtimestamp(newest_epoch, tz=timezone.utc).isoformat()
                 if newest_epoch is not None else None
             ),
-            # worst-of: nothing priced → unavailable; any delayed OR partial coverage (some indexes
+            # worst-of: nothing priced → unavailable; any delayed OR partial coverage (some indices
             # unavailable) → delayed (amber), so the badge never reads fully-"live" while rows are
             # stale EOD; only a fully-priced, all-fresh board reads "live".
             "freshness": (

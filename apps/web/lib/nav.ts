@@ -23,7 +23,7 @@ export const SYM_SUBNAV: SubItem[] = [
   { href: "/sym", label: "Universes" },
   { href: "/sym/overview", label: "Overview" },
   { href: "/sym/explorer", label: "Explorer" },
-  { href: "/sym/indexes", label: "Indexes" },
+  { href: "/sym/indices", label: "Indices" },
   { href: "/sym/attention", label: "Attention" },
   { href: "/sym/validation", label: "Validation" },
   { href: "/sym/operate", label: "Operate" },

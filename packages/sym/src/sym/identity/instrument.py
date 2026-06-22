@@ -5,7 +5,7 @@ index, …). External vendor identifiers (CompositeFIGI, Yahoo symbol, MSCI code
 ISIN, FIGI) live in ``instrument_xref``, so identity never depends on any one
 vendor. This is **additive**: the existing composite_figi-keyed equity tables are
 untouched; each security is mapped 1:1 to an instrument via a ``composite_figi``
-xref (``backfill_equity_instruments``), and new kinds (indexes) use ``sym_id``
+xref (``backfill_equity_instruments``), and new kinds (indices) use ``sym_id``
 natively.
 """
 

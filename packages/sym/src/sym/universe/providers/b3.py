@@ -8,7 +8,7 @@ index, so no cross-source corroboration is needed.
 It is a **snapshot** source (the endpoint returns only the current portfolio), so
 membership is derived from the constituent ticker **set** at ``end`` — weight
 changes are not membership changes — and events are ``poll_bounded`` (the date is
-bounded by the polling interval, not exact). B3 rebalances its indexes three times
+bounded by the polling interval, not exact). B3 rebalances its indices three times
 a year (Jan/May/Sep) plus ad-hoc corporate events; a daily ``sym universe monitor``
 diff catches both. An empty/garbled response is a loud :class:`IndexSourceError`
 (never applied as "every member left").
@@ -149,7 +149,7 @@ class B3IndexSource:
 
     def fetch(self, index_key: str, start: date, end: date) -> list[MembershipChange]:
         # Reset on entry: a raising fetch must not leak the PREVIOUS call's
-        # snapshot to a later reader (instances serve multiple indexes).
+        # snapshot to a later reader (instances serve multiple indices).
         self.last_snapshot_tokens = None
         spec = self._specs.get(index_key)
         if spec is None:

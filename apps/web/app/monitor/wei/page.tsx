@@ -182,8 +182,8 @@ export default function WeiPage() {
     const ac = new AbortController();
     const url =
       mode === "LIVE"
-        ? "/api/sym/indexes/board/live"
-        : `/api/sym/indexes/board${asOf ? `?as_of_date=${encodeURIComponent(asOf)}` : ""}`;
+        ? "/api/sym/indices/board/live"
+        : `/api/sym/indices/board${asOf ? `?as_of_date=${encodeURIComponent(asOf)}` : ""}`;
     fetch(url, { cache: "no-store", signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`board -> ${r.status}`))))
       .then((d) => {

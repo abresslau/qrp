@@ -147,7 +147,7 @@ def recompute_index_returns(
             continue
         rows = index_return_rows(sym_id, levels, as_of_dates, sessions)
         _upsert(conn, rows)
-        # current_calendar_version is figi/MIC-scoped and indexes use their own level
+        # current_calendar_version is figi/MIC-scoped and indices use their own level
         # dates as the session set, so the extreme hash is keyed on None (no exchange
         # calendar) — the (sym_id, as_of_date, levels) inputs still re-dirty on a revision.
         extreme_rows = compute_extreme_rows(levels, as_of_dates, None)

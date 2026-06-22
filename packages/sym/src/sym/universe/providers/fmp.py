@@ -34,7 +34,7 @@ from sym.universe.providers.index_source import (
 from sym.universe.registry import EXACT, JOIN, LEAVE, POLL_BOUNDED, MembershipChange
 
 # FMP index key -> its constituent-endpoint slug. Only these three are on the
-# free tier; S&P 400/600 and European indexes use Wikipedia/ETF archetypes.
+# free tier; S&P 400/600 and European indices use Wikipedia/ETF archetypes.
 _FMP_SLUG = {
     "sp500": "sp500",
     "nasdaq100": "nasdaq",

@@ -4,7 +4,7 @@ An equity-index *universe* holds the point-in-time **constituents**
 (`universe_membership`); the matching *benchmark instrument* holds the published
 **index level/return**. `universe_benchmark` links them, so a study can pull both
 as-of any date. A universe can link to several benchmark instruments (price-return
-and total-return are distinct indexes); one is the primary.
+and total-return are distinct indices); one is the primary.
 """
 
 from __future__ import annotations

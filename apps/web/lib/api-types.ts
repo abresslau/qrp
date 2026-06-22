@@ -294,6 +294,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sym/indices/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index Reconcile
+         * @description Live index-close fidelity: stored latest level vs the source's official close, per index.
+         *     Read-only; makes outbound vendor quote calls, so it can take a few seconds. The same check as
+         *     `sym index-reconcile` / the nightly EOD drift monitor.
+         */
+        get: operations["index_reconcile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sym/fx/matrix": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Fx Matrix
+         * @description FX cross-rate matrix: a square grid of major currencies, cell(base, quote) = quote per 1 base
+         *     (derived from the USD-base fx_rate star, diagonal 1.0). EOD; per-currency as-of staleness.
+         */
+        get: operations["fx_matrix"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sym/indices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Indices
+         * @description Benchmark index instruments that carry level data (one per index×variant).
+         */
+        get: operations["indices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sym/indices/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index Board
+         * @description World Equity Indices board (WEI): one row per index — last/prior session (1D change), YTD,
+         *     region, sparkline. EOD; MSCI aggregates are the Net variant only. ``as_of_date`` backdates the
+         *     whole board to that historical close (omitted ⇒ the latest session).
+         */
+        get: operations["index_board"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sym/indices/board/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index Board Live
+         * @description LIVE World Equity Indices board — the EOD board re-marked to intraday quotes (Story
+         *     wei-live-board): live last + 1D (vs the latest EOD close) + windows re-based to the live mark,
+         *     per-row freshness, a board rollup. External fan-out at serve time; degrades to a 503 only if the
+         *     quote provider is wholly unreachable (a per-index miss is an `unavailable` row). Never persisted.
+         */
+        get: operations["index_board_live"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sym/indices/{sym_id}/levels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Index Levels
+         * @description The level time-series for one index instrument. 404 when it has no levels.
+         */
+        get: operations["index_levels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/portfolios": {
         parameters: {
             query?: never;
@@ -1213,6 +1341,48 @@ export interface components {
             /** As Of Date */
             as_of_date: string | null;
         };
+        /** FxCell */
+        FxCell: {
+            /** Rate */
+            rate: number | null;
+            /** Chg */
+            chg: number | null;
+            /** Stale */
+            stale: boolean;
+            /** Pair */
+            pair: string;
+        };
+        /** FxCurrencyMeta */
+        FxCurrencyMeta: {
+            /** Currency */
+            currency: string;
+            /** Status */
+            status: string;
+            /** Observed Date */
+            observed_date: string | null;
+            /** Days Stale */
+            days_stale: number;
+            /** Quote Rank */
+            quote_rank: number;
+        };
+        /** FxMatrix */
+        FxMatrix: {
+            /** As Of Date */
+            as_of_date: string;
+            /** Currencies */
+            currencies: string[];
+            /** Meta */
+            meta: components["schemas"]["FxCurrencyMeta"][];
+            /** Rows */
+            rows: components["schemas"]["FxMatrixRow"][];
+        };
+        /** FxMatrixRow */
+        FxMatrixRow: {
+            /** Base */
+            base: string;
+            /** Cells */
+            cells: components["schemas"]["FxCell"][];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1266,6 +1436,200 @@ export interface components {
             price: number | null;
             /** Ret */
             ret: number | null;
+        };
+        /**
+         * IndexBoardLive
+         * @description The WEI board recomputed from LIVE intraday quotes (Story wei-live-board). Same rows as the
+         *     EOD board plus per-row freshness; `as_of` = most-recent priced quote (ISO-8601 UTC), `freshness`
+         *     = the worst priced row, `priced`/`total` = coverage. Best-effort, NOT persisted.
+         */
+        IndexBoardLive: {
+            /** As Of */
+            as_of: string | null;
+            /** Freshness */
+            freshness: string;
+            /** Priced */
+            priced: number;
+            /** Total */
+            total: number;
+            /** Rows */
+            rows: components["schemas"]["IndexBoardLiveRow"][];
+        };
+        /**
+         * IndexBoardLiveRow
+         * @description A WEI board row whose last/1D/windows are LIVE (Story wei-live-board), plus freshness.
+         */
+        IndexBoardLiveRow: {
+            /** Sym Id */
+            sym_id: number;
+            /** Name */
+            name: string | null;
+            /** Region */
+            region: string;
+            /** Country */
+            country: string;
+            /** Currency */
+            currency: string | null;
+            /** Last */
+            last: number | null;
+            /** Last Date */
+            last_date: string | null;
+            /** Prev */
+            prev: number | null;
+            /** Chg */
+            chg: number | null;
+            /** Chg Pct */
+            chg_pct: number | null;
+            /** D5 */
+            d5: number | null;
+            /** Mtd */
+            mtd: number | null;
+            /** M1 */
+            m1: number | null;
+            /** M3 */
+            m3: number | null;
+            /** M6 */
+            m6: number | null;
+            /** Ytd */
+            ytd: number | null;
+            /** 1Y */
+            "1y": number | null;
+            /** 2Y */
+            "2y": number | null;
+            /** 3Y */
+            "3y": number | null;
+            /** 5Y */
+            "5y": number | null;
+            /** Lo 52W */
+            lo_52w: number | null;
+            /** Hi 52W */
+            hi_52w: number | null;
+            /** Spark */
+            spark: number[];
+            /** Freshness */
+            freshness: string;
+            /** Quote Time */
+            quote_time: string | null;
+        };
+        /** IndexBoardRow */
+        IndexBoardRow: {
+            /** Sym Id */
+            sym_id: number;
+            /** Name */
+            name: string | null;
+            /** Region */
+            region: string;
+            /** Country */
+            country: string;
+            /** Currency */
+            currency: string | null;
+            /** Last */
+            last: number | null;
+            /** Last Date */
+            last_date: string | null;
+            /** Prev */
+            prev: number | null;
+            /** Chg */
+            chg: number | null;
+            /** Chg Pct */
+            chg_pct: number | null;
+            /** D5 */
+            d5: number | null;
+            /** Mtd */
+            mtd: number | null;
+            /** M1 */
+            m1: number | null;
+            /** M3 */
+            m3: number | null;
+            /** M6 */
+            m6: number | null;
+            /** Ytd */
+            ytd: number | null;
+            /** 1Y */
+            "1y": number | null;
+            /** 2Y */
+            "2y": number | null;
+            /** 3Y */
+            "3y": number | null;
+            /** 5Y */
+            "5y": number | null;
+            /** Lo 52W */
+            lo_52w: number | null;
+            /** Hi 52W */
+            hi_52w: number | null;
+            /** Spark */
+            spark: number[];
+        };
+        /** IndexLevelPoint */
+        IndexLevelPoint: {
+            /** Date */
+            date: string;
+            /** Level */
+            level: number;
+        };
+        /** IndexLevelSeries */
+        IndexLevelSeries: {
+            /** Sym Id */
+            sym_id: number;
+            /** Name */
+            name: string | null;
+            /** Currency */
+            currency: string | null;
+            /** Msci Code */
+            msci_code: string | null;
+            /** Variant */
+            variant: string | null;
+            /** N Levels */
+            n_levels: number;
+            /** Since Start Return */
+            since_start_return: number | null;
+            /** Trailing */
+            trailing: {
+                [key: string]: number | null;
+            };
+            /** Series */
+            series: components["schemas"]["IndexLevelPoint"][];
+        };
+        /** IndexReconcile */
+        IndexReconcile: {
+            /** Status */
+            status: string;
+            /** Checked */
+            checked: number;
+            /** Warnings */
+            warnings: number;
+            /** Failures */
+            failures: number;
+            /** Samples */
+            samples: string[];
+            /** Detail */
+            detail: string | null;
+        };
+        /** IndexSummary */
+        IndexSummary: {
+            /** Sym Id */
+            sym_id: number;
+            /** Name */
+            name: string | null;
+            /** Currency */
+            currency: string | null;
+            /** Msci Code */
+            msci_code: string | null;
+            /** Variant */
+            variant: string | null;
+            /**
+             * Category
+             * @default equity
+             */
+            category: string;
+            /** N Levels */
+            n_levels: number;
+            /** First Date */
+            first_date: string | null;
+            /** Last Date */
+            last_date: string | null;
+            /** Last Level */
+            last_level: number | null;
         };
         /** Job */
         Job: {
@@ -2843,6 +3207,168 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationRun"][];
+                };
+            };
+        };
+    };
+    index_reconcile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexReconcile"];
+                };
+            };
+        };
+    };
+    fx_matrix: {
+        parameters: {
+            query?: {
+                /** @description Backdate the matrix (latest FX date if omitted). */
+                as_of_date?: string | null;
+                /** @description CSV currency set; default = G10 majors + CNY/BRL. */
+                currencies?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FxMatrix"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    indices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexSummary"][];
+                };
+            };
+        };
+    };
+    index_board: {
+        parameters: {
+            query?: {
+                /** @description Rewind the board to this close (last session ≤ date, per index). Omit ⇒ latest. */
+                as_of_date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexBoardRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    index_board_live: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexBoardLive"];
+                };
+            };
+        };
+    };
+    index_levels: {
+        parameters: {
+            query?: {
+                /** @description ISO start date (inclusive) */
+                start?: string | null;
+                /** @description ISO end date (inclusive) */
+                end?: string | null;
+            };
+            header?: never;
+            path: {
+                sym_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexLevelSeries"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

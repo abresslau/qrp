@@ -474,7 +474,7 @@ def validation(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     return gw.validation()
 
 
-@router.get("/indexes/reconcile", response_model=IndexReconcile)
+@router.get("/indices/reconcile", response_model=IndexReconcile)
 def index_reconcile(gw: DbSymGateway = Depends(_gateway)) -> dict:
     """Live index-close fidelity: stored latest level vs the source's official close, per index.
     Read-only; makes outbound vendor quote calls, so it can take a few seconds. The same check as
@@ -494,7 +494,7 @@ def fx_matrix(
     return gw.fx_matrix(ccys, as_of_date)
 
 
-# ---- benchmark indexes (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----
+# ---- benchmark indices (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----
 class IndexSummary(BaseModel):
     sym_id: int
     name: str | None
@@ -571,13 +571,13 @@ class IndexBoardLive(BaseModel):
     rows: list[IndexBoardLiveRow]
 
 
-@router.get("/indexes", response_model=list[IndexSummary])
-def indexes(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
+@router.get("/indices", response_model=list[IndexSummary])
+def indices(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     """Benchmark index instruments that carry level data (one per index×variant)."""
-    return gw.indexes()
+    return gw.indices()
 
 
-@router.get("/indexes/board", response_model=list[IndexBoardRow])
+@router.get("/indices/board", response_model=list[IndexBoardRow])
 def index_board(
     as_of_date: date | None = Query(
         None, description="Rewind the board to this close (last session ≤ date, per index). Omit ⇒ latest."
@@ -590,7 +590,7 @@ def index_board(
     return gw.index_board(as_of_date)
 
 
-@router.get("/indexes/board/live", response_model=IndexBoardLive)
+@router.get("/indices/board/live", response_model=IndexBoardLive)
 def index_board_live(gw: DbSymGateway = Depends(_gateway)) -> dict:
     """LIVE World Equity Indices board — the EOD board re-marked to intraday quotes (Story
     wei-live-board): live last + 1D (vs the latest EOD close) + windows re-based to the live mark,
@@ -602,7 +602,7 @@ def index_board_live(gw: DbSymGateway = Depends(_gateway)) -> dict:
         raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
-@router.get("/indexes/{sym_id}/levels", response_model=IndexLevelSeries)
+@router.get("/indices/{sym_id}/levels", response_model=IndexLevelSeries)
 def index_levels(
     sym_id: int,
     start: str | None = Query(None, description="ISO start date (inclusive)"),
@@ -616,4 +616,4 @@ def index_levels(
     return out
 
 
-# (attention + validation endpoints added — Q2.4/2.5; indexes added — MSCI EOD pull story)
+# (attention + validation endpoints added — Q2.4/2.5; indices added — MSCI EOD pull story)

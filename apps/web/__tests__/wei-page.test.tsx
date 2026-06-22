@@ -90,14 +90,14 @@ describe("WEI (world equity indices) page", () => {
     const { container } = render(<WeiPage />);
     await screen.findByText("Americas");
     // initial load = latest (no as_of_date param)
-    expect(calls[0]).toBe("/api/sym/indexes/board");
+    expect(calls[0]).toBe("/api/sym/indices/board");
     // picking a past date backdates the board (server resolves last session ≤ date)
     const input = container.querySelector('input[type="date"]') as HTMLInputElement;
     fireEvent.change(input, { target: { value: "2026-03-31" } });
     await waitFor(() => expect(calls.some((u) => u.includes("as_of_date=2026-03-31"))).toBe(true));
     // a Latest reset clears the param
     fireEvent.click(screen.getByText("Latest"));
-    await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/indexes/board"));
+    await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/indices/board"));
   });
 
   it("defaults the date picker to the latest session (not empty, not today)", async () => {
@@ -151,7 +151,7 @@ describe("WEI (world equity indices) page", () => {
     );
     render(<WeiPage />);
     await screen.findByText("Americas");
-    expect(calls[0]).toBe("/api/sym/indexes/board"); // EOD first
+    expect(calls[0]).toBe("/api/sym/indices/board"); // EOD first
 
     fireEvent.click(screen.getByRole("button", { name: "LIVE" }));
     await waitFor(() => expect(calls.some((u) => u.includes("/board/live"))).toBe(true));
@@ -165,7 +165,7 @@ describe("WEI (world equity indices) page", () => {
 
     // switching back to EOD restores the EOD board (no /board/live) + the as-of control
     fireEvent.click(screen.getByRole("button", { name: "EOD" }));
-    await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/indexes/board"));
+    await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/indices/board"));
     expect(document.querySelector('input[type="date"]')).toBeTruthy();
   });
 

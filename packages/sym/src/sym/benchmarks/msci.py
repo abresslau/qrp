@@ -1,6 +1,6 @@
 """MSCI index-level file importer (Benchmark epic fast-follow).
 
-MSCI indexes (e.g. MSCI World Net Total Return) are not on Yahoo and have no FIGI,
+MSCI indices (e.g. MSCI World Net Total Return) are not on Yahoo and have no FIGI,
 so their level series are loaded from a **downloaded MSCI export** (the EOD
 index-data search yields CSV/Excel). This parses that file into ``(date, level)``
 and upserts it into ``index_levels`` under the index's existing ``sym_id`` —

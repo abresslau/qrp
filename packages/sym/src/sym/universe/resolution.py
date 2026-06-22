@@ -128,7 +128,7 @@ def resolve_identifiers(
 
 
 def make_openfigi_resolve_fn(conn: psycopg.Connection, client: object) -> ResolveFn:
-    """A resolver that maps member tokens via OpenFIGI (for new names, e.g. U2 indexes).
+    """A resolver that maps member tokens via OpenFIGI (for new names, e.g. U2 indices).
 
     OpenFIGI misses fall through to a local-master rescue pass: vendor change feeds
     sometimes carry the wrong exchange on a leave row (FMP stamps the ADDED symbol's

@@ -2,7 +2,7 @@
 
 QRP deliberately runs two identity keys (Option A, 2026-06-09): `composite_figi` is the
 natural key of the equity warehouse; `sym_id` is the vendor-neutral surrogate spine for
-cross-asset identity (indexes have no FIGI, so they can't key on one). The two are bridged
+cross-asset identity (indices have no FIGI, so they can't key on one). The two are bridged
 1:1 — every `securities` row maps to an `instrument(kind='equity')` via a `composite_figi`
 xref (``backfill_equity_instruments``), and composite_figi is "just one external id among
 many" on that spine.

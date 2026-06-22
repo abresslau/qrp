@@ -8,7 +8,7 @@ behind a fakeable Protocol; MSCI-only benchmarks get an instrument + ``msci`` xr
 but their levels are loaded from a downloaded file (deferred).
 
 Variant notes (deliberate, not all "PR"): Yahoo's ``^SP500TR`` and ``^GDAXI`` are
-*total-return* indexes (GTR); ``^BVSP`` (IBOVESPA) is total-return in BRL; MSCI
+*total-return* indices (GTR); ``^BVSP`` (IBOVESPA) is total-return in BRL; MSCI
 World is typically tracked Net (NTR). Mislabelling a variant silently corrupts
 alpha, so each is set explicitly.
 """
@@ -44,7 +44,7 @@ class Benchmark:
     region: str | None = None
     # Asset class — drives the equity-only WEI board filter. "equity" (default) for the headline
     # equity indices; "volatility" for the VIX (a volatility LEVEL index whose up/down colour
-    # semantics invert, so it is shown on the Indexes page but kept OFF the equity board).
+    # semantics invert, so it is shown on the Indices page but kept OFF the equity board).
     category: str = "equity"
 
 
@@ -90,7 +90,7 @@ BENCHMARKS: tuple[Benchmark, ...] = (
     Benchmark("CSI 300", "CNY", yahoo_symbol="000300.SS", region="Asia-Pacific"),
     Benchmark("STOXX Europe 600", "EUR", yahoo_symbol="^STOXX", region="EMEA"),
     # CBOE Volatility Index — a volatility LEVEL index (not an investable price-return index). Shown
-    # on the Indexes page but kept OFF the equity WEI board (category=volatility). currency=USD is
+    # on the Indices page but kept OFF the equity WEI board (category=volatility). currency=USD is
     # a convention: the VIX is unitless index points, not dollars — but the instrument table needs a
     # currency and USD (its home market) is the harmless, consistent choice.
     Benchmark(
@@ -128,7 +128,7 @@ def region_for(name: str | None, currency: str | None = None) -> str:
     return _REGION_BY_NAME.get(name or "") or by_ccy or "Global"
 
 
-# Country needs a name map for the euro-zone single-country indexes (the EUR currency can't tell
+# Country needs a name map for the euro-zone single-country indices (the EUR currency can't tell
 # Germany from France); everything else resolves by currency. MSCI aggregates are global/regional.
 _COUNTRY_BY_NAME = {
     "EURO STOXX 50": "Eurozone",
@@ -158,7 +158,7 @@ def country_for(name: str | None, currency: str | None = None) -> str:
     return _COUNTRY_BY_NAME.get(name or "") or by_ccy or "—"
 
 
-# Asset class by name (data-driven, reused by the API to keep non-equity indexes off the equity
+# Asset class by name (data-driven, reused by the API to keep non-equity indices off the equity
 # WEI board). Defaults to "equity" for any name not in the registry — the board stays equity-only
 # without a hardcoded React name-check, mirroring `region_for`/`country_for`.
 _CATEGORY_BY_NAME = {b.name: b.category for b in BENCHMARKS}

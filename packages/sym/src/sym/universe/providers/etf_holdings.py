@@ -1,7 +1,7 @@
 """ETF-holdings index source — Story U2.2.
 
 The preferred **Europe** archetype (and the least-brittle source for big/gated US
-indexes): an index ETF's issuer publishes a daily holdings file, and the equity
+indices): an index ETF's issuer publishes a daily holdings file, and the equity
 constituents of that file proxy the index membership. It is self-archivable and
 needs no structured constituents API (which Europe lacks for free).
 

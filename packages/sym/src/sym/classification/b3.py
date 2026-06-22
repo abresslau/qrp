@@ -41,7 +41,7 @@ B3_PORTFOLIO_URL = (
     "https://sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioDay/{token}"
 )
 _SECTOR_VIEW = "2"  # GetPortfolioDay segment=2 = the "setor de atuação" view
-# IBOV + IBXX cover the BVMF universe (it was seeded from these two indexes).
+# IBOV + IBXX cover the BVMF universe (it was seeded from these two indices).
 DEFAULT_INDEX_CODES = ("IBOV", "IBXX")
 SOURCE_NAME = "b3"
 
@@ -203,7 +203,7 @@ class B3GicsSource:
     """GICS sector classifications from B3's published sector taxonomy.
 
     Implements the :class:`sym.classification.gics.GicsSource` protocol. Matches the
-    given securities by ticker against the union of the configured indexes' sector
+    given securities by ticker against the union of the configured indices' sector
     views; every produced classification is SECTOR-ONLY with ``source='b3'``.
 
     Matching is BVMF-scoped: an identity that carries a ``mic`` is matched only when

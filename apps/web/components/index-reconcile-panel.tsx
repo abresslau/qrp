@@ -33,7 +33,7 @@ export function IndexReconcilePanel() {
   const [runId, setRunId] = useState(0); // newest-wins guard
 
   const fetchData = useCallback((id: number) => {
-    fetch("/api/sym/indexes/reconcile", { cache: "no-store" })
+    fetch("/api/sym/indices/reconcile", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`reconcile -> ${r.status}`))))
       .then((d: Reconcile) => {
         setRunId((cur) => {

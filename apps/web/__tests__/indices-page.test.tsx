@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import IndexesPage from "@/app/sym/indexes/page";
+import IndicesPage from "@/app/sym/indices/page";
 
 const INDEXES = [
   {
@@ -37,9 +37,9 @@ function stub(opts: { empty?: boolean } = {}) {
 beforeEach(() => stub());
 afterEach(() => vi.unstubAllGlobals());
 
-describe("Indexes page", () => {
-  it("lists indexes and renders the selected series chart with stats", async () => {
-    render(<IndexesPage />);
+describe("Indices page", () => {
+  it("lists indices and renders the selected series chart with stats", async () => {
+    render(<IndicesPage />);
     // the index appears in the list (button) AND the detail header
     expect(await screen.findAllByText(/MSCI World Net \(USD\)/)).not.toHaveLength(0);
     expect(screen.getAllByText(/Net Return/).length).toBeGreaterThan(0); // variant label from NETR
@@ -83,7 +83,7 @@ describe("Indexes page", () => {
           : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(INDEXES) }),
       ),
     );
-    render(<IndexesPage />);
+    render(<IndicesPage />);
     expect(await screen.findByText("Monthly returns (%)")).toBeInTheDocument();
     expect(screen.getByText("Year")).toBeInTheDocument();
     expect(screen.getByText("Jan")).toBeInTheDocument();
@@ -106,7 +106,7 @@ describe("Indexes page", () => {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(MULTI) });
       }),
     );
-    render(<IndexesPage />);
+    render(<IndicesPage />);
     // AEX is in the list, but the selected detail panel is the marquee MSCI World Net
     expect(await screen.findByText("AEX")).toBeInTheDocument();
     const detail = await screen.findByRole("img", { name: /Index level time series/i });
@@ -141,7 +141,7 @@ describe("Indexes page", () => {
           : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(VIX) }),
       ),
     );
-    render(<IndexesPage />);
+    render(<IndicesPage />);
     // the level-not-return note is shown (renders from the list selection)
     expect(await screen.findByText(/change in the level/i)).toBeInTheDocument();
     // wait for the /levels data to resolve (the chart is data-dependent) before asserting figures
@@ -157,7 +157,7 @@ describe("Indexes page", () => {
 
   it("shows an honest empty state with the msci-pull hint when no index data", async () => {
     stub({ empty: true });
-    render(<IndexesPage />);
+    render(<IndicesPage />);
     expect(await screen.findByText(/No index level data yet/)).toBeInTheDocument();
     expect(screen.getByText(/sym msci-pull/)).toBeInTheDocument();
   });

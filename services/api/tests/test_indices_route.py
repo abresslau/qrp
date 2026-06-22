@@ -21,14 +21,14 @@ def _route_paths() -> set[str]:
 
 def test_index_routes_exist():
     paths = _route_paths()
-    assert "/api/sym/indexes" in paths
-    assert "/api/sym/indexes/board" in paths
-    assert "/api/sym/indexes/reconcile" in paths
-    assert any(p.startswith("/api/sym/indexes/{sym_id}/levels") for p in paths)
+    assert "/api/sym/indices" in paths
+    assert "/api/sym/indices/board" in paths
+    assert "/api/sym/indices/reconcile" in paths
+    assert any(p.startswith("/api/sym/indices/{sym_id}/levels") for p in paths)
 
 
 def test_index_reconcile_route_returns_check_shape():
-    """`/indexes/reconcile` returns the live fidelity check's tri-state shape. DB/network-free via a
+    """`/indices/reconcile` returns the live fidelity check's tri-state shape. DB/network-free via a
     dependency override (the gateway method is exercised separately by the sym validate tests)."""
     from qrp_api.modules.sym.router import _gateway
 
@@ -43,7 +43,7 @@ def test_index_reconcile_route_returns_check_shape():
     app = create_app()
     app.dependency_overrides[_gateway] = lambda: _Gw()
     client = TestClient(app)
-    resp = client.get("/api/sym/indexes/reconcile")
+    resp = client.get("/api/sym/indices/reconcile")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "warn" and body["checked"] == 17 and body["warnings"] == 1
@@ -67,14 +67,14 @@ def test_index_board_route_accepts_as_of_date_and_rejects_garbage():
     app.dependency_overrides[_gateway] = lambda: _Gw()
     client = TestClient(app)
     # valid date → 200, forwarded to the gateway as a real date
-    ok = client.get("/api/sym/indexes/board", params={"as_of_date": "2026-03-31"})
+    ok = client.get("/api/sym/indices/board", params={"as_of_date": "2026-03-31"})
     assert ok.status_code == 200 and ok.json() == []
     assert seen["as_of_date"] == date(2026, 3, 31)
     # omitted → 200, gateway sees None (latest)
-    assert client.get("/api/sym/indexes/board").status_code == 200
+    assert client.get("/api/sym/indices/board").status_code == 200
     assert seen["as_of_date"] is None
     # garbage → 422 (validation), not a 500
-    assert client.get("/api/sym/indexes/board", params={"as_of_date": "not-a-date"}).status_code == 422
+    assert client.get("/api/sym/indices/board", params={"as_of_date": "not-a-date"}).status_code == 422
     app.dependency_overrides.clear()
 
 
@@ -248,7 +248,7 @@ def test_index_board_live_503_when_provider_unreachable():
     q2.fetch_quotes_batch = _boom
     app.dependency_overrides[sym_router._gateway] = _Gw
     try:
-        r = TestClient(app).get("/api/sym/indexes/board/live")
+        r = TestClient(app).get("/api/sym/indices/board/live")
         assert r.status_code == 503
     finally:
         q2.fetch_quotes_batch = orig
@@ -271,7 +271,7 @@ class _FakeConn:
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "JOIN index_levels l" in s:  # gateway.indexes() list query
+        if "JOIN index_levels l" in s:  # gateway.indices() list query
             return _Result(
                 [
                     (2210, "MSCI World Net (USD)", "USD", "990100:NETR", 6646,
@@ -291,9 +291,9 @@ class _FakeConn:
         return _Result([])
 
 
-def test_indexes_lists_with_variant_split():
+def test_indices_lists_with_variant_split():
     gw = DbSymGateway(_FakeConn())
-    out = gw.indexes()
+    out = gw.indices()
     assert out == [
         {
             "sym_id": 2210, "name": "MSCI World Net (USD)", "currency": "USD",
@@ -304,7 +304,7 @@ def test_indexes_lists_with_variant_split():
 
 
 class _VixListConn:
-    """indexes() list query returning the VIX (a volatility index) alongside an equity index."""
+    """indices() list query returning the VIX (a volatility index) alongside an equity index."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
@@ -317,11 +317,11 @@ class _VixListConn:
         return _Result([])
 
 
-def test_indexes_list_includes_vix_tagged_volatility():
-    out = DbSymGateway(_VixListConn()).indexes()
+def test_indices_list_includes_vix_tagged_volatility():
+    out = DbSymGateway(_VixListConn()).indices()
     by = {r["sym_id"]: r for r in out}
     assert by[1]["category"] == "equity"
-    assert by[99]["category"] == "volatility"  # the Indexes-page list SHOWS the VIX
+    assert by[99]["category"] == "volatility"  # the Indices page list SHOWS the VIX
 
 
 class _VixBoardConn:
@@ -342,7 +342,7 @@ class _VixBoardConn:
         return _Result([])
 
 
-def test_index_board_excludes_volatility_indexes():
+def test_index_board_excludes_volatility_indices():
     out = DbSymGateway(_VixBoardConn()).index_board()
     by = {r["sym_id"]: r for r in out}
     assert set(by) == {1}  # the VIX (volatility) is kept OFF the equity board; only S&P 500 shows

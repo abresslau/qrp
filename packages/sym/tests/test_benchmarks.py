@@ -35,7 +35,7 @@ def test_registry_yahoo_symbols_unique():
     assert len(syms) == len(set(syms))
 
 
-def test_price_and_total_return_are_separate_named_indexes():
+def test_price_and_total_return_are_separate_named_indices():
     names = {b.name for b in BENCHMARKS}
     assert "S&P 500" in names                    # price series
     assert "S&P 500 (Total Return)" in names      # total-return series — a distinct index

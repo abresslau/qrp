@@ -232,7 +232,7 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export default function IndexesPage() {
+export default function IndicesPage() {
   const [list, setList] = useState<IndexSummary[] | null>(null);
   const [listErr, setListErr] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -245,11 +245,11 @@ export default function IndexesPage() {
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/sym/indexes", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`indexes -> ${r.status}`))))
+    fetch("/api/sym/indices", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`indices -> ${r.status}`))))
       .then((rows: IndexSummary[]) => {
         if (!alive) return;
-        // MSCI indexes first (the benchmark set this page is built for), then alphabetical.
+        // MSCI indices first (the benchmark set this page is built for), then alphabetical.
         const sorted = [...rows].sort((a, b) => {
           const am = a.msci_code ? 0 : 1;
           const bm = b.msci_code ? 0 : 1;
@@ -268,7 +268,7 @@ export default function IndexesPage() {
 
   useEffect(() => {
     if (selected == null) return;
-    abortRef.current?.abort(); // newest-wins when switching indexes
+    abortRef.current?.abort(); // newest-wins when switching indices
     const ac = new AbortController();
     abortRef.current = ac;
     void (async () => {
@@ -276,7 +276,7 @@ export default function IndexesPage() {
       setDataErr(null);
       setData(null); // drop the previous index's series so its stats don't show under the new header
       try {
-        const r = await fetch(`/api/sym/indexes/${selected}/levels`, {
+        const r = await fetch(`/api/sym/indices/${selected}/levels`, {
           cache: "no-store",
           signal: ac.signal,
         });
@@ -295,7 +295,7 @@ export default function IndexesPage() {
   }, [selected]);
 
   const sel = useMemo(() => list?.find((i) => i.sym_id === selected) ?? null, [list, selected]);
-  // VIX et al. are volatility LEVEL indexes — their % figures are level changes, not investment
+  // VIX et al. are volatility LEVEL indices — their % figures are level changes, not investment
   // returns, and an annualised CAGR is meaningless for a mean-reverting series. Drive the framing
   // off the (data-driven) category, never a name check.
   const isVol = sel?.category === "volatility";
@@ -319,19 +319,19 @@ export default function IndexesPage() {
   return (
     <div className="w-full">
       <header className="mb-4">
-        <h1 className="text-xl font-semibold text-fg">Benchmark indexes</h1>
+        <h1 className="text-xl font-semibold text-fg">Benchmark indices</h1>
         <p className="mt-1 text-sm text-muted">
-          Level time-series for benchmark indexes in the warehouse. MSCI series are pulled directly
+          Level time-series for benchmark indices in the warehouse. MSCI series are pulled directly
           from MSCI&apos;s free published EOD data (Net / Price / Gross are separate instruments).
         </p>
       </header>
 
       {listErr ? (
         <p className="rounded-lg border border-border bg-surface p-4 text-sm text-rose-500">
-          Could not load indexes: {listErr}
+          Could not load indices: {listErr}
         </p>
       ) : list == null ? (
-        <p className="text-sm text-muted">Loading indexes…</p>
+        <p className="text-sm text-muted">Loading indices…</p>
       ) : list.length === 0 ? (
         <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
           No index level data yet. Pull one with{" "}
@@ -340,14 +340,14 @@ export default function IndexesPage() {
       ) : (
         <div className="grid gap-4 lg:grid-cols-[260px_1fr]">
           {/* index list */}
-          <nav className="flex flex-col gap-1" aria-label="indexes">
+          <nav className="flex flex-col gap-1" aria-label="indices">
             {list.length > 8 ? (
               <input
                 type="search"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder="Filter indexes…"
-                aria-label="filter indexes"
+                placeholder="Filter indices…"
+                aria-label="filter indices"
                 className="mb-1 rounded-lg border border-border bg-bg px-2.5 py-1.5 text-sm text-fg placeholder:text-muted"
               />
             ) : null}
