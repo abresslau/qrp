@@ -1,6 +1,6 @@
 # Story: Add regional/global indices to the WEI + Indexes surface
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-22 (Andre: "add new indices to wei page" — Hang Seng, CSI 300,
 STOXX Europe 600, FTSE All-World, MSCI Emerging Markets, FTSE Emerging). This is the "seed more regional
@@ -109,6 +109,21 @@ Critical notes:
   Hang Seng + CSI 300 → Asia-Pacific, STOXX Europe 600 → EMEA, MSCI EM → Global, all with real 1D/YTD.
   Real-Chrome CDP dump-dom: all 3 render on both `/monitor/wei` and `/sym/indexes`. 841 sym tests green
   (api/web code untouched — surfaces are data-driven).
+
+## Review Findings (code-review of 56483a0, 2026-06-22 — Blind/Edge/Acceptance layers)
+
+Auditor: **all ACs met** (exactly the 3 intended indices added; no FTSE, no MSCI-EM duplicate; symbols/
+regions/currencies + the test as specified). Blind: no correctness findings. 2 low patches:
+
+- [x] [Review][Patch] **STOXX Europe 600 country mislabelled "Eurozone"** (Edge) — it fell to the EUR
+  currency fallback, but STOXX Europe 600 is pan-European (UK/CH/SE/DK too). Added `"STOXX Europe 600":
+  "Europe"` to `_COUNTRY_BY_NAME` + a `country_for` assertion in the test. Region (EMEA) was already correct.
+- [x] [Review][Patch] **`levels.py` was committed ruff-dirty** — 5 E501 (my verbose regional comment, 3
+  lines) + 2 pre-existing VIX/country comment lines >100. Reflowed all to ≤100; `ruff` now clean on the
+  file. (My Task 5 ran pytest but not `ruff` on `levels.py` — gap noted; the review's ruff run caught it.)
+- Dismissed (2): the `category=="equity"` assertion "relies on an unseen default" (the default IS
+  `"equity"` — verified, not a bug); the test's imports "not in the diff" (pre-existing module members; 15
+  tests pass).
 
 ## Dev Notes
 

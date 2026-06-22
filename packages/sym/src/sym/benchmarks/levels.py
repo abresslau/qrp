@@ -82,16 +82,15 @@ BENCHMARKS: tuple[Benchmark, ...] = (
     Benchmark("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI", region="EMEA"),
     Benchmark("Nikkei 225", "JPY", yahoo_symbol="^N225", region="Asia-Pacific"),
     Benchmark("IBOVESPA", "BRL", yahoo_symbol="^BVSP", region="Americas"),
-    # Regional expansion (story wei-add-regional-indices): Hong Kong, mainland China, pan-Europe. CSI
-    # 300 uses the Shanghai-quoted Yahoo symbol (000300.SS — probed: a usable series, vs 399300.SZ which
-    # returned a single point). The MSCI EM / ACWI globals (already seeded via msci-pull) cover the
-    # emerging / all-world aggregates, so FTSE Emerging / FTSE All-World are deliberately NOT added (no
-    # free FTSE Russell index source; an ETF proxy would violate derive-don't-store).
+    # Regional expansion (story wei-add-regional-indices): Hong Kong, mainland China, pan-Europe.
+    # CSI 300 uses the Shanghai Yahoo symbol 000300.SS (399300.SZ probed to a single point).
+    # FTSE Emerging / FTSE All-World are NOT added: no free FTSE Russell index source (an ETF
+    # proxy would violate derive-don't-store); MSCI EM / ACWI (already seeded) cover EM / all-world.
     Benchmark("Hang Seng Index", "HKD", yahoo_symbol="^HSI", region="Asia-Pacific"),
     Benchmark("CSI 300", "CNY", yahoo_symbol="000300.SS", region="Asia-Pacific"),
     Benchmark("STOXX Europe 600", "EUR", yahoo_symbol="^STOXX", region="EMEA"),
     # CBOE Volatility Index — a volatility LEVEL index (not an investable price-return index). Shown
-    # on the Indexes page but kept OFF the equity WEI board (category="volatility"). currency="USD" is
+    # on the Indexes page but kept OFF the equity WEI board (category=volatility). currency=USD is
     # a convention: the VIX is unitless index points, not dollars — but the instrument table needs a
     # currency and USD (its home market) is the harmless, consistent choice.
     Benchmark(
@@ -133,6 +132,7 @@ def region_for(name: str | None, currency: str | None = None) -> str:
 # Germany from France); everything else resolves by currency. MSCI aggregates are global/regional.
 _COUNTRY_BY_NAME = {
     "EURO STOXX 50": "Eurozone",
+    "STOXX Europe 600": "Europe",  # pan-European (UK/CH/SE/DK too), not the EUR-fallback Eurozone
     "DAX (Total Return)": "Germany",
     "CAC 40": "France",
     "IBEX 35": "Spain",
