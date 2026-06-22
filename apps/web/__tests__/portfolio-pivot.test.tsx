@@ -85,8 +85,8 @@ describe("PortfolioPivot", () => {
     const cells = Array.from(screen.getByText("AAPL").closest("tr")!.querySelectorAll("td")).map(
       (td) => td.textContent,
     );
-    expect(cells[8]).toBe("+1.23%"); // 1D return
-    expect(cells[9]).toBe("+5.00%"); // 1M return
+    expect(cells[8]).toBe("+10.00%"); // 1D Chg = the LIVE move (live_return 0.1), not window_returns["1D"]
+    expect(cells[9]).toBe("+5.00%"); // 1M return (EOD trailing window)
     expect(cells[10]).toBe("-2.00%"); // 3M return
     expect(cells[11]).toBe("—"); // 6M null
     expect(cells[12]).not.toBe("—"); // 52W Range bar present (F1 has extremes)
@@ -106,11 +106,31 @@ describe("PortfolioPivot", () => {
     fireEvent.click(screen.getByRole("button", { name: /Wt/ }));
     rows = order();
     expect(idx(rows, "INTC")).toBeLessThan(idx(rows, "AAPL"));
-    // sort by 1D Chg ascending: INTC (0) below AAPL (+1.23%) flips when ascending
+    // sort by 1D Chg (= live_return) ascending: INTC (−0.05) below AAPL (+0.10)
     fireEvent.click(screen.getByRole("button", { name: /1D Chg/ })); // desc first
     fireEvent.click(screen.getByRole("button", { name: /1D Chg/ })); // → asc
     rows = order();
-    expect(idx(rows, "INTC")).toBeLessThan(idx(rows, "AAPL")); // 0 < 0.0123
+    expect(idx(rows, "INTC")).toBeLessThan(idx(rows, "AAPL")); // −0.05 < 0.10
+  });
+
+  it("1D Chg shows the LIVE move (live_return), independent of window_returns['1D'] (Cause A)", () => {
+    // A book where the live move is populated but the EOD window_returns['1D'] is null (exactly the
+    // /portfolios/3 case: fact_returns null on the latest date). 1D Chg must show the live value, not "—".
+    const comp: Composition = {
+      ...COMP,
+      holdings: [
+        holding({
+          figi: "L1", ticker: "NVDA", sector: "Tech", weight: 1.0, live_return: 0.0337,
+          window_returns: { "1D": null, "1M": 0.08, "3M": null, "6M": null },
+        }),
+      ],
+      sectors: [{ sector: "Tech", weight: 1.0, n: 1, live_return: 0.0337 }],
+      n_holdings: 1, n_priced: 1, total_weight: 1.0, net_weight: 1.0,
+    };
+    render(<PortfolioPivot data={comp} />);
+    const cells = Array.from(screen.getByText("NVDA").closest("tr")!.querySelectorAll("td")).map((td) => td.textContent);
+    expect(cells[8]).toBe("+3.37%"); // 1D Chg = live_return, even though window_returns['1D'] is null
+    expect(cells[9]).toBe("+8.00%"); // 1M still from the EOD window
   });
 
   it("adds a secondary sort with Ctrl/Cmd-click and breaks ties by it (within a sector)", () => {

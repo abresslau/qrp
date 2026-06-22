@@ -432,8 +432,12 @@ class DbAnalyticsGateway:
                    fr.composite_figi, w.code, fr.pr
               FROM fact_returns fr JOIN return_window w USING (window_id)
              WHERE fr.composite_figi = ANY(%s) AND w.code = ANY(%s)
+               AND fr.pr IS NOT NULL
              ORDER BY fr.composite_figi, fr.window_id, fr.as_of_date DESC
             """,
+            # ``fr.pr IS NOT NULL`` so DISTINCT ON picks the latest as_of WITH a value: a null pr on the
+            # most-recent date (e.g. a partial/incomplete returns materialization) must NOT blank the
+            # column — fall back to the last date that has a real return.
             (figis, WINDOW_RETURNS),
         ).fetchall():
             if pr is not None:

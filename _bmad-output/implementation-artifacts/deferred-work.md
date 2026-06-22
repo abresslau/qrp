@@ -410,3 +410,7 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of indexes-msci-eod-pull-and-page (2026-06-21)
 
 - `sym msci-pull` recomputes only a trailing 365-day `fact_index_returns` window (cli.py `_cmd_msci_pull`), identical to the B4 `sym msci-import` predecessor. A fresh ~26-year MSCI backfill therefore leaves `fact_index_returns` uncomputed for everything older than 1 year (the Indexes page is unaffected — it computes trailing returns from raw `index_levels` via the API). Run a full-history index-returns recompute (EOD pipeline / `benchmarks` step) if deep-history index alpha is needed against the newly-seeded MSCI instruments.
+
+## Deferred from: code review of portfolios-live-returns-fix (2026-06-22)
+- **Sort test doesn't distinguish live_return vs window_returns["1D"]** (apps/web/__tests__/portfolio-pivot.test.tsx) — the 1D-sort assertion holds under either field. Correct-by-construction (cell + sort share the `windowReturn` accessor; the cell is proven), so cosmetic test-strengthening only; a distinguishing fixture is fiddly.
+- **Trailing windows show most-recent-non-null without a per-cell staleness mark** (packages/analytics/src/analytics/gateway.py composition) — Cause B's skip-null intentionally surfaces the last reviewed return when the latest date is gated/null (documented in the SQL comment). A per-cell "window as-of" / stale indicator is a future enhancement, not a bug.

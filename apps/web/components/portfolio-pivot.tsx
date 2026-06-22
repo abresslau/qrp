@@ -62,8 +62,9 @@ function RangeBar({
   );
 }
 
-// Trailing return windows shown after Price — re-based to the live price by the API. `key` is the
-// window_returns code; `label` is the column header. Order = column order.
+// Return columns shown after Price. "1D Chg" is the LIVE move (live_return, via windowReturn); the
+// longer windows are the live-rebased EOD trailing returns. `key` is the window_returns code (also the
+// live-return special-case key for "1D"); `label` is the column header. Order = column order.
 const WINDOWS = [
   { key: "1D", label: "1D Chg" },
   { key: "1M", label: "1M Return" },
@@ -91,6 +92,12 @@ const PnlAccess = (h: CompositionHolding, win: string): number | null => {
   return r != null ? h.weight * r : null;
 };
 
+// Return shown in a window column. "1D Chg" is TODAY'S LIVE move (live price vs prior close) — the
+// same `live_return` the Daily P&L column uses — so it's live, full-coverage, and consistent with the
+// Daily P&L beside it; the longer windows are the (live-rebased) EOD trailing returns.
+const windowReturn = (h: CompositionHolding, key: string): number | null =>
+  key === "1D" ? (h.live_return ?? null) : (h.window_returns?.[key] ?? null);
+
 function sortValue(h: CompositionHolding, key: string): number | string | null {
   switch (key) {
     case "ticker": return h.ticker ?? h.figi;
@@ -105,7 +112,7 @@ function sortValue(h: CompositionHolding, key: string): number | string | null {
     case "mcap": return h.market_cap_usd;
     case "volume": return h.volume;
     default:
-      if (key.startsWith("ret:")) return h.window_returns?.[key.slice(4)] ?? null;
+      if (key.startsWith("ret:")) return windowReturn(h, key.slice(4));
       if (key.startsWith("pnl:")) return PnlAccess(h, key.slice(4));
       return null;
   }
@@ -212,7 +219,7 @@ const COLUMNS: Column[] = [
   ...WINDOWS.map((w): Column => ({
     id: `ret:${w.key}`, label: w.label, align: "right",
     cell: (h) => {
-      const r = h.window_returns?.[w.key] ?? null;
+      const r = windowReturn(h, w.key);
       return <td key={`ret:${w.key}`} className={`px-2 py-1 text-right tabular-nums ${retClass(r)}`}>{pct(r)}</td>;
     },
   })),
