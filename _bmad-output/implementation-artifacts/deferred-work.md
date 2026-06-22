@@ -423,3 +423,6 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 
 ## Deferred from: code review of ticker-region-detail-pivot (2026-06-22)
 - **Per-row store subscription in the pivot Ticker column** — each row's `QualifiedTicker` island calls `useTickerConvention()`, so an N-holding book registers N store + N window 'storage' listeners (the Explorer subscribes once at page level). Correct + idiomatic, immaterial at realistic book sizes; if a very large book needs it, lift to one page-level `useTickerConvention()` in PortfolioPivot + a Context the island reads (keeping the standalone hook fallback for the detail page).
+
+## Deferred from: code review of portfolio-returns-skip-gated (2026-06-22)
+- **Behavioral test for the returns date-pin skip-null** — the portfolios returns tests use a DB-free fake conn that can't execute SQL, so the gated-skip is only guarded by an SQL-text assertion (`"pr IS NOT NULL" in sql`), like the existing `"0.9"` broadly-complete guard. A true behavioral test (gated latest date → pin falls back to the earlier clean date → constituents populated) would need a SQL-capable fake (SQLite/in-memory pg). Behavior was verified live (3→100/100). Same harness limitation as the composition skip-null test.

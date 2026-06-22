@@ -390,7 +390,7 @@ class DbPortfolioGateway:
             WITH per_day AS (
                 SELECT as_of_date, count(*) AS n
                   FROM fact_returns
-                 WHERE composite_figi = ANY(%s) AND window_id = %s
+                 WHERE composite_figi = ANY(%s) AND window_id = %s AND pr IS NOT NULL
                  GROUP BY as_of_date
             )
             SELECT max(as_of_date) FROM per_day
@@ -398,11 +398,16 @@ class DbPortfolioGateway:
             """,
             (figis, window_id),
         ).fetchone()[0]
+        # ``pr IS NOT NULL`` in BOTH the date pin and the lookup: an AR-9-gated row (a real row whose pr
+        # is withheld pending price review) must not win the broadly-complete-date pin nor populate the
+        # map — else the latest date can be all-gated and 97/100 constituents read null. Falls back to the
+        # last date with actual returns (mirrors portfolios-live-returns-fix's skip-null rule).
         pr_map = (
             dict(
                 self._sym.execute(
                     "SELECT composite_figi, pr FROM fact_returns "
-                    "WHERE composite_figi = ANY(%s) AND window_id = %s AND as_of_date = %s",
+                    "WHERE composite_figi = ANY(%s) AND window_id = %s AND as_of_date = %s "
+                    "AND pr IS NOT NULL",
                     (figis, window_id, ret_date),
                 ).fetchall()
             )

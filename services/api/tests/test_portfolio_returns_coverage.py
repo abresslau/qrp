@@ -79,3 +79,15 @@ def test_returns_uses_broadly_complete_query_not_bare_max():
     DbPortfolioGateway(_QrpConn([("F1", 1.0)]), sym).returns(3, "YTD")
     retdate_sql = next(s for s in sym.seen if "WITH per_day" in s)
     assert "0.9" in retdate_sql  # broadly-complete threshold, not bare max
+
+
+def test_returns_skips_gated_null_pr_when_pinning_and_looking_up():
+    # AR-9 gating guard: both the date pin (per_day CTE) and the pr lookup must filter `pr IS NOT NULL`,
+    # so an all-gated latest date can't win the pin and leave 97/100 constituents null (the YTD-top-movers
+    # bug). SQL-level behaviour — asserted on the issued SQL, like the broadly-complete guard above.
+    sym = _SymConn(date(2026, 6, 17), [("F1", 0.1)])
+    DbPortfolioGateway(_QrpConn([("F1", 1.0)]), sym).returns(3, "YTD")
+    per_day_sql = next(s for s in sym.seen if "WITH per_day" in s)
+    lookup_sql = next(s for s in sym.seen if "FROM fact_returns" in s and "as_of_date = %s" in s)
+    assert "pr IS NOT NULL" in per_day_sql  # gated rows don't win the date pin
+    assert "pr IS NOT NULL" in lookup_sql   # nor populate the constituent map
