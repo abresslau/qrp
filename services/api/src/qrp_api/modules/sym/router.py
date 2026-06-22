@@ -552,6 +552,25 @@ class IndexBoardRow(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class IndexBoardLiveRow(IndexBoardRow):
+    """A WEI board row whose last/1D/windows are LIVE (Story wei-live-board), plus freshness."""
+
+    freshness: str  # live | delayed | unavailable
+    quote_time: str | None  # ISO-8601 UTC of the live quote, or null
+
+
+class IndexBoardLive(BaseModel):
+    """The WEI board recomputed from LIVE intraday quotes (Story wei-live-board). Same rows as the
+    EOD board plus per-row freshness; `as_of` = most-recent priced quote (ISO-8601 UTC), `freshness`
+    = the worst priced row, `priced`/`total` = coverage. Best-effort, NOT persisted."""
+
+    as_of: str | None
+    freshness: str
+    priced: int
+    total: int
+    rows: list[IndexBoardLiveRow]
+
+
 @router.get("/indexes", response_model=list[IndexSummary])
 def indexes(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
     """Benchmark index instruments that carry level data (one per index×variant)."""
@@ -569,6 +588,18 @@ def index_board(
     region, sparkline. EOD; MSCI aggregates are the Net variant only. ``as_of_date`` backdates the
     whole board to that historical close (omitted ⇒ the latest session)."""
     return gw.index_board(as_of_date)
+
+
+@router.get("/indexes/board/live", response_model=IndexBoardLive)
+def index_board_live(gw: DbSymGateway = Depends(_gateway)) -> dict:
+    """LIVE World Equity Indices board — the EOD board re-marked to intraday quotes (Story
+    wei-live-board): live last + 1D (vs the latest EOD close) + windows re-based to the live mark,
+    per-row freshness, a board rollup. External fan-out at serve time; degrades to a 503 only if the
+    quote provider is wholly unreachable (a per-index miss is an `unavailable` row). Never persisted."""
+    try:
+        return gw.index_board_live()
+    except QuoteSourceUnreachable as exc:
+        raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
 @router.get("/indexes/{sym_id}/levels", response_model=IndexLevelSeries)

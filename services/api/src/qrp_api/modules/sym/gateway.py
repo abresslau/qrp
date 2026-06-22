@@ -1189,6 +1189,84 @@ class DbSymGateway:
             )
         return out
 
+    def index_board_live(self, now: float | None = None) -> dict:
+        """LIVE World-Equity-Indices board (Story wei-live-board): the EOD ``index_board`` with each
+        row's ``last``/1D and trailing windows re-marked to a LIVE intraday quote (the QH.2 source,
+        fanned out per QH.9). Quotes are best-effort and **never persisted**.
+
+        Re-base is exact and series-free: a window's base (N periods ago) is unchanged; only the
+        endpoint moves from the EOD close to the live price, so ``r_live = (1 + r_eod) * f - 1`` with
+        ``f = live / eod_last``. Live 1D = live vs the latest stored EOD close ("today's move"). An
+        index with no usable quote keeps its EOD row and is marked ``unavailable`` (never a fabricated
+        live mark). Per-row ``freshness`` + a board rollup (``as_of`` = most-recent priced quote, worst
+        ``freshness``, ``priced``/``total``). Raises ``QuoteSourceUnreachable`` (→503) only when the
+        provider is wholly unreachable; a per-index miss is an ``unavailable`` row, not a failure."""
+        eod = self.index_board()  # equity-only latest-EOD board — the shared row build
+        c = self._conn
+        sym_ids = [r["sym_id"] for r in eod]
+        # each equity index's Yahoo symbol (^GSPC, ^FTSE, …) from its `yahoo` xref — an index symbol
+        # IS the Yahoo symbol (not the equity ticker+MIC path); the chart endpoint serves it (the same
+        # one YahooIndexLevelSource.official_quote uses).
+        xref: dict[int, str] = {}
+        if sym_ids:
+            for sid, val in c.execute(
+                "SELECT sym_id, value FROM instrument_xref WHERE source = 'yahoo' AND sym_id = ANY(%s)",
+                (sym_ids,),
+            ).fetchall():
+                xref[sid] = val
+        now = quotes_mod.now_epoch() if now is None else now
+        symbols = [xref[sid] for sid in sym_ids if xref.get(sid)]
+        batch = quotes_mod.fetch_quotes_batch(symbols) if symbols else {}
+
+        _windows = ("d5", "mtd", "m1", "m3", "m6", "ytd", "1y", "2y", "3y", "5y")
+        priced = 0
+        any_delayed = False
+        newest_epoch: int | None = None
+        rows: list[dict] = []
+        for r in eod:
+            ysym = xref.get(r["sym_id"])
+            q = batch.get(ysym) if ysym else None
+            eod_last = r["last"]
+            live = dict(r)
+            live["freshness"] = "unavailable"
+            live["quote_time"] = None
+            # need a positive live price AND a positive EOD close to re-base (else keep EOD, unavailable)
+            if q is not None and q.price is not None and q.price > 0 and eod_last:
+                f = q.price / eod_last
+                live["last"] = q.price
+                live["prev"] = eod_last  # today's move is vs the latest stored close
+                live["chg"] = q.price - eod_last
+                live["chg_pct"] = f - 1.0
+                for w in _windows:
+                    base = r.get(w)
+                    live[w] = (1.0 + base) * f - 1.0 if base is not None else None
+                lo, hi = r["lo_52w"], r["hi_52w"]
+                live["lo_52w"] = min(lo, q.price) if lo is not None else None
+                live["hi_52w"] = max(hi, q.price) if hi is not None else None
+                live["spark"] = [*(r["spark"] or []), q.price]
+                fresh, _age = quotes_mod.classify_freshness(q.quote_epoch, now)
+                live["freshness"] = fresh
+                if q.quote_epoch is not None:
+                    live["quote_time"] = datetime.fromtimestamp(
+                        q.quote_epoch, tz=timezone.utc
+                    ).isoformat()
+                    newest_epoch = (
+                        q.quote_epoch if newest_epoch is None else max(newest_epoch, q.quote_epoch)
+                    )
+                priced += 1
+                any_delayed = any_delayed or fresh == "delayed"
+            rows.append(live)
+        return {
+            "as_of": (
+                datetime.fromtimestamp(newest_epoch, tz=timezone.utc).isoformat()
+                if newest_epoch is not None else None
+            ),
+            "freshness": ("unavailable" if priced == 0 else "delayed" if any_delayed else "live"),
+            "priced": priced,
+            "total": len(rows),
+            "rows": rows,
+        }
+
     def fx_matrix(
         self, currencies: list[str] | None = None, as_of_date: date | None = None
     ) -> dict:

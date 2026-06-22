@@ -128,6 +128,47 @@ describe("WEI (world equity indices) page", () => {
     expect(names()).toEqual(["Zeta Index", "Alpha Index"]); // 1Y asc: 0.05 then 0.99
   });
 
+  it("LIVE toggle fetches the live board, shows the live badge + per-row freshness marks", async () => {
+    const LIVE = {
+      as_of: "2026-06-22T15:30:00+00:00",
+      freshness: "delayed",
+      priced: 2,
+      total: 3,
+      rows: [
+        { ...BOARD[0], last: 5050, chg_pct: 0.0234, freshness: "live", quote_time: "2026-06-22T15:30:00+00:00" },
+        { ...BOARD[1], freshness: "delayed", quote_time: "2026-06-22T15:25:00+00:00" },
+        { ...BOARD[2], freshness: "unavailable", quote_time: null },
+      ],
+    };
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        calls.push(url);
+        const body = url.includes("/board/live") ? LIVE : BOARD;
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+      }),
+    );
+    render(<WeiPage />);
+    await screen.findByText("Americas");
+    expect(calls[0]).toBe("/api/sym/indexes/board"); // EOD first
+
+    fireEvent.click(screen.getByRole("button", { name: "LIVE" }));
+    await waitFor(() => expect(calls.some((u) => u.includes("/board/live"))).toBe(true));
+    // live badge: worst freshness + coverage
+    expect(await screen.findByText(/LIVE · delayed · 2\/3 priced/)).toBeInTheDocument();
+    // per-row marks: a delayed row + an unavailable row are flagged (the live row is not)
+    expect(screen.getByTitle(/Delayed quote/)).toBeInTheDocument();
+    expect(screen.getByTitle(/No live quote/)).toBeInTheDocument();
+    // the live re-marked value renders (S&P 1D +2.34%)
+    expect(screen.getByText("+2.34%")).toBeInTheDocument();
+
+    // switching back to EOD restores the EOD board (no /board/live) + the as-of control
+    fireEvent.click(screen.getByRole("button", { name: "EOD" }));
+    await waitFor(() => expect(calls[calls.length - 1]).toBe("/api/sym/indexes/board"));
+    expect(document.querySelector('input[type="date"]')).toBeTruthy();
+  });
+
   it("shows an honest empty state when no index data", async () => {
     stub([]);
     render(<WeiPage />);

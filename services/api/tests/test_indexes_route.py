@@ -176,6 +176,84 @@ def test_index_board_as_of_date_rewinds_anchor_and_windows():
     assert sp["spark"] == [4200.0, 4500.0, 4760.0, 4790.0, 4800.0]
 
 
+class _LiveBoardConn:
+    """index_board() ranked+recent queries (S&P 500 + MSCI World NETR) plus the yahoo-xref lookup the
+    LIVE board adds. S&P 500 has a `^GSPC` xref (→ quoted); MSCI World has none (→ unavailable)."""
+
+    def execute(self, sql, params=()):
+        s = " ".join(sql.split())
+        if "source = 'yahoo' AND sym_id = ANY" in s:
+            return _Result([(1, "^GSPC")])  # only S&P 500 has a yahoo xref
+        if "JOIN ranked r" in s:
+            return _Result([
+                (1, "S&P 500", "USD", None, 5000.0, date(2026, 6, 19), 4950.0),
+                (2210, "MSCI World Net (USD)", "USD", "990100:NETR", 11000.0, date(2026, 6, 19), 10900.0),
+            ])
+        if "session_date >= (SELECT max(session_date)" in s:
+            return _Result([
+                (1, date(2025, 12, 31), 4500.0), (1, date(2026, 6, 19), 5000.0),
+                (2210, date(2025, 12, 31), 10000.0), (2210, date(2026, 6, 19), 11000.0),
+            ])
+        return _Result([])
+
+
+def test_index_board_live_rebases_to_quote_and_marks_freshness(monkeypatch):
+    import qrp_api.modules.sym.quotes as qmod
+
+    # S&P 500 quoted live at 5050 (vs the 5000 EOD close → +1%); MSCI World unquoted → unavailable.
+    monkeypatch.setattr(qmod, "now_epoch", lambda: 1050.0)
+    monkeypatch.setattr(
+        qmod, "fetch_quotes_batch",
+        lambda syms, **kw: {"^GSPC": qmod.RawQuote(price=5050.0, prev_close=4990.0, currency="USD", quote_epoch=1000)},
+    )
+    out = DbSymGateway(_LiveBoardConn()).index_board_live()
+    by = {r["sym_id"]: r for r in out["rows"]}
+    assert set(by) == {1, 2210}
+    sp = by[1]
+    # live last + 1D vs the latest EOD close (5000), NOT the quote's own prev_close
+    assert sp["last"] == 5050.0 and sp["prev"] == 5000.0
+    assert abs(sp["chg_pct"] - (5050 / 5000 - 1)) < 1e-9
+    # YTD re-based to the live mark: base unchanged (2025-12-31 = 4500), endpoint now 5050
+    assert abs(sp["ytd"] - (5050 / 4500 - 1)) < 1e-9
+    assert sp["freshness"] == "live"  # age 50s <= 120
+    assert sp["spark"][-1] == 5050.0  # live point appended
+    # MSCI World has no yahoo xref → unavailable, EOD values untouched
+    msci = by[2210]
+    assert msci["freshness"] == "unavailable" and msci["last"] == 11000.0
+    assert msci["quote_time"] is None
+    # board rollup
+    assert out["priced"] == 1 and out["total"] == 2 and out["freshness"] == "live"
+    assert out["as_of"] is not None
+
+
+def test_index_board_live_503_when_provider_unreachable():
+    from fastapi.testclient import TestClient
+
+    import qrp_api.modules.sym.quotes as qmod
+    from qrp_api.modules.sym import router as sym_router
+
+    app = create_app()
+
+    def _boom(*a, **k):
+        raise qmod.QuoteSourceUnreachable("provider down")
+
+    # override the gateway dependency to one whose batch-fetch is wholly unreachable
+    class _Gw(DbSymGateway):
+        def __init__(self):
+            super().__init__(_LiveBoardConn())
+
+    import qrp_api.modules.sym.quotes as q2
+    orig = q2.fetch_quotes_batch
+    q2.fetch_quotes_batch = _boom
+    app.dependency_overrides[sym_router._gateway] = _Gw
+    try:
+        r = TestClient(app).get("/api/sym/indexes/board/live")
+        assert r.status_code == 503
+    finally:
+        q2.fetch_quotes_batch = orig
+        app.dependency_overrides.clear()
+
+
 class _Result:
     def __init__(self, rows):
         self._rows = rows

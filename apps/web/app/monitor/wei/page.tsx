@@ -33,7 +33,10 @@ type BoardRow = {
   lo_52w: number | null;
   hi_52w: number | null;
   spark: number[];
+  freshness?: string; // LIVE mode only: live | delayed | unavailable
+  quote_time?: string | null;
 };
+type LiveMeta = { as_of: string | null; freshness: string; priced: number; total: number };
 
 const REGION_ORDER = ["Americas", "EMEA", "Asia-Pacific", "Global"];
 
@@ -51,6 +54,13 @@ const upDown = (v: number | null | undefined) =>
     : v >= 0
       ? "text-emerald-600 dark:text-emerald-400"
       : "text-rose-600 dark:text-rose-400";
+
+// LIVE-mode freshness → colour (live = fresh/emerald, delayed = amber, unavailable = muted).
+const LIVE_TONE: Record<string, string> = {
+  live: "text-emerald-500",
+  delayed: "text-amber-500",
+  unavailable: "text-muted",
+};
 
 // Inline sparkline (recent levels), coloured by its own net direction (last vs first).
 function Spark({ pts }: { pts: number[] }) {
@@ -154,28 +164,45 @@ export default function WeiPage() {
   const [asOf, setAsOf] = useState<string>(""); // "" = latest close; YYYY-MM-DD = backdated board
   const [latestDate, setLatestDate] = useState<string>(""); // newest session of the un-backdated board
   const [sort, setSort] = useState<{ key: string; dir: SortDir }>({ key: "country", dir: "asc" });
+  const [mode, setMode] = useState<"EOD" | "LIVE">("EOD"); // LIVE = intraday quotes (best-effort, not stored)
+  const [live, setLive] = useState<LiveMeta | null>(null); // LIVE rollup (worst freshness + as_of + coverage)
+  const [nonce, setNonce] = useState(0); // bump to force a LIVE re-fetch (↻ refresh)
+  const [loading, setLoading] = useState(false);
 
-  // Re-fetch whenever the as-of date changes. Newest-wins (the `alive` guard) so a slow earlier load
-  // can't clobber a newer one. An as-of date backdates the whole board (server resolves last session
-  // ≤ date, per index); empty ⇒ latest. Future/empty dates resolve to latest server-side. On a latest
-  // load we capture the newest session so the picker can default to (and be bounded by) the real latest.
+  // Re-fetch on mode / as-of / refresh. Newest-wins via AbortController so a slow earlier load can't
+  // clobber a newer one (QH.8). EOD: an as-of date backdates the board (server resolves last session ≤
+  // date, per index); empty ⇒ latest; on a latest load capture the newest session for the picker bound.
+  // LIVE: fetch the live board (intraday quotes re-marked onto the EOD windows) + its freshness rollup;
+  // as-of is EOD-only (LIVE is "now"). Quotes are best-effort and never persisted.
   useEffect(() => {
-    let alive = true;
-    const qs = asOf ? `?as_of_date=${encodeURIComponent(asOf)}` : "";
-    fetch(`/api/sym/indexes/board${qs}`, { cache: "no-store" })
+    const ac = new AbortController();
+    const url =
+      mode === "LIVE"
+        ? "/api/sym/indexes/board/live"
+        : `/api/sym/indexes/board${asOf ? `?as_of_date=${encodeURIComponent(asOf)}` : ""}`;
+    fetch(url, { cache: "no-store", signal: ac.signal })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`board -> ${r.status}`))))
-      .then((d: BoardRow[]) => {
-        if (alive) {
-          setRows(d);
-          setError(null);
+      .then((d) => {
+        if (ac.signal.aborted) return;
+        if (mode === "LIVE") {
+          setRows(d.rows as BoardRow[]);
+          setLive({ as_of: d.as_of, freshness: d.freshness, priced: d.priced, total: d.total });
+        } else {
+          setRows(d as BoardRow[]);
+          setLive(null);
           if (!asOf) setLatestDate(maxLastDate(d) ?? "");
         }
+        setError(null);
+        setLoading(false);
       })
-      .catch((e) => alive && setError(String(e)));
-    return () => {
-      alive = false;
-    };
-  }, [asOf]);
+      .catch((e) => {
+        if (!ac.signal.aborted) {
+          setError(String(e));
+          setLoading(false);
+        }
+      });
+    return () => ac.abort();
+  }, [mode, asOf, nonce]);
 
   // board freshness anchor = the most recent session across all returned rows; rows behind it are stale.
   const boardDate = useMemo(() => maxLastDate(rows ?? []), [rows]);
@@ -203,32 +230,74 @@ export default function WeiPage() {
           Major equity indices by region — last level, 1-day change, YTD.
         </p>
         <div className="flex items-center gap-2">
-          {boardDate ? (
-            <span className="text-xs text-muted">
-              EOD · as of {boardDate}
-              {backdated ? " (backdated)" : ""}
-            </span>
-          ) : null}
-          <label className="flex items-center gap-1 text-xs text-muted" title="Rewind the board to a past close">
-            <span className="sr-only">As of date</span>
-            <input
-              type="date"
-              value={asOf || latestDate}
-              max={latestDate || undefined}
-              // picking the latest date is "latest" — keep asOf empty so we fetch the clean URL
-              onChange={(e) => setAsOf(e.target.value === latestDate ? "" : e.target.value)}
-              className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg"
-            />
-          </label>
-          {backdated ? (
-            <button
-              type="button"
-              onClick={() => setAsOf("")}
-              className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
-            >
-              Latest
-            </button>
-          ) : null}
+          {/* EOD ⟷ LIVE mode toggle */}
+          <div className="inline-flex overflow-hidden rounded-md border border-border text-xs" role="group" aria-label="board mode">
+            {(["EOD", "LIVE"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                className={`px-2 py-0.5 ${mode === m ? "bg-fg/10 font-medium text-fg" : "text-muted hover:bg-fg/5"}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          {mode === "LIVE" ? (
+            <>
+              {live ? (
+                <span
+                  className={`text-xs ${LIVE_TONE[live.freshness] ?? "text-muted"}`}
+                  title="Intraday index quotes — best-effort, never stored"
+                >
+                  ● LIVE · {live.freshness} · {live.priced}/{live.total} priced
+                  {live.as_of ? ` · as of ${new Date(live.as_of).toLocaleTimeString()}` : ""}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => {
+                  setLoading(true);
+                  setNonce((n) => n + 1);
+                }}
+                disabled={loading}
+                aria-label="Refresh live quotes"
+                className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg disabled:opacity-50"
+              >
+                {loading ? "…" : "↻"}
+              </button>
+            </>
+          ) : (
+            <>
+              {boardDate ? (
+                <span className="text-xs text-muted">
+                  EOD · as of {boardDate}
+                  {backdated ? " (backdated)" : ""}
+                </span>
+              ) : null}
+              <label className="flex items-center gap-1 text-xs text-muted" title="Rewind the board to a past close">
+                <span className="sr-only">As of date</span>
+                <input
+                  type="date"
+                  value={asOf || latestDate}
+                  max={latestDate || undefined}
+                  // picking the latest date is "latest" — keep asOf empty so we fetch the clean URL
+                  onChange={(e) => setAsOf(e.target.value === latestDate ? "" : e.target.value)}
+                  className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-fg"
+                />
+              </label>
+              {backdated ? (
+                <button
+                  type="button"
+                  onClick={() => setAsOf("")}
+                  className="rounded border border-border px-1.5 py-0.5 text-xs text-muted hover:bg-fg/5 hover:text-fg"
+                >
+                  Latest
+                </button>
+              ) : null}
+            </>
+          )}
         </div>
       </header>
 
@@ -286,7 +355,10 @@ export default function WeiPage() {
                   </th>
                 </tr>
                 {list.map((r) => {
-                  const stale = r.last_date != null && boardDate != null && r.last_date < boardDate;
+                  // EOD: mark an index whose latest session lags the board date. LIVE: mark a
+                  // delayed/unavailable quote (a closed market or a per-index miss) — never imply live.
+                  const stale = mode === "EOD" && r.last_date != null && boardDate != null && r.last_date < boardDate;
+                  const liveMark = mode === "LIVE" && r.freshness != null && r.freshness !== "live";
                   return (
                     <tr key={r.sym_id} className="border-b border-border/30 hover:bg-fg/5">
                       <td className="px-2 py-0.5 font-medium text-fg">
@@ -295,6 +367,18 @@ export default function WeiPage() {
                           <span
                             className="ml-1 text-amber-500"
                             title={`No session on ${boardDate} — showing the last close, ${r.last_date} (this market's calendar lags the board date)`}
+                          >
+                            ●
+                          </span>
+                        ) : null}
+                        {liveMark ? (
+                          <span
+                            className={`ml-1 ${LIVE_TONE[r.freshness!] ?? "text-muted"}`}
+                            title={
+                              r.freshness === "unavailable"
+                                ? "No live quote — showing the EOD close (market closed or quote unavailable)"
+                                : `Delayed quote${r.quote_time ? ` · as of ${new Date(r.quote_time).toLocaleTimeString()}` : ""}`
+                            }
                           >
                             ●
                           </span>
@@ -328,8 +412,20 @@ export default function WeiPage() {
       )}
 
       <p className="mt-2 shrink-0 text-[10px] leading-snug text-muted">
-        EOD warehouse levels (1D = last vs prior session). <span className="text-amber-500">●</span> =
-        no session on the board date — showing the prior close (date beside ●). MSCI shown as Net Return.
+        {mode === "LIVE" ? (
+          <>
+            LIVE intraday quotes — best-effort, <strong>never stored</strong>; 1D = live vs the latest
+            close, windows re-based to the live mark. <span className="text-amber-500">●</span> delayed
+            / <span className="text-muted">●</span> unavailable (closed market or no quote — shows the
+            EOD close). In this environment the simulated clock makes quotes read{" "}
+            <em>delayed</em>; the data still updates each refresh. MSCI shown as Net Return.
+          </>
+        ) : (
+          <>
+            EOD warehouse levels (1D = last vs prior session). <span className="text-amber-500">●</span> =
+            no session on the board date — showing the prior close (date beside ●). MSCI shown as Net Return.
+          </>
+        )}
       </p>
     </div>
   );
