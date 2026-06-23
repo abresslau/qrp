@@ -302,7 +302,7 @@ class EodMonitorGateway:
             )
         except Exception:  # noqa: BLE001
             true_latest = None
-        runs = latest_runs_by_job()
+        dagster_reachable, runs = latest_runs_by_job()
         try:
             summary = self._summary(true_latest)
         except Exception:  # noqa: BLE001
@@ -314,7 +314,7 @@ class EodMonitorGateway:
         return {
             "expected_date": expected.isoformat() if expected else None,
             "expected_basis": "previous business date (last completed equity trading session)",
-            "dagster_runs_available": bool(runs),
+            "dagster_runs_available": dagster_reachable,
             "summary": summary,
             "buckets": [self._row(b, expected, runs) for b in BUCKETS],
         }

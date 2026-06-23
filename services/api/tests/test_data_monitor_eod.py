@@ -143,4 +143,4 @@ def test_latest_runs_empty_when_endpoint_unreachable(monkeypatch):
         raise OSError("connection refused")
 
     monkeypatch.setattr(dr.urllib.request, "urlopen", _boom)
-    assert dr.latest_runs_by_job(timeout=0.1) == {}  # degrades, never raises
+    assert dr.latest_runs_by_job(timeout=0.1) == (False, {})  # not reachable, degrades, never raises

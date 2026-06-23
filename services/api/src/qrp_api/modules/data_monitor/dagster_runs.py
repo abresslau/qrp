@@ -35,10 +35,12 @@ def _iso(epoch: float | None) -> str | None:
         return None
 
 
-def latest_runs_by_job(timeout: float = 1.0) -> dict[str, dict]:
-    """``{job_name: {status, started_at, finished_at, source:"dagster"}}`` — best effort.
+def latest_runs_by_job(timeout: float = 1.0) -> tuple[bool, dict[str, dict]]:
+    """``(reachable, {job_name: {status, started_at, finished_at, source:"dagster"}})`` — best effort.
 
-    Returns ``{}`` on any failure (endpoint down, timeout, unexpected shape). The short timeout
+    ``reachable`` is True iff the Dagster GraphQL endpoint answered (the daemon is up) — distinct
+    from whether any runs exist yet (a fresh ``dagster dev`` is reachable with zero runs). On any
+    failure (endpoint down, timeout, unexpected shape) returns ``(False, {})``. The short timeout
     keeps the EOD endpoint snappy when the daemon isn't running.
     """
     try:
@@ -49,8 +51,8 @@ def latest_runs_by_job(timeout: float = 1.0) -> dict[str, dict]:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — fixed local host
             payload = json.load(resp)
         results = payload["data"]["runsOrError"]["results"]
-    except Exception:  # noqa: BLE001 — best-effort; any failure means "no run info available"
-        return {}
+    except Exception:  # noqa: BLE001 — best-effort; any failure means "Dagster not reachable"
+        return False, {}
 
     latest: dict[str, dict] = {}
     for r in results or []:
@@ -69,4 +71,4 @@ def latest_runs_by_job(timeout: float = 1.0) -> dict[str, dict]:
             }
     for v in latest.values():
         v.pop("_st", None)
-    return latest
+    return True, latest
