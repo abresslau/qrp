@@ -20,7 +20,7 @@ import re
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -41,6 +41,8 @@ _MSCI_GRAPH_URL = "https://app2.msci.com/products/service/index/indexmaster/getL
 MSCI_HISTORY_FLOOR = date(1997, 1, 1)
 # Public return-variant identifiers → MSCI's getLevelDataForGraph variant codes.
 _VARIANT_CODES = {"PR": "STRD", "NR": "NETR", "GR": "GRTR"}
+# reverse: MSCI graph code (as stored in the `<code>:<VARIANT>` xref) -> public variant id.
+_VARIANT_BY_CODE = {v: k for k, v in _VARIANT_CODES.items()}
 
 
 def variant_code(variant: str) -> str:
@@ -304,3 +306,50 @@ def load_msci_pull(
         start_date=start_date, end_date=end_date,
     )
     return _upsert_levels(conn, sym_id, series)
+
+
+@dataclass
+class MsciPullAllSummary:
+    instruments: int = 0   # MSCI instruments found
+    pulled: int = 0        # successfully re-pulled
+    written: int = 0       # total levels upserted
+    failures: list[str] = field(default_factory=list)
+
+
+def pull_all_msci(
+    conn: psycopg.Connection,
+    *,
+    start_date: date = MSCI_HISTORY_FLOOR,
+    end_date: date | None = None,
+    _fetch: Callable[..., list[tuple[date, Decimal]]] = fetch_msci_levels,
+) -> MsciPullAllSummary:
+    """Re-pull EVERY existing MSCI instrument (one network call per code×variant).
+
+    MSCI is one-index-at-a-time; this enumerates the loaded MSCI instruments from their
+    variant-encoded ``msci`` xrefs (``<code>:<VARIANT>``) and re-pulls each. Attempt-all: a single
+    variant failing is recorded in ``failures``, not fatal — so one bad series can't abort the rest.
+    """
+    conn.autocommit = True
+    rows = conn.execute(
+        "SELECT i.name, x.value, i.currency_code "
+        "FROM instrument i JOIN instrument_xref x ON x.sym_id = i.sym_id "
+        "WHERE x.source = %s ORDER BY x.value",
+        (SRC_MSCI,),
+    ).fetchall()
+    summary = MsciPullAllSummary(instruments=len(rows))
+    for name, value, ccy in rows:
+        code, _, vcode = (value or "").partition(":")
+        variant = _VARIANT_BY_CODE.get(vcode)
+        if not code or not variant:
+            summary.failures.append(f"{value}: unparseable msci xref")
+            continue
+        try:
+            res = load_msci_pull(
+                conn, msci_code=code, variant=variant, currency=ccy or "USD", name=name,
+                start_date=start_date, end_date=end_date, _fetch=_fetch,
+            )
+            summary.pulled += 1
+            summary.written += res.written
+        except Exception as exc:  # noqa: BLE001 — attempt-all; isolate one series' failure
+            summary.failures.append(f"{value}: {str(exc)[:160]}")
+    return summary

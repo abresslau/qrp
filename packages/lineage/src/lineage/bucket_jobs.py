@@ -88,11 +88,12 @@ def _equity_one(u: str, a: str) -> list[Cmd]:
 
 
 def _index_all(a: str) -> list[Cmd]:
-    return [("sym.cli", "indices"), ("sym.cli", "msci-pull")]
+    return [("sym.cli", "indices"), ("sym.cli", "msci-pull", "--all")]
 
 
 def _index_one(p: str, a: str) -> list[Cmd]:
-    return [("sym.cli", "msci-pull")] if p == "msci" else [("sym.cli", "indices")]
+    # msci is one-index-at-a-time; `--all` re-pulls every MSCI instrument. yahoo = the registry load.
+    return [("sym.cli", "msci-pull", "--all")] if p == "msci" else [("sym.cli", "indices")]
 
 
 def _rates_all(a: str) -> list[Cmd]:
@@ -273,7 +274,9 @@ def _run_bucket(context, key: str, config: BucketConfig) -> None:
 
 
 def _make_job(b):
-    @op(name=f"{b.key}_load", retry_policy=RetryPolicy(max_retries=2, delay=300))
+    # Light retry: bucket jobs are usually operator-triggered, so a long inter-retry wait reads as a
+    # "stuck" run. One quick retry covers a transient network blip; a real error surfaces fast.
+    @op(name=f"{b.key}_load", retry_policy=RetryPolicy(max_retries=1, delay=20))
     def _bucket_op(context, config: BucketConfig) -> None:
         _run_bucket(context, b.key, config)
 
