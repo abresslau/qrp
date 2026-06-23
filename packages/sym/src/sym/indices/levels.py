@@ -1,10 +1,10 @@
-"""Benchmark registry + index-level sourcing (Benchmark epic, B2).
+"""Index registry + index-level sourcing (Index epic, B2).
 
-A small, data-driven registry of headline benchmarks maps each to a Yahoo symbol
+A small, data-driven registry of headline indices maps each to a Yahoo symbol
 (and/or an MSCI code) and a return **variant**. ``load_index_levels`` ensures the
 instrument identity (``ensure_instrument`` kind=index with yahoo/msci xrefs) and
 upserts its level series into ``index_levels`` (immutable). The Yahoo source is
-behind a fakeable Protocol; MSCI-only benchmarks get an instrument + ``msci`` xref
+behind a fakeable Protocol; MSCI-only indices get an instrument + ``msci`` xref
 but their levels are loaded from a downloaded file (deferred).
 
 Variant notes (deliberate, not all "PR"): Yahoo's ``^SP500TR`` and ``^GDAXI`` are
@@ -24,21 +24,21 @@ from typing import Protocol
 
 import psycopg
 
-from sym.benchmarks.msci import msci_xref_value
 from sym.identity.instrument import INDEX, SRC_MSCI, SRC_YAHOO, ensure_instrument
+from sym.indices.msci import msci_xref_value
 
 DEFAULT_START = date(1990, 1, 1)
 
 
 @dataclass(frozen=True)
-class Benchmark:
+class Index:
     name: str
     currency_code: str
     yahoo_symbol: str | None = None
     msci_code: str | None = None
     # Return variant for an MSCI entry (PR/NR/GR). Drives the variant-encoded `msci` xref
     # (`<code>:<VARIANT>`) so the registry reconciles with `sym msci-pull` — same instrument per
-    # variant, no bare-code stub. Yahoo-only benchmarks leave this None.
+    # variant, no bare-code stub. Yahoo-only indices leave this None.
     variant: str | None = None
     # Geographic region for the World-Equity-Indices board: Americas | EMEA | Asia-Pacific | Global.
     region: str | None = None
@@ -48,8 +48,8 @@ class Benchmark:
     category: str = "equity"
 
 
-def benchmark_xrefs(b: Benchmark) -> dict[str, str]:
-    """The external-id xrefs for a benchmark's instrument identity. The MSCI xref is
+def index_xrefs(b: Index) -> dict[str, str]:
+    """The external-id xrefs for a index's instrument identity. The MSCI xref is
     variant-encoded when a variant is set (reconciling with the pull); a bare code is only used
     for a legacy MSCI entry without a variant."""
     xrefs: dict[str, str] = {}
@@ -60,53 +60,53 @@ def benchmark_xrefs(b: Benchmark) -> dict[str, str]:
     return xrefs
 
 
-# Headline benchmarks. Each published series is its OWN index (instrument) — the
+# Headline indices. Each published series is its OWN index (instrument) — the
 # name distinguishes price vs total-return (e.g. "S&P 500" vs "S&P 500 (Total
 # Return)"). MSCI-only entries (no yahoo) create the instrument + msci xref and
 # defer level loading to a file import.
-BENCHMARKS: tuple[Benchmark, ...] = (
-    Benchmark("S&P 500", "USD", yahoo_symbol="^GSPC", region="Americas"),
-    Benchmark("S&P 500 (Total Return)", "USD", yahoo_symbol="^SP500TR", region="Americas"),
-    Benchmark("S&P MidCap 400", "USD", yahoo_symbol="^MID", region="Americas"),
-    Benchmark("S&P SmallCap 600", "USD", yahoo_symbol="^SP600", region="Americas"),
-    Benchmark("Nasdaq Composite", "USD", yahoo_symbol="^IXIC", region="Americas"),
-    Benchmark("Dow Jones Industrial Average", "USD", yahoo_symbol="^DJI", region="Americas"),
-    Benchmark("Russell 2000", "USD", yahoo_symbol="^RUT", region="Americas"),
-    Benchmark("EURO STOXX 50", "EUR", yahoo_symbol="^STOXX50E", region="EMEA"),
-    Benchmark("FTSE 100", "GBP", yahoo_symbol="^FTSE", region="EMEA"),
-    Benchmark("DAX (Total Return)", "EUR", yahoo_symbol="^GDAXI", region="EMEA"),
-    Benchmark("CAC 40", "EUR", yahoo_symbol="^FCHI", region="EMEA"),
-    Benchmark("IBEX 35", "EUR", yahoo_symbol="^IBEX", region="EMEA"),
-    Benchmark("FTSE MIB", "EUR", yahoo_symbol="FTSEMIB.MI", region="EMEA"),
-    Benchmark("AEX", "EUR", yahoo_symbol="^AEX", region="EMEA"),
-    Benchmark("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI", region="EMEA"),
-    Benchmark("Nikkei 225", "JPY", yahoo_symbol="^N225", region="Asia-Pacific"),
-    Benchmark("IBOVESPA", "BRL", yahoo_symbol="^BVSP", region="Americas"),
+INDICES: tuple[Index, ...] = (
+    Index("S&P 500", "USD", yahoo_symbol="^GSPC", region="Americas"),
+    Index("S&P 500 (Total Return)", "USD", yahoo_symbol="^SP500TR", region="Americas"),
+    Index("S&P MidCap 400", "USD", yahoo_symbol="^MID", region="Americas"),
+    Index("S&P SmallCap 600", "USD", yahoo_symbol="^SP600", region="Americas"),
+    Index("Nasdaq Composite", "USD", yahoo_symbol="^IXIC", region="Americas"),
+    Index("Dow Jones Industrial Average", "USD", yahoo_symbol="^DJI", region="Americas"),
+    Index("Russell 2000", "USD", yahoo_symbol="^RUT", region="Americas"),
+    Index("EURO STOXX 50", "EUR", yahoo_symbol="^STOXX50E", region="EMEA"),
+    Index("FTSE 100", "GBP", yahoo_symbol="^FTSE", region="EMEA"),
+    Index("DAX (Total Return)", "EUR", yahoo_symbol="^GDAXI", region="EMEA"),
+    Index("CAC 40", "EUR", yahoo_symbol="^FCHI", region="EMEA"),
+    Index("IBEX 35", "EUR", yahoo_symbol="^IBEX", region="EMEA"),
+    Index("FTSE MIB", "EUR", yahoo_symbol="FTSEMIB.MI", region="EMEA"),
+    Index("AEX", "EUR", yahoo_symbol="^AEX", region="EMEA"),
+    Index("SMI (Swiss Market Index)", "CHF", yahoo_symbol="^SSMI", region="EMEA"),
+    Index("Nikkei 225", "JPY", yahoo_symbol="^N225", region="Asia-Pacific"),
+    Index("IBOVESPA", "BRL", yahoo_symbol="^BVSP", region="Americas"),
     # Regional expansion (story wei-add-regional-indices): Hong Kong, mainland China, pan-Europe.
     # CSI 300 uses the Shanghai Yahoo symbol 000300.SS (399300.SZ probed to a single point).
     # FTSE Emerging / FTSE All-World are NOT added: no free FTSE Russell index source (an ETF
     # proxy would violate derive-don't-store); MSCI EM / ACWI (already seeded) cover EM / all-world.
-    Benchmark("Hang Seng Index", "HKD", yahoo_symbol="^HSI", region="Asia-Pacific"),
-    Benchmark("CSI 300", "CNY", yahoo_symbol="000300.SS", region="Asia-Pacific"),
-    Benchmark("STOXX Europe 600", "EUR", yahoo_symbol="^STOXX", region="EMEA"),
+    Index("Hang Seng Index", "HKD", yahoo_symbol="^HSI", region="Asia-Pacific"),
+    Index("CSI 300", "CNY", yahoo_symbol="000300.SS", region="Asia-Pacific"),
+    Index("STOXX Europe 600", "EUR", yahoo_symbol="^STOXX", region="EMEA"),
     # CBOE Volatility Index — a volatility LEVEL index (not an investable price-return index). Shown
     # on the Indices page but kept OFF the equity WEI board (category=volatility). currency=USD is
     # a convention: the VIX is unitless index points, not dollars — but the instrument table needs a
     # currency and USD (its home market) is the harmless, consistent choice.
-    Benchmark(
+    Index(
         "CBOE Volatility Index (VIX)", "USD", yahoo_symbol="^VIX",
         region="Americas", category="volatility",
     ),
     # MSCI World Net — no Yahoo; levels come from `sym msci-pull` (or a file import). variant="NR"
     # → msci xref 990100:NETR, the SAME instrument the pull creates (no bare-code stub on re-seed).
-    Benchmark(
+    Index(
         "MSCI World (Net Total Return)", "USD", msci_code="990100", variant="NR", region="Global"
     ),
 )
 
 # Region resolution for the World-Equity-Indices board (data-driven, reused by the API). MSCI
 # aggregates → "Global"; otherwise the registry's region by name, else a currency fallback.
-_REGION_BY_NAME = {b.name: b.region for b in BENCHMARKS if b.region}
+_REGION_BY_NAME = {b.name: b.region for b in INDICES if b.region}
 _AMER = "Americas"
 _EMEA = "EMEA"
 _APAC = "Asia-Pacific"
@@ -161,7 +161,7 @@ def country_for(name: str | None, currency: str | None = None) -> str:
 # Asset class by name (data-driven, reused by the API to keep non-equity indices off the equity
 # WEI board). Defaults to "equity" for any name not in the registry — the board stays equity-only
 # without a hardcoded React name-check, mirroring `region_for`/`country_for`.
-_CATEGORY_BY_NAME = {b.name: b.category for b in BENCHMARKS}
+_CATEGORY_BY_NAME = {b.name: b.category for b in INDICES}
 
 
 def category_for(name: str | None) -> str:
@@ -285,19 +285,19 @@ def _upsert_level(
 def load_index_levels(
     conn: psycopg.Connection,
     source: IndexLevelSource,
-    benchmarks: Sequence[Benchmark] = BENCHMARKS,
+    indices: Sequence[Index] = INDICES,
     *,
     start: date = DEFAULT_START,
 ) -> LevelsSummary:
-    """Ensure each benchmark's instrument identity and load its level series.
+    """Ensure each index's instrument identity and load its level series.
 
-    MSCI-only benchmarks (no Yahoo symbol) get an instrument + ``msci`` xref but
+    MSCI-only indices (no Yahoo symbol) get an instrument + ``msci`` xref but
     their levels are deferred to a file import. Yahoo levels are immutable-upserted.
     """
     conn.autocommit = True
     summary = LevelsSummary()
-    for b in benchmarks:
-        xrefs = benchmark_xrefs(b)
+    for b in indices:
+        xrefs = index_xrefs(b)
         sym_id = ensure_instrument(
             conn, INDEX, name=b.name, currency_code=b.currency_code, xrefs=xrefs
         )
@@ -307,7 +307,7 @@ def load_index_levels(
             continue
         try:
             series = source.levels(b.yahoo_symbol, start)
-        except Exception as exc:  # noqa: BLE001 — isolate one benchmark's vendor failure
+        except Exception as exc:  # noqa: BLE001 — isolate one index's vendor failure
             summary.errors += 1
             summary.failures.append(f"{b.yahoo_symbol}: {str(exc)[:160]}")
             continue
@@ -328,7 +328,7 @@ def load_index_levels(
             oq_date, oq_price = None, None
         if oq_price and oq_date == latest_d.isoformat():
             series = [(d, Decimal(str(oq_price)) if d == latest_d else lv) for d, lv in series]
-        # One transaction per benchmark: an interrupt never leaves a half-written series. Only the
+        # One transaction per index: an interrupt never leaves a half-written series. Only the
         # latest session is overwriteable (revisable provisional→official); history is append-only.
         with conn.transaction():
             for d, level in series:

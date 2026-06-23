@@ -1,10 +1,10 @@
-"""Benchmark index returns + alpha (Benchmark epic, B3).
+"""Index returns + alpha (Index epic, B3).
 
 Index returns are pure **level ratios** over the same windows as `fact_returns`
 (reusing `returns.windows`) — no split/dividend math, since an index level already
 embeds its return treatment via its variant. The index's own level dates serve as
 its session calendar. Alpha is the excess return: an asset/universe return minus
-the benchmark return at the same window + as_of_date.
+the index return at the same window + as_of_date.
 """
 
 from __future__ import annotations
@@ -52,11 +52,11 @@ def index_return_rows(
     return rows
 
 
-def alpha(asset_return: Decimal | None, benchmark_return: Decimal | None) -> Decimal | None:
-    """Excess return: asset − benchmark (None if either is missing)."""
-    if asset_return is None or benchmark_return is None:
+def alpha(asset_return: Decimal | None, index_return: Decimal | None) -> Decimal | None:
+    """Excess return: asset − index (None if either is missing)."""
+    if asset_return is None or index_return is None:
         return None
-    return asset_return - benchmark_return
+    return asset_return - index_return
 
 
 @dataclass
@@ -130,7 +130,7 @@ def _upsert_extremes(conn: psycopg.Connection, sym_id: int, rows: Sequence) -> N
 def recompute_index_returns(
     conn: psycopg.Connection, *, start_date: date, end_date: date
 ) -> IndexReturnsSummary:
-    """Materialize benchmark index returns into ``fact_index_returns`` for [start_date, end_date].
+    """Materialize index returns into ``fact_index_returns`` for [start_date, end_date].
 
     The same per-series pass also materializes the index 52-week extremes (Story 3.2-ext)
     into ``fact_index_extremes`` from the level series (no gate — index levels are unflagged).
@@ -158,10 +158,10 @@ def recompute_index_returns(
     return summary
 
 
-def benchmark_return(
+def index_return(
     conn: psycopg.Connection, sym_id: int, window_id: int, as_of_date: date
 ) -> Decimal | None:
-    """The materialized benchmark return for one (sym_id, window, date)."""
+    """The materialized index return for one (sym_id, window, date)."""
     row = conn.execute(
         "SELECT ret FROM fact_index_returns "
         "WHERE sym_id = %s AND window_id = %s AND as_of_date = %s",

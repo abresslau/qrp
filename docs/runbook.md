@@ -115,7 +115,7 @@ the daily-ops mode (pulls only sessions after the cursor).
 
 ### 4a. Return windows (`fact_returns` / `fact_index_returns`)
 
-`recompute` materializes **PR + TR** for every security (and `benchmarks` does the
+`recompute` materializes **PR + TR** for every security (and `indices` does the
 same for index levels as a single `ret`) across **28 windows**, keyed by the integer
 `return_window.window_id`. The spec lives in `src/sym/returns/windows.py`; the seed is
 in `return_window` (replayed by migrations). Query/label by `code`, never by `kind`.
@@ -193,14 +193,14 @@ sym is **scheduler-agnostic** — it carries no Airflow/Prefect dependency. Run 
 daily pipeline either coarse or fine-grained:
 
 ```
-sym eod                       # coarse: monitor -> fill -> map -> benchmarks -> fx -> recompute -> validate
+sym eod                       # coarse: monitor -> fill -> map -> indices -> fx -> recompute -> validate
 sym eod --dry-run             # print the step plan
 sym eod --steps fill,recompute    # run a subset (one task per step under an orchestrator)
-sym eod --skip benchmarks
+sym eod --skip indices
 ```
 
 Each step is idempotent + error-isolated; `fill`/`recompute` are critical (a
-failure exits non-zero), `monitor`/`benchmarks`/`validate` are non-critical
+failure exits non-zero), `monitor`/`indices`/`validate` are non-critical
 (surfaced, don't fail the night). Periodic steps run on their own cadence:
 `sym fundamentals --all` (weekly), `sym snapshot-calendar` (occasional).
 

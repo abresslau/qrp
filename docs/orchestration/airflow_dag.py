@@ -21,8 +21,8 @@ from __future__ import annotations
 #     monitor    = BashOperator(task_id="monitor",    bash_command=f"{SYM} eod --steps monitor")
 #     fill       = BashOperator(task_id="fill",       bash_command=f"{SYM} eod --steps fill")
 #     map_step   = BashOperator(task_id="map",        bash_command=f"{SYM} eod --steps map")
-#     benchmarks = BashOperator(task_id="benchmarks", bash_command=f"{SYM} eod --steps benchmarks")
+#     indices = BashOperator(task_id="indices", bash_command=f"{SYM} eod --steps indices")
 #     fx         = BashOperator(task_id="fx",         bash_command=f"{SYM} eod --steps fx")
 #     recompute  = BashOperator(task_id="recompute",  bash_command=f"{SYM} eod --steps recompute")
 #     validate   = BashOperator(task_id="validate",   bash_command=f"{SYM} eod --steps validate")
-#     monitor >> fill >> map_step >> benchmarks >> fx >> recompute >> validate
+#     monitor >> fill >> map_step >> indices >> fx >> recompute >> validate

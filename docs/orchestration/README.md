@@ -6,7 +6,7 @@ coarse runner (`sym eod`). An external scheduler composes them. These files are
 **examples** — copy into your Airflow/Prefect project; they only shell out to the
 `sym` CLI, so switching orchestrators is a wrapper swap.
 
-Daily core (order): `monitor -> fill -> map -> benchmarks -> fx -> recompute -> validate`.
+Daily core (order): `monitor -> fill -> map -> indices -> fx -> recompute -> validate`.
 Periodic (own schedules): `sym fundamentals --all` (weekly), `sym snapshot-calendar` (occasional).
 
 - Coarse cron: `uv run sym eod`

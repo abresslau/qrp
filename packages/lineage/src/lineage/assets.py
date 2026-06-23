@@ -429,10 +429,10 @@ _RUNNABLE_SYM = [
     ),
     _sym_asset(
         "index_levels", ("sym", "index_levels"), [],
-        "Benchmark index level series (keyed by sym_id).",
+        "Index level series (keyed by sym_id).",
         _md(("sym", "index_levels"), "sym", "index_levels",
-            "`sym benchmarks` / `sym msci-import`", source="Yahoo indices · MSCI files"),
-        ["benchmarks"],
+            "`sym indices` / `sym msci-import`", source="Yahoo indices · MSCI files"),
+        ["indices"],
     ),
     _sym_asset(
         "fact_returns", ("sym", "fact_returns"),
@@ -531,8 +531,8 @@ _EXTERNAL = [
           "sym", "universe_membership", "`sym universe refresh <id>` (rebuild_projection)",
           note="per-universe CLI arg required — not a one-click runnable"),
     _spec(("sym", "fact_index_returns"), [("sym", "index_levels")], "sym",
-          "Benchmark index returns, derived from index_levels (sym_id chain).",
-          "sym", "fact_index_returns", "`sym benchmarks` (recompute_index_returns)"),
+          "Index returns, derived from index_levels (sym_id chain).",
+          "sym", "fact_index_returns", "`sym indices` (recompute_index_returns)"),
     _spec(("sym", "pipeline_run_log"), [], "sym",
           "Run-level ingestion provenance (mode, source, rows, status, timing). "
           "The existing what/source/when audit log.",

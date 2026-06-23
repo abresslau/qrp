@@ -1,4 +1,4 @@
-"""Tests for the universal instrument identity layer (Benchmark epic B1). DB-free."""
+"""Tests for the universal instrument identity layer (B1). DB-free."""
 
 from __future__ import annotations
 

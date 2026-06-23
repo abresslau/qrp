@@ -1,11 +1,11 @@
-"""Tests for benchmark index returns + alpha (B3). DB-free pure logic."""
+"""Tests for index returns + alpha (B3). DB-free pure logic."""
 
 from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
 
-from sym.benchmarks.returns import IndexReturnsSummary, alpha, index_return_rows
+from sym.indices.returns import IndexReturnsSummary, alpha, index_return_rows
 
 
 def test_alpha_excess_return():
@@ -39,5 +39,5 @@ def test_index_return_rows_insufficient_history_is_none():
 
 
 def test_index_summary_counts_extreme_rows():
-    """IndexReturnsSummary exposes extreme_rows for the benchmarks CLI line (Story 3.2-ext)."""
+    """IndexReturnsSummary exposes extreme_rows for the indices CLI line (Story 3.2-ext)."""
     assert IndexReturnsSummary().extreme_rows == 0

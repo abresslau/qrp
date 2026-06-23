@@ -369,7 +369,7 @@ export interface paths {
         };
         /**
          * Indices
-         * @description Benchmark index instruments that carry level data (one per index×variant).
+         * @description Index instruments that carry level data (one per index×variant).
          */
         get: operations["indices"];
         put?: never;

@@ -18,7 +18,7 @@ from __future__ import annotations
 #     m = step.submit("monitor")
 #     d = step.submit("fill", wait_for=[m])
 #     mp = step.submit("map", wait_for=[d])
-#     b = step.submit("benchmarks", wait_for=[mp])
+#     b = step.submit("indices", wait_for=[mp])
 #     x = step.submit("fx", wait_for=[b])
 #     r = step.submit("recompute", wait_for=[x])
 #     step.submit("validate", wait_for=[r])

@@ -1,7 +1,7 @@
 # Multi-module architecture
 
 `sym` is **Module 1** — the data platform / **system of record**: identity
-(`sym_id`), market data (prices + index levels), returns, universes, benchmarks.
+(`sym_id`), market data (prices + index levels), returns, universes, indices.
 Other modules are planned to build *on* it, not fork it. This doc fixes the
 integration backbone so they compose cleanly.
 
@@ -24,7 +24,7 @@ integration backbone so they compose cleanly.
 - **Data:** one shared PostgreSQL database. sym's tables are the system-of-record
   schema; each module gets its own schema and reads sym via the contract (or a
   thin view layer). No data copying / no reconciliation.
-- **Code:** sym is an **installable library** (its `identity`/`returns`/`benchmarks`
+- **Code:** sym is an **installable library** (its `identity`/`returns`/`indices`
   helpers are importable) *and* a CLI. Modules import the identity resolver rather
   than reimplement it.
 - **Repo:** start as a **monorepo of packages** (`sym`, `sym-live`, `sym-backtest`,
@@ -38,7 +38,7 @@ integration backbone so they compose cleanly.
 | Module | Consumes from sym | Adds | New stores (keyed on `sym_id`) |
 |---|---|---|---|
 | **Live / intraday pricing** | `instrument`/`sym_id` resolver, symbology, calendars | real-time quote ingestion + last-price cache | `intraday_quotes`, `last_price` |
-| **Paper portfolios + backtests** | `universe_membership` (PIT, survivorship-safe), `fact_returns`, benchmarks | positions, trades, NAV, backtest runs | `portfolio`, `position`, `backtest_run`, `nav` |
+| **Paper portfolios + backtests** | `universe_membership` (PIT, survivorship-safe), `fact_returns`, indices | positions, trades, NAV, backtest runs | `portfolio`, `position`, `backtest_run`, `nav` |
 | **Portfolio analytics** | `fact_returns`, `fact_index_returns`, `universe_benchmark` | risk, exposures, attribution, alpha/beta vs benchmark | `analytics_*` result tables |
 
 ### Why this works

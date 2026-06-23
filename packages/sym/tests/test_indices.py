@@ -1,4 +1,4 @@
-"""Tests for the benchmark registry + index-level sourcing (B2). DB-free.
+"""Tests for the index registry + index-level sourcing (B2). DB-free.
 
 Each published index series is its own instrument (no per-row variant); the name
 distinguishes price vs total-return.
@@ -6,12 +6,12 @@ distinguishes price vs total-return.
 
 from __future__ import annotations
 
-from sym.benchmarks.levels import (
-    BENCHMARKS,
-    Benchmark,
-    benchmark_xrefs,
+from sym.indices.levels import (
+    INDICES,
+    Index,
     category_for,
     country_for,
+    index_xrefs,
     load_index_levels,
     region_for,
 )
@@ -31,31 +31,31 @@ def test_country_for_name_map_currency_fallback_and_msci():
 
 
 def test_registry_yahoo_symbols_unique():
-    syms = [b.yahoo_symbol for b in BENCHMARKS if b.yahoo_symbol]
+    syms = [b.yahoo_symbol for b in INDICES if b.yahoo_symbol]
     assert len(syms) == len(set(syms))
 
 
 def test_price_and_total_return_are_separate_named_indices():
-    names = {b.name for b in BENCHMARKS}
+    names = {b.name for b in INDICES}
     assert "S&P 500" in names                    # price series
     assert "S&P 500 (Total Return)" in names      # total-return series — a distinct index
     # distinct Yahoo symbols -> distinct instruments
-    by_name = {b.name: b for b in BENCHMARKS}
+    by_name = {b.name: b for b in INDICES}
     assert by_name["S&P 500"].yahoo_symbol == "^GSPC"
     assert by_name["S&P 500 (Total Return)"].yahoo_symbol == "^SP500TR"
 
 
 def test_msci_world_is_deferred_no_yahoo():
-    msci = next(b for b in BENCHMARKS if b.name.startswith("MSCI World"))
+    msci = next(b for b in INDICES if b.name.startswith("MSCI World"))
     assert msci.yahoo_symbol is None and msci.msci_code
 
 
 def test_msci_registry_xref_is_variant_encoded_to_reconcile_with_pull():
     # The registry MSCI World entry must resolve to the SAME instrument `sym msci-pull --variant NR`
     # creates (msci xref 990100:NETR) — so a re-seed never mints a bare-code 990100 stub again.
-    msci = next(b for b in BENCHMARKS if b.name.startswith("MSCI World"))
+    msci = next(b for b in INDICES if b.name.startswith("MSCI World"))
     assert msci.variant == "NR"
-    assert benchmark_xrefs(msci) == {"msci": "990100:NETR"}
+    assert index_xrefs(msci) == {"msci": "990100:NETR"}
 
 
 def test_region_for_known_and_msci_and_currency_fallback():
@@ -73,12 +73,12 @@ def test_region_for_known_and_msci_and_currency_fallback():
     assert region_for("Some Unknown Index", None) == "Global"
 
 
-def test_every_registry_benchmark_has_a_region():
-    assert all(b.region for b in BENCHMARKS)
+def test_every_registry_index_has_a_region():
+    assert all(b.region for b in INDICES)
 
 
 def test_regional_indices_in_registry_with_region_and_yahoo_xref():
-    by_name = {b.name: b for b in BENCHMARKS}
+    by_name = {b.name: b for b in INDICES}
     # (yahoo_symbol, region, currency, country) — country: STOXX 600 is pan-"Europe", NOT the EUR
     # fallback "Eurozone" (it spans UK/CH/SE/DK); HK/China resolve via the currency map.
     expected = {
@@ -88,8 +88,8 @@ def test_regional_indices_in_registry_with_region_and_yahoo_xref():
     }
     for name, (ysym, region, ccy, country) in expected.items():
         b = by_name.get(name)
-        assert b is not None, f"{name} should be in the benchmark registry"
-        assert b.yahoo_symbol == ysym and benchmark_xrefs(b)["yahoo"] == ysym
+        assert b is not None, f"{name} should be in the index registry"
+        assert b.yahoo_symbol == ysym and index_xrefs(b)["yahoo"] == ysym
         assert b.region == region and b.currency_code == ccy
         assert b.category == "equity"  # equity → shows on the WEI board
         assert region_for(name, ccy) == region
@@ -97,11 +97,11 @@ def test_regional_indices_in_registry_with_region_and_yahoo_xref():
 
 
 def test_vix_in_registry_as_volatility_with_yahoo_xref():
-    vix = next((b for b in BENCHMARKS if "VIX" in b.name), None)
-    assert vix is not None, "VIX should be in the benchmark registry"
+    vix = next((b for b in INDICES if "VIX" in b.name), None)
+    assert vix is not None, "VIX should be in the index registry"
     assert vix.yahoo_symbol == "^VIX"
     assert vix.category == "volatility"
-    assert benchmark_xrefs(vix)["yahoo"] == "^VIX"
+    assert index_xrefs(vix)["yahoo"] == "^VIX"
 
 
 def test_category_for_defaults_equity_and_flags_vix():
@@ -111,15 +111,15 @@ def test_category_for_defaults_equity_and_flags_vix():
     assert category_for("FTSE 100") == "equity"
     assert category_for("Some Unknown Index") == "equity"
     assert category_for(None) == "equity"
-    # every equity benchmark is category 'equity' (only the VIX is excluded from the board)
-    non_equity = {b.name for b in BENCHMARKS if b.category != "equity"}
+    # every equity index is category 'equity' (only the VIX is excluded from the board)
+    non_equity = {b.name for b in INDICES if b.category != "equity"}
     assert non_equity == {"CBOE Volatility Index (VIX)"}
 
 
-def test_benchmark_xrefs_yahoo_and_legacy_bare_msci():
-    assert benchmark_xrefs(Benchmark("Y", "USD", yahoo_symbol="^Y")) == {"yahoo": "^Y"}
+def test_index_xrefs_yahoo_and_legacy_bare_msci():
+    assert index_xrefs(Index("Y", "USD", yahoo_symbol="^Y")) == {"yahoo": "^Y"}
     # a legacy MSCI entry with no variant keeps the bare code (backward-compatible)
-    assert benchmark_xrefs(Benchmark("Z", "USD", msci_code="999")) == {"msci": "999"}
+    assert index_xrefs(Index("Z", "USD", msci_code="999")) == {"msci": "999"}
 
 
 class _FakeSource:
@@ -172,8 +172,8 @@ def test_load_skips_msci_only_and_loads_yahoo():
 
     conn = _FakeConn()
     bms = [
-        Benchmark("X", "USD", yahoo_symbol="^X"),
-        Benchmark("MSCI-ish", "USD", msci_code="999"),
+        Index("X", "USD", yahoo_symbol="^X"),
+        Index("MSCI-ish", "USD", msci_code="999"),
     ]
     src = _FakeSource([(date(2024, 1, 2), Decimal("100")), (date(2024, 1, 3), Decimal("101"))])
     summary = load_index_levels(conn, src, bms, start=date(2024, 1, 1))
@@ -236,7 +236,7 @@ def test_load_revises_latest_session_to_official_close():
             return d_latest.isoformat(), 108.5  # official differs from the candle
 
     conn = _CaptureConn()
-    bms = [Benchmark("X", "USD", yahoo_symbol="^X")]
+    bms = [Index("X", "USD", yahoo_symbol="^X")]
     load_index_levels(conn, _Src(), bms, start=date(2024, 1, 1))
     by_date = {d: (lv, c) for d, lv, c in conn.writes}
     assert by_date[d_latest] == (Decimal("108.5"), "DO UPDATE")  # official + overwriteable
@@ -261,7 +261,7 @@ def test_load_keeps_candle_when_official_date_does_not_match_latest():
             return today.isoformat(), 108.5  # official is for TODAY (newer) — must not apply
 
     conn = _CaptureConn()
-    bms = [Benchmark("X", "USD", yahoo_symbol="^X")]
+    bms = [Index("X", "USD", yahoo_symbol="^X")]
     load_index_levels(conn, _Src(), bms, start=date(2024, 1, 1))
     assert {d: lv for d, lv, _ in conn.writes}[d_latest] == Decimal("110")  # candle kept
 
@@ -271,7 +271,7 @@ def test_official_quote_parses_meta(monkeypatch):
     import io
     import json
 
-    from sym.benchmarks.levels import YahooIndexLevelSource
+    from sym.indices.levels import YahooIndexLevelSource
 
     payload = {
         "chart": {"result": [{"meta": {

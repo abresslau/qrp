@@ -1,4 +1,4 @@
-"""Universal internal instrument identity — `sym_id` (Benchmark epic, B1).
+"""Universal internal instrument identity — `sym_id` (B1).
 
 `sym_id` is a stable internal surrogate spanning every instrument kind (equity,
 index, …). External vendor identifiers (CompositeFIGI, Yahoo symbol, MSCI code,

@@ -536,7 +536,7 @@ def fx_matrix_live(
         raise HTTPException(status_code=503, detail=f"quote provider unreachable: {exc}") from exc
 
 
-# ---- benchmark indices (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----
+# ---- index indices (level series; e.g. MSCI World NR pulled via `sym msci-pull`) ----
 class IndexSummary(BaseModel):
     sym_id: int
     name: str | None
@@ -615,7 +615,7 @@ class IndexBoardLive(BaseModel):
 
 @router.get("/indices", response_model=list[IndexSummary])
 def indices(gw: DbSymGateway = Depends(_gateway)) -> list[dict]:
-    """Benchmark index instruments that carry level data (one per index×variant)."""
+    """Index instruments that carry level data (one per index×variant)."""
     return gw.indices()
 
 

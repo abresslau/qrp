@@ -604,10 +604,10 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
 def _cmd_msci_import(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.benchmarks.msci import load_msci_file
-    from sym.benchmarks.returns import recompute_index_returns
     from sym.config import load_dotenv
     from sym.db import connect
+    from sym.indices.msci import load_msci_file
+    from sym.indices.returns import recompute_index_returns
     from sym.returns.loader import DEFAULT_LOOKBACK
 
     load_dotenv()
@@ -645,10 +645,10 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
 
     import psycopg
 
-    from sym.benchmarks.msci import MSCI_HISTORY_FLOOR, load_msci_pull
-    from sym.benchmarks.returns import recompute_index_returns
     from sym.config import load_dotenv
     from sym.db import connect
+    from sym.indices.msci import MSCI_HISTORY_FLOOR, load_msci_pull
+    from sym.indices.returns import recompute_index_returns
     from sym.returns.loader import DEFAULT_LOOKBACK
 
     load_dotenv()
@@ -682,15 +682,15 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_benchmarks(args: argparse.Namespace) -> int:
+def _cmd_indices(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.benchmarks.figis import attach_index_figis
-    from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels
-    from sym.benchmarks.links import link_universe_benchmarks
-    from sym.benchmarks.returns import recompute_index_returns
     from sym.config import load_dotenv
     from sym.db import connect
+    from sym.indices.figis import attach_index_figis
+    from sym.indices.levels import YahooIndexLevelSource, load_index_levels
+    from sym.indices.links import link_universe_indices
+    from sym.indices.returns import recompute_index_returns
     from sym.returns.loader import DEFAULT_LOOKBACK
 
     load_dotenv()
@@ -705,13 +705,13 @@ def _cmd_benchmarks(args: argparse.Namespace) -> int:
                 return 0
             summary = load_index_levels(conn, YahooIndexLevelSource())
             rets = recompute_index_returns(conn, start_date=start_date, end_date=end_date)
-            links = link_universe_benchmarks(conn)
+            links = link_universe_indices(conn)
             attached, _ = attach_index_figis(conn)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
     print(
-        f"benchmarks: {summary.instruments} instruments, "
+        f"indices: {summary.instruments} instruments, "
         f"{summary.levels_written} levels written, {summary.deferred} deferred (MSCI), "
         f"{summary.gaps} gaps; index returns: {rets.rows:,} rows / {rets.series} series "
         f"({rets.extreme_rows:,} extreme rows); "
@@ -720,11 +720,11 @@ def _cmd_benchmarks(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
+def _cmd_universe_index(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.benchmarks.links import universe_with_benchmark
     from sym.db import connect
+    from sym.indices.links import universe_with_index
     from sym.universe.registry import UniverseError
 
     as_of_date = date.today()
@@ -736,17 +736,17 @@ def _cmd_universe_benchmark(args: argparse.Namespace) -> int:
             return 1
     try:
         with connect() as conn:
-            snap = universe_with_benchmark(conn, args.universe_id, as_of_date)
+            snap = universe_with_index(conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
-    level = f"{snap.benchmark_level}" if snap.benchmark_level is not None else "n/a"
+    level = f"{snap.index_level}" if snap.index_level is not None else "n/a"
     print(
         f"{args.universe_id!r} as-of {as_of_date.isoformat()}: {len(snap.members)} constituents; "
-        f"primary benchmark sym_id={snap.benchmark_sym_id} level={level}"
+        f"primary index sym_id={snap.index_sym_id} level={level}"
     )
     return 0
 
@@ -816,9 +816,9 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 def _cmd_index_reconcile(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.benchmarks.levels import YahooIndexLevelSource
     from sym.config import load_dotenv
     from sym.db import connect
+    from sym.indices.levels import YahooIndexLevelSource
     from sym.validate.index_levels import check_index_level_fidelity
     from sym.validate.results import FAIL
     from sym.validate.runner import format_report
@@ -1487,16 +1487,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_recompute.add_argument("--end_date", dest="end_date", help="End as_of_date (ISO; default: today).")
     p_recompute.set_defaults(func=_cmd_recompute)
 
-    p_benchmarks = sub.add_parser(
-        "benchmarks",
-        help="Load benchmark index level series (S&P 500, IBOV, …) from Yahoo under sym_id.",
+    p_indices = sub.add_parser(
+        "indices",
+        help="Load index level series (S&P 500, IBOV, …) from Yahoo under sym_id.",
     )
-    p_benchmarks.add_argument(
+    p_indices.add_argument(
         "--attach-figis",
         action="store_true",
         help="Only (re)attach canonical index FIGIs from the static map; skip the level load.",
     )
-    p_benchmarks.set_defaults(func=_cmd_benchmarks)
+    p_indices.set_defaults(func=_cmd_indices)
 
     p_msci = sub.add_parser(
         "msci-import",
@@ -1534,7 +1534,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_eod = sub.add_parser(
         "eod",
-        help="Run the daily EOD pipeline (monitor->fill->map->benchmarks->fx->recompute->validate); "
+        help="Run the daily EOD pipeline (monitor->fill->map->indices->fx->recompute->validate); "
         "scheduler-agnostic.",
     )
     p_eod.add_argument("--dry-run", action="store_true", help="Print the step plan, don't run.")
@@ -1552,7 +1552,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_index_recon = sub.add_parser(
         "index-reconcile",
-        help="Reconcile each benchmark index's stored latest close against the source's official "
+        help="Reconcile each index's stored latest close against the source's official "
         "close (live); warns/fails on divergence. Catches candle-vs-official gaps (e.g. ^BVSP).",
     )
     p_index_recon.add_argument(
@@ -1694,11 +1694,11 @@ def build_parser() -> argparse.ArgumentParser:
     u_coverage.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
     u_coverage.set_defaults(func=_cmd_universe_coverage)
     u_bench = u_sub.add_parser(
-        "benchmark", help="Show a universe's constituents count + linked benchmark level as-of."
+        "index", help="Show a universe's constituents count + linked index level as-of."
     )
     u_bench.add_argument("universe_id", help="The universe slug.")
     u_bench.add_argument("--as_of_date", help="As-of date (ISO; default: today).")
-    u_bench.set_defaults(func=_cmd_universe_benchmark)
+    u_bench.set_defaults(func=_cmd_universe_index)
     u_confirm = u_sub.add_parser(
         "confirm", help="Confirm (or --reject) a pending gated membership-change proposal."
     )

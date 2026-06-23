@@ -1,4 +1,4 @@
-"""Benchmark-index endpoints (MSCI EOD pull story). Route-table + gateway parse, DB-free.
+"""Index endpoints (MSCI EOD pull story). Route-table + gateway parse, DB-free.
 
 The index level data (e.g. MSCI World NR) is pulled into ``index_levels`` by ``sym msci-pull``;
 these endpoints expose it read-only. The gateway is exercised with a fake conn (no DB) that

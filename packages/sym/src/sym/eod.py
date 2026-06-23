@@ -6,7 +6,7 @@ scheduler either calls each ``sym <step>`` as its own task (fine-grained retries
 or runs ``sym eod`` (one cron line). Each step is error-isolated and reports a
 short status; the run fails (non-zero exit) only if a *critical* step fails.
 
-Tiered cadence: the daily core is monitor → fill → map → classify → benchmarks →
+Tiered cadence: the daily core is monitor → fill → map → classify → indices →
 fx → recompute → validate; ``fundamentals`` (weekly) and ``snapshot-calendar``
 (occasional) run on their own schedules and are not in the daily default.
 (``map`` keeps the equity → ``instrument``/``sym_id`` bridge current so
@@ -29,14 +29,14 @@ class EodStep:
     critical: bool = True
 
 
-# The daily core, in order. monitor/map/benchmarks/fx/validate/index-reconcile are non-critical (a
+# The daily core, in order. monitor/map/indices/fx/validate/index-reconcile are non-critical (a
 # hiccup shouldn't fail the night); fill + recompute are the critical data path.
 DAILY_STEPS: tuple[EodStep, ...] = (
     EodStep("monitor", "Discover index-universe membership changes", critical=False),
     EodStep("fill", "Incremental EOD price fill (since each cursor)", critical=True),
     EodStep("map", "Map new securities to instrument identity (sym_id bridge)", critical=False),
     EodStep("classify", "GICS classification (financedatabase + fill chain)", critical=False),
-    EodStep("benchmarks", "Refresh benchmark index levels + returns", critical=False),
+    EodStep("indices", "Refresh index levels + returns", critical=False),
     EodStep("fx", "Daily FX rate fill (Frankfurter)", critical=False),
     EodStep("recompute", "Materialize fact_returns (PR + TR)", critical=True),
     EodStep("validate", "Cross-layer integrity gate", critical=False),
@@ -198,15 +198,15 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 # surface it in the step detail rather than swallowing it.
                 detail += f"; source errors: {', '.join(errored)}"
             return detail
-        if key == "benchmarks":
-            from sym.benchmarks.levels import YahooIndexLevelSource, load_index_levels
-            from sym.benchmarks.links import link_universe_benchmarks
-            from sym.benchmarks.returns import recompute_index_returns
+        if key == "indices":
+            from sym.indices.levels import YahooIndexLevelSource, load_index_levels
+            from sym.indices.links import link_universe_indices
+            from sym.indices.returns import recompute_index_returns
             from sym.returns.loader import DEFAULT_LOOKBACK
 
             lv = load_index_levels(conn, YahooIndexLevelSource())
             recompute_index_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
-            link_universe_benchmarks(conn)
+            link_universe_indices(conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
             from sym.fx.ingest import fill_fx
@@ -238,7 +238,7 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 raise RuntimeError(detail)
             return detail
         if key == "index-reconcile":
-            from sym.benchmarks.levels import YahooIndexLevelSource
+            from sym.indices.levels import YahooIndexLevelSource
             from sym.validate.index_levels import check_index_level_fidelity
 
             r = check_index_level_fidelity(conn, YahooIndexLevelSource())

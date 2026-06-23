@@ -1,6 +1,6 @@
 "use client";
 
-// Live index-close fidelity panel for the Validation page: re-fetches each benchmark index's
+// Live index-close fidelity panel for the Validation page: re-fetches each index's
 // official close from the source and compares it to the latest stored level (the same check as
 // `sym index-reconcile` / the nightly EOD drift monitor). Network-dependent (a few seconds), so it
 // loads in this client panel without blocking the server-rendered runs table above it.

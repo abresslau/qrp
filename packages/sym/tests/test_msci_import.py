@@ -1,4 +1,4 @@
-"""Tests for the MSCI index-level file parser (Benchmark fast-follow). DB-free."""
+"""Tests for the MSCI index-level file parser (index-levels fast-follow). DB-free."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from sym.benchmarks.msci import (
+from sym.indices.msci import (
     fetch_msci_levels,
     msci_xref_value,
     parse_msci_graph_json,

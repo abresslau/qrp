@@ -1,8 +1,8 @@
-"""Canonical index FIGI static map + seeder (Benchmark epic, B6). DB-free."""
+"""Canonical index FIGI static map + seeder (B6). DB-free."""
 
 from __future__ import annotations
 
-from sym.benchmarks.figis import INDEX_FIGIS, attach_index_figis
+from sym.indices.figis import INDEX_FIGIS, attach_index_figis
 
 
 def test_figis_are_well_formed_bbg_ids():

@@ -94,7 +94,7 @@ OPS: dict[str, Op] = {
     ),
     "eod": Op(
         "eod", "EOD pipeline", ("eod",), writes=True,
-        note="Full daily pipeline (monitor->fill->map->benchmarks->fx->recompute->validate).",
+        note="Full daily pipeline (monitor->fill->map->indices->fx->recompute->validate).",
     ),
     "fx_load": Op(
         "fx_load", "FX load (fill)", ("fx", "load"), writes=True,

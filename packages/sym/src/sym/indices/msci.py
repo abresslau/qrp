@@ -1,4 +1,4 @@
-"""MSCI index-level file importer (Benchmark epic fast-follow).
+"""MSCI index-level file importer (Index epic fast-follow).
 
 MSCI indices (e.g. MSCI World Net Total Return) are not on Yahoo and have no FIGI,
 so their level series are loaded from a **downloaded MSCI export** (the EOD
@@ -91,7 +91,7 @@ def parse_msci_graph_json(payload: object) -> list[tuple[date, Decimal]]:
 
 
 def _default_fetch_json(url: str) -> object:
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (QRP sym/benchmarks)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (QRP sym/indices)"})
     with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - fixed MSCI https host
         return json.loads(resp.read().decode("utf-8"))
 

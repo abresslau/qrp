@@ -1,7 +1,7 @@
 """A daily schedule for sym's end-of-day pipeline — Dagster as a *trigger + observer only*.
 
 Deliberately minimal: Dagster does NOT model the EOD steps as a workflow. ``sym`` already owns the
-daily sequence (monitor → fill → map → classify → benchmarks → fx → recompute → validate); this fires the
+daily sequence (monitor → fill → map → classify → indices → fx → recompute → validate); this fires the
 **exact same** `sym eod` CLI an operator runs by hand, then retains the run log and auto-retries
 transient failures. There is no Dagster op-graph, asset-job, or sensor here — one op, one job,
 one schedule.
@@ -54,7 +54,7 @@ def sym_eod(context, config: EodConfig) -> None:
 
     Note: `sym eod` exits non-zero only when a *critical* step (fill/recompute) fails — that is
     what turns the Dagster run red and triggers the retry. Non-critical hiccups (monitor / fx /
-    benchmarks / validate) still exit 0 by sym's design ("a hiccup shouldn't fail the night"), so
+    indices / validate) still exit 0 by sym's design ("a hiccup shouldn't fail the night"), so
     their status lives in the captured run log (the `[FAIL] …` lines), not the run's red/green.
     """
     as_of_date = config.as_of_date.strip()

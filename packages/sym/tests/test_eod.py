@@ -8,7 +8,7 @@ from sym.eod import DAILY_STEPS, run_eod, select_steps
 def test_select_steps_default_order():
     keys = [s.key for s in select_steps()]
     assert keys == [
-        "monitor", "fill", "map", "classify", "benchmarks", "fx", "recompute", "validate",
+        "monitor", "fill", "map", "classify", "indices", "fx", "recompute", "validate",
         "index-reconcile",
     ]
 

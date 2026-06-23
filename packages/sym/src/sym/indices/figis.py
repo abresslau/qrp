@@ -1,4 +1,4 @@
-"""Canonical index FIGIs — a committed static map (Benchmark epic, B6).
+"""Canonical index FIGIs — a committed static map (Index epic, B6).
 
 FIGI is an **optional** cross-reference for index instruments; the spine is
 ``sym_id`` + the Yahoo/MSCI xref. We attach the *canonical* OpenFIGI identifier
@@ -15,7 +15,7 @@ here. The seeder attaches them via ``instrument_xref(source='figi')``.
 Coverage is partial **by design**: only entries that pinned cleanly are listed.
 The rest (S&P family, FTSE 100, Nikkei, Dow, SMI, EURO STOXX 50, …) need a keyed
 OpenFIGI account or a manually-verified id — add them here as ``yahoo_symbol:
-figi`` and re-run ``sym benchmarks --attach-figis``; nothing else changes.
+figi`` and re-run ``sym indices --attach-figis``; nothing else changes.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Index-level source reconciliation — does our stored close match the vendor's official close?
 
 `sym validate` proper is DB-internal (deterministic, runs in the EOD pipeline). This check is the
-complement: a *live* reconciliation that re-fetches each benchmark index's official close from the
+complement: a *live* reconciliation that re-fetches each index's official close from the
 source and compares it to the latest level we stored. It exists because the daily OHLC *candle*
 close a bulk history pull returns can differ from the settled official close for some symbols
 (notably Yahoo ``^BVSP`` / IBOVESPA, whose unsettled current-day candle lags its official close) —
@@ -96,7 +96,7 @@ def reconcile_index_levels(
 
 
 def gather_latest_index_levels(conn) -> list[StoredLevel]:
-    """The latest stored level per Yahoo-sourced benchmark index (the reconciliation universe).
+    """The latest stored level per Yahoo-sourced index (the reconciliation universe).
 
     MSCI aggregates carry an ``msci`` xref (different source/endpoint) and are skipped — they'd need
     their own reconciliation against the MSCI service.

@@ -1,10 +1,14 @@
-"""Link index universes to their benchmark level series (Benchmark epic, B5).
+"""Link index universes to their reference index level series (B5).
 
 An equity-index *universe* holds the point-in-time **constituents**
-(`universe_membership`); the matching *benchmark instrument* holds the published
-**index level/return**. `universe_benchmark` links them, so a study can pull both
-as-of any date. A universe can link to several benchmark instruments (price-return
-and total-return are distinct indices); one is the primary.
+(`universe_membership`); the matching *index instrument* holds the published
+**index level/return**. The `universe_benchmark` table links them (e.g. the sp500
+universe ↔ the S&P 500 index series), so a study can pull both as-of any date.
+This is a plain reference link — the index is NOT a portfolio benchmark; that role
+is established per portfolio in the analytics layer. A universe can link to several
+index instruments (price-return and total-return are distinct indices); one is the
+primary. (The table keeps its historical name `universe_benchmark`; the concept is
+"the universe's reference index".)
 """
 
 from __future__ import annotations
@@ -18,8 +22,8 @@ from sym.identity.instrument import SRC_YAHOO, sym_id_for
 from sym.universe.query import members
 
 # universe_id -> [(yahoo_symbol, role, is_primary)]. The yahoo symbol resolves to
-# the benchmark instrument's sym_id (loaded by `sym benchmarks`).
-UNIVERSE_BENCHMARKS: dict[str, list[tuple[str, str, bool]]] = {
+# the index instrument's sym_id (loaded by `sym indices`).
+UNIVERSE_INDICES: dict[str, list[tuple[str, str, bool]]] = {
     "sp500": [("^GSPC", "price_return", True), ("^SP500TR", "total_return", False)],
     "sp400": [("^MID", "price_return", True)],
     "sp600": [("^SP600", "price_return", True)],
@@ -41,15 +45,15 @@ class LinkSummary:
     skipped_no_instrument: int = 0
 
 
-def link_universe_benchmarks(conn: psycopg.Connection) -> LinkSummary:
-    """Seed `universe_benchmark` from the mapping (idempotent).
+def link_universe_indices(conn: psycopg.Connection) -> LinkSummary:
+    """Seed the `universe_benchmark` link table from the mapping (idempotent).
 
-    Skips a mapping whose universe isn't defined or whose benchmark instrument
-    isn't loaded yet (run `sym benchmarks` first to load the level series).
+    Skips a mapping whose universe isn't defined or whose index instrument
+    isn't loaded yet (run `sym indices` first to load the level series).
     """
     conn.autocommit = True
     summary = LinkSummary()
-    for universe_id, links in UNIVERSE_BENCHMARKS.items():
+    for universe_id, links in UNIVERSE_INDICES.items():
         exists = conn.execute(
             "SELECT 1 FROM universe WHERE universe_id = %s", (universe_id,)
         ).fetchone()
@@ -62,7 +66,7 @@ def link_universe_benchmarks(conn: psycopg.Connection) -> LinkSummary:
                 summary.skipped_no_instrument += 1
                 continue
             # DO UPDATE (not DO NOTHING): edits to a link's role or is_primary in
-            # UNIVERSE_BENCHMARKS must converge into the map on the next run.
+            # UNIVERSE_INDICES must converge into the map on the next run.
             inserted = conn.execute(
                 """
                 INSERT INTO universe_benchmark (universe_id, sym_id, role, is_primary)
@@ -78,8 +82,8 @@ def link_universe_benchmarks(conn: psycopg.Connection) -> LinkSummary:
     return summary
 
 
-def universe_benchmarks(conn: psycopg.Connection, universe_id: str) -> list[dict]:
-    """The benchmark instruments linked to a universe (name + role + primary)."""
+def universe_indices(conn: psycopg.Connection, universe_id: str) -> list[dict]:
+    """The index instruments linked to a universe (name + role + primary)."""
     rows = conn.execute(
         """
         SELECT b.sym_id, i.name, b.role, b.is_primary
@@ -94,8 +98,8 @@ def universe_benchmarks(conn: psycopg.Connection, universe_id: str) -> list[dict
     ]
 
 
-def primary_benchmark(conn: psycopg.Connection, universe_id: str) -> int | None:
-    """The primary benchmark instrument's sym_id for a universe (or None)."""
+def primary_index(conn: psycopg.Connection, universe_id: str) -> int | None:
+    """The primary index instrument's sym_id for a universe (or None)."""
     row = conn.execute(
         "SELECT sym_id FROM universe_benchmark WHERE universe_id = %s AND is_primary",
         (universe_id,),
@@ -108,24 +112,24 @@ class UniverseSnapshot:
     universe_id: str
     as_of_date: date
     members: set[str]
-    benchmark_sym_id: int | None
-    benchmark_level: object | None  # Decimal | None
-    benchmark_level_date: date | None = None  # the session the level was observed on
+    index_sym_id: int | None
+    index_level: object | None  # Decimal | None
+    index_level_date: date | None = None  # the session the level was observed on
 
 
-def universe_with_benchmark(
+def universe_with_index(
     conn: psycopg.Connection, universe_id: str, as_of_date: date
 ) -> UniverseSnapshot:
-    """Point-in-time constituents + the primary benchmark's level, as-of a date.
+    """Point-in-time constituents + the primary reference index's level, as-of a date.
 
     The payoff of the link: who was in the index *and* where the index closed on
     the same date. The carried-back level's own session is surfaced as
-    ``benchmark_level_date`` so a stale series is visible to the caller (the FX
+    ``index_level_date`` so a stale series is visible to the caller (the FX
     resolver's staleness-cap pattern, applied as transparency rather than a cutoff).
-    (Benchmark returns for any window are in `fact_index_returns`.)
+    (Index returns for any window are in `fact_index_returns`.)
     """
     member_figis = members(conn, universe_id, as_of_date)
-    sym_id = primary_benchmark(conn, universe_id)
+    sym_id = primary_index(conn, universe_id)
     level = None
     level_date = None
     if sym_id is not None:

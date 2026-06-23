@@ -344,7 +344,7 @@ export default function WeiPage() {
       ) : rows.length === 0 ? (
         <p className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">
           No index level data yet. Seed indices with <code className="rounded bg-fg/10 px-1">sym msci-pull</code>{" "}
-          or the benchmark loader.
+          or the index loader.
         </p>
       ) : (
         // Scale the whole board to fit the available height: it looks identical on a laptop and a large

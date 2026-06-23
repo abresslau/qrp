@@ -1,6 +1,6 @@
 "use client";
 
-// Benchmark index level series — surfaces index_levels (e.g. MSCI World NR pulled via
+// Index level series — surfaces index_levels (e.g. MSCI World NR pulled via
 // `sym msci-pull`). Lists the available index instruments and draws the selected one's level
 // time-series. Theme-aware via currentColor (SSR-safe; no matchMedia needed). Always live.
 
@@ -249,7 +249,7 @@ export default function IndicesPage() {
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`indices -> ${r.status}`))))
       .then((rows: IndexSummary[]) => {
         if (!alive) return;
-        // MSCI indices first (the benchmark set this page is built for), then alphabetical.
+        // MSCI indices first (the index set this page is built for), then alphabetical.
         const sorted = [...rows].sort((a, b) => {
           const am = a.msci_code ? 0 : 1;
           const bm = b.msci_code ? 0 : 1;
@@ -319,9 +319,9 @@ export default function IndicesPage() {
   return (
     <div className="w-full">
       <header className="mb-4">
-        <h1 className="text-xl font-semibold text-fg">Benchmark indices</h1>
+        <h1 className="text-xl font-semibold text-fg">Indices</h1>
         <p className="mt-1 text-sm text-muted">
-          Level time-series for benchmark indices in the warehouse. MSCI series are pulled directly
+          Level time-series for indices in the warehouse. MSCI series are pulled directly
           from MSCI&apos;s free published EOD data (Net / Price / Gross are separate instruments).
         </p>
       </header>

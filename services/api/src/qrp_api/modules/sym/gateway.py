@@ -1041,11 +1041,11 @@ class DbSymGateway:
         }
 
     def indices(self) -> list[dict]:
-        """Benchmark index instruments that have level data — name, MSCI code+variant (parsed from
+        """Index instruments that have level data — name, MSCI code+variant (parsed from
         the `msci` xref `<code>:<VARIANT>`), currency, asset class, level count, first/last/latest
         level. Lists ALL index instruments incl. non-equity (VIX) — the equity-only filter is the
         WEI board's job, not this list."""
-        from sym.benchmarks.levels import category_for
+        from sym.indices.levels import category_for
 
         rows = self._conn.execute(
             """
@@ -1138,7 +1138,7 @@ class DbSymGateway:
         and every window re-bases to that anchor (the trailing helpers anchor on the clipped series'
         last point, so no formula changes). Omitted ⇒ the latest session (unchanged behaviour); an
         index with no session on-or-before the date drops out (inner join), never a fabricated row."""
-        from sym.benchmarks.levels import category_for, country_for, region_for
+        from sym.indices.levels import category_for, country_for, region_for
 
         c = self._conn
         # The anchor is the latest session per index ≤ as_of_date (or the global latest when omitted).
@@ -1499,9 +1499,9 @@ class DbSymGateway:
 
     def index_reconcile(self) -> dict:
         """Live index-close fidelity check: stored latest level vs the source's official close, per
-        benchmark index. Read-only (SELECTs index_levels/xref + outbound vendor quotes; no writes) —
+        index. Read-only (SELECTs index_levels/xref + outbound vendor quotes; no writes) —
         the same check `sym index-reconcile` runs. Returns the tri-state result for the console."""
-        from sym.benchmarks.levels import YahooIndexLevelSource
+        from sym.indices.levels import YahooIndexLevelSource
         from sym.validate.index_levels import check_index_level_fidelity
 
         r = check_index_level_fidelity(self._conn, YahooIndexLevelSource())
