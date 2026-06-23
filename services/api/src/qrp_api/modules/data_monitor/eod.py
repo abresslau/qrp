@@ -17,7 +17,7 @@ from datetime import date, datetime
 import psycopg
 from lineage.buckets import BUCKETS, SYM, Bucket, Dataset
 
-from qrp_api.config import package_dsn
+from qrp_api.config import dagster_job_url, package_dsn
 from qrp_api.modules.data_monitor.dagster_runs import latest_runs_by_job
 from qrp_api.modules.sym.freshness import classify
 
@@ -247,6 +247,7 @@ class EodMonitorGateway:
             "error": error,
             "subgroups": subgroups,
             "last_run": runs.get(b.key),
+            "dagster_url": dagster_job_url(b.key),
         }
 
     # -- summary header (migrated from the former sym Overview) ----------------------------

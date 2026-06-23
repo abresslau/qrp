@@ -105,6 +105,22 @@ def db_dsn() -> str:
     return package_dsn("sym")
 
 
+def dagster_job_url(job: str) -> str:
+    """Deep link to a bucket's job in the Dagster UI (the lineage code location).
+
+    The bucket jobs are named exactly the bucket keys, so ``{job}`` is the bucket key. Fully
+    overridable for a different host/port or code-location name via ``DAGSTER_JOB_URL_TEMPLATE``
+    (default targets ``dagster dev -m lineage.definitions`` on :3333). The link is best-effort —
+    it just opens the Dagster UI; it doesn't require Dagster to be reachable from the API.
+    """
+    _load_dotenv()
+    tmpl = os.environ.get(
+        "DAGSTER_JOB_URL_TEMPLATE",
+        "http://localhost:3333/locations/lineage.definitions/jobs/{job}",
+    )
+    return tmpl.format(job=job)
+
+
 def sym_readonly_dsn() -> str:
     """Least-privilege DSN for consumer READS of the sym package (Story QH.3).
 

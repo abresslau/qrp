@@ -25,6 +25,7 @@ export type BucketRow = {
   error: string | null;
   subgroups: Subgroup[];
   last_run: Run;
+  dagster_url: string | null;
 };
 
 function pill(status: string): string {
@@ -163,16 +164,30 @@ function BucketRows({ b, subs, expanded, toggleable, onToggle }: {
           </span>
         </td>
         <td className="px-3 py-2.5 text-xs">
-          {b.last_run ? (
-            <span className="flex flex-wrap items-center gap-1.5">
-              <span className={`rounded-full px-2 py-0.5 ring-1 ${pill(b.last_run.status ?? "")}`}>
-                {b.last_run.status ?? "—"}
-              </span>
-              <span className="tabular-nums text-muted/70">{ts(b.last_run.finished_at ?? b.last_run.started_at)}</span>
-            </span>
-          ) : (
-            <span className="text-muted/50">—</span>
-          )}
+          <span className="flex flex-wrap items-center gap-1.5">
+            {b.last_run ? (
+              <>
+                <span className={`rounded-full px-2 py-0.5 ring-1 ${pill(b.last_run.status ?? "")}`}>
+                  {b.last_run.status ?? "—"}
+                </span>
+                <span className="tabular-nums text-muted/70">{ts(b.last_run.finished_at ?? b.last_run.started_at)}</span>
+              </>
+            ) : (
+              <span className="text-muted/50">no run</span>
+            )}
+            {b.dagster_url && (
+              <a
+                href={b.dagster_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                title="Open this job in Dagster"
+                className="text-muted underline-offset-2 hover:text-fg hover:underline"
+              >
+                Dagster ↗
+              </a>
+            )}
+          </span>
         </td>
       </tr>
       {expanded &&

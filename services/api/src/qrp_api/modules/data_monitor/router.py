@@ -55,6 +55,7 @@ class EodBucketRow(BaseModel):
     error: str | None = None
     subgroups: list[EodSubgroup] = []
     last_run: EodRun | None = None
+    dagster_url: str | None = None
 
 
 class EodPipelineRun(BaseModel):
