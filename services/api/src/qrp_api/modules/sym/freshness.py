@@ -34,11 +34,18 @@ def classify(
     as_of_date: date | None,
     latest_session: date | None,
     coverage: str | None = None,
+    stale_after_days: int = STALE_AFTER_DAYS,
 ) -> AreaFreshness:
+    """Classify an area's recency vs the latest session.
+
+    ``stale_after_days`` defaults to the daily-cadence threshold; the Data Monitor passes a
+    larger value for slow-cadence datasets (fundamentals/macro/universe) so a legitimate
+    vendor lag isn't mislabelled "stale".
+    """
     if as_of_date is None:
         return AreaFreshness(area, None, None, "unknown", coverage)
     if latest_session is None:
         return AreaFreshness(area, as_of_date, None, "unknown", coverage)
     days_behind = max(0, (latest_session - as_of_date).days)
-    status = "stale" if days_behind > STALE_AFTER_DAYS else "ok"
+    status = "stale" if days_behind > stale_after_days else "ok"
     return AreaFreshness(area, as_of_date, days_behind, status, coverage)

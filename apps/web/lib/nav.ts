@@ -21,7 +21,6 @@ export type SubnavProvider =
 // sidebar submenu. Tab active-state is an EXACT pathname match; keep hrefs canonical.
 export const SYM_SUBNAV: SubItem[] = [
   { href: "/sym", label: "Universes" },
-  { href: "/sym/overview", label: "Overview" },
   { href: "/sym/explorer", label: "Explorer" },
   { href: "/sym/indices", label: "Indices" },
   { href: "/sym/attention", label: "Attention" },
@@ -38,6 +37,11 @@ export const MONITOR_SUBNAV: SubItem[] = [
   { href: "/monitor/heatmap", label: "Heat map" },
   { href: "/monitor/portfolio-live", label: "Portfolio live" },
 ];
+
+// Data Monitor — the data/ETL observability area (sits near the market Monitor in the rail).
+// Distinct from the market `monitor` boards: this is pipeline health, not market views. v1 = the
+// EOD page (per-bucket expected-vs-actual freshness + Dagster runs); it supersedes the old sym Overview.
+export const DATA_MONITOR_SUBNAV: SubItem[] = [{ href: "/data-monitor/eod", label: "EOD" }];
 
 // rates — the fixed-income curve module (v1 is one page: curve chart + spread monitors).
 export const RATES_SUBNAV: SubItem[] = [{ href: "/rates", label: "Curves & spreads" }];
@@ -60,6 +64,7 @@ async function loadMacroCategories(): Promise<SubItem[]> {
 // edit needed to give a new module a submenu; the shell render code is module-agnostic.
 export const SUBNAV_PROVIDERS: Record<string, SubnavProvider> = {
   monitor: { kind: "static", items: MONITOR_SUBNAV },
+  "data-monitor": { kind: "static", items: DATA_MONITOR_SUBNAV },
   sym: { kind: "static", items: SYM_SUBNAV },
   rates: { kind: "static", items: RATES_SUBNAV },
   macro: { kind: "fetch", load: loadMacroCategories },

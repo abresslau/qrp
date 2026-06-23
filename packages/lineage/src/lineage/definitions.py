@@ -14,6 +14,7 @@ from __future__ import annotations
 from dagster import Definitions, in_process_executor
 
 from .assets import all_assets
+from .bucket_jobs import BUCKET_JOBS
 from .schedules import (
     rates_curve_daily,
     rates_curve_job,
@@ -25,7 +26,9 @@ from .schedules import (
 
 defs = Definitions(
     assets=all_assets(),
-    jobs=[sym_eod_job, rates_curve_job, rates_world_job],
+    # The coarse pipeline jobs (sym_eod / rates) PLUS the nine config-driven bucket jobs (fx,
+    # equity_prices, index_levels, rates, fundamental, alt_data, macro, universe, calculations).
+    jobs=[sym_eod_job, rates_curve_job, rates_world_job, *BUCKET_JOBS],
     schedules=[sym_eod_daily, rates_curve_daily, rates_world_daily],
     executor=in_process_executor,
 )

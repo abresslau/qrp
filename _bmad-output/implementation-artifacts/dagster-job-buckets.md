@@ -25,11 +25,25 @@ so that I have one obvious, uniform way to trigger and backfill any slice of the
 reload rates for `DE` and `US` as of 2026-06-18", or "re-pull equity prices for `sp500` only") without
 hand-typing CLI flags or modelling a bespoke job per slice.
 
+And (**Part B**) I want a new top-level **Data Monitor** area whose first page, **EOD**, shows the warehouse
+**broken down by those same nine buckets** — each row reporting **expected business date vs the actual
+latest date** (a clear ok/stale/missing verdict) and, **if easily available**, the **latest Dagster run**
+for that bucket's job — so that every morning I can see at a glance which datasets are current, which are
+behind, and which job last touched each one, in one place. **Data Monitor is the home for ALL data/ETL
+monitoring**, so it **supersedes and replaces the sym _Overview_ page** (whose freshness + last-run +
+warehouse-summary content moves here); the old `/sym/overview` page is removed.
+
 ## Scope / non-goals (read first)
 
-- **Surface = Dagster** (the launchpad + Jobs list at `uv run dagster dev -m lineage.definitions -p 3333`),
-  NOT the QRP console. No `apps/web` changes. The Operate panel is a possible follow-on surface, out of
-  scope here.
+- **Two parts, built B-then-A (Andre: "create the Data Monitor first").** **Part B** = a read-only
+  **Data Monitor** area (a new top-level rail area) whose first page **EOD** (`apps/web` + a small
+  aggregating API endpoint) reports each bucket's freshness + latest run, and which **supersedes the sym
+  Overview page**. **Part A** = the nine Dagster jobs (trigger/backfill surface = the Dagster launchpad at
+  `uv run dagster dev -m lineage.definitions -p 3333`). The two share ONE bucket taxonomy (below) — build
+  it first, since both parts consume it.
+- **Single source of truth for the bucket taxonomy.** The nine buckets + their datasets live in ONE
+  import-light module (`lineage/buckets.py`, NO top-level `dagster` import) consumed by BOTH the job
+  builder (Part A) and the EOD monitor gateway (Part B). Adding/removing a bucket is a one-place edit.
 - **Do NOT reinvent the steps.** sym and rates already own every load/compute step behind idempotent CLI
   commands. Each bucket op **shells the exact same CLI an operator would type** (the established
   `packages/lineage/src/lineage/schedules.py` pattern), capturing stdout into the run log. No new ingest
@@ -107,7 +121,7 @@ recompute), so "for any given date" and "safe to re-run" come for free from the 
 Hardcoding the universe/country list would silently drift from what's actually loaded
 ([[project_universe_reload_no_gaps]] is the analogous "the list is the only guard" lesson) — discover it.
 
-## Acceptance Criteria
+## Acceptance Criteria — Part A (Dagster jobs)
 
 1. **Nine bucket jobs exist** in the Dagster code location, named exactly `fx`, `equity_prices`,
    `index_levels`, `rates`, `fundamental`, `alt_data`, `macro`, `universe`, `calculations`, each registered
@@ -148,7 +162,7 @@ Hardcoding the universe/country list would silently drift from what's actually l
    deps / config-schema errors), and the nine jobs render in `uv run dagster dev`. Record the validate
    output + a launchpad screenshot/dump in the story's Dev Agent Record. Do NOT enable any schedule.
 
-## Tasks / Subtasks
+## Tasks / Subtasks — Part A (Dagster jobs)
 
 - [ ] **Task 1 — Bucket spec + subcategory discovery** (AC: #1, #5)
   - [ ] Define a single `buckets.py` (in `packages/lineage/src/lineage/`) describing the nine buckets:
@@ -261,6 +275,94 @@ thin follow-on op-graph; keep it out of this story unless Andre asks.
 - [Source: packages/sym/src/sym/cli.py — `sym load --scope universe:<id> [--start_date --end_date]`, `sym fundamentals --all|--universe`, `sym recompute --start_date --end_date`, `sym benchmarks`, `sym classify`, `sym fx load`]
 - [Source: docs/runbook.md §4–§8 — scope semantics, finisher sequence, `sym eod` step list + critical/non-critical design]
 - Memories: [[data_manager_direction]], [[project_universe_reload_no_gaps]], [[feedback_schedule_explicit_timezone]], [[feedback_as_of_date_canonical_name]]
+
+## Acceptance Criteria — Part B (Data Monitor › EOD page)
+
+10. **New top-level "Data Monitor" area** with first page **EOD** at `/data-monitor/eod`. Register a
+    `[[modules]] key="data-monitor" name="Data Monitor"` in `platform.toml` (its own rail entry, distinct
+    from the market `monitor` boards — unlike `monitor`, this area DOES mount a backend router). Add a
+    `DATA_MONITOR_SUBNAV` + `SUBNAV_PROVIDERS["data-monitor"]` in `apps/web/lib/nav.ts` and a
+    `app/data-monitor/layout.tsx` tab strip mirroring `app/monitor/layout.tsx`, so it surfaces in the rail
+    + submenu + command palette with no further shell edit (NFR-10 registry).
+11. **One row per bucket** (the same nine, same order as Part A), each showing: the bucket name, its
+    **dataset(s)** (e.g. `rates` → `rates.curve_point`; `equity_prices` → `sym.prices_raw`), the **actual
+    latest business date** in the data, the **expected business date**, a **days-behind** count, and an
+    **ok / stale / missing** status chip. Buckets with sub-breakdowns surface the worst-lagging
+    subcategory (e.g. "rates: 15/16 current — CH 3d behind") rather than a single global max that hides a
+    laggard.
+12. **Expected vs actual is honest and per-market, never a naive global `max(date)`.** Reuse the existing
+    freshness machinery: `classify()` (ok/stale/unknown) and the Overview's **broadly-complete coverage
+    session** technique for the wide datasets (prices/returns) so one fresh sub-universe can't mask a stale
+    rest (the documented max-masks-laggards trap, [[project_freshness_per_market]]). "Expected" is the
+    latest trading session ≤ today for the dataset's market where a calendar is available (sym owns the
+    calendar), falling back to the `STALE_AFTER_DAYS` day-count proxy that `freshness.py` already uses —
+    and the page must SAY which basis it used (no fake precision).
+13. **Latest Dagster run per bucket — best-effort, gracefully optional.** If the Dagster GraphQL endpoint
+    is reachable (default `http://127.0.0.1:3333/graphql`, override `DAGSTER_GRAPHQL_URL`), show the bucket
+    job's most-recent run: status (success/failure/started) + finished/started timestamp. If it is
+    unreachable or returns nothing (e.g. `dagster dev` isn't running), the column degrades to "—" / "run
+    info unavailable" — it NEVER errors the page and NEVER blocks the freshness rows. As a secondary
+    already-in-DB signal, the page may also show the latest `pipeline_run_log` / `operate.job` row for the
+    sym-backed buckets (these exist without Dagster running).
+14. **One aggregating endpoint, read-only, resilient.** A single `GET /api/data-monitor/eod` returns the
+    per-bucket payload (datasets, expected, actual, days_behind, status, coverage note, run info). It reads
+    each package's DB read-only (sym + rates + macro + altdata) and NEVER writes. A failure reading one
+    bucket's dataset (or a dead Dagster endpoint) degrades that field to `unknown`/`null` and still returns
+    the rest — one source down must not 500 the whole page.
+16. **Sym Overview is removed (superseded).** Delete `apps/web/app/sym/overview/page.tsx`, drop the
+    "Overview" entry from `SYM_SUBNAV`, and remove `GET /api/sym/overview` + `DbSymGateway.overview()` +
+    the `SymOverview`/`LastRun` models once EOD covers their content. **Migrate, don't lose:** the
+    warehouse-summary counts (securities, universes, priced, latest session) move to a small header strip on
+    the EOD page; freshness + last-run are now the per-bucket rows. **Keep `sym/freshness.py`**
+    (`classify`, `STALE_AFTER_DAYS`, the coverage-session technique) — the EOD gateway reuses it. Retire or
+    re-point `services/api/tests/test_sym_overview.py` (its `classify` cases move to the EOD test).
+15. **Tests:** API unit tests that (a) the endpoint shape covers all nine buckets; (b) expected-vs-actual
+    classification (ok vs stale vs missing) is correct given stubbed dataset dates; (c) a dead Dagster
+    endpoint yields `null` run info, not an exception; (d) one bucket's dataset query raising degrades only
+    that row. DB-free via stubbed connections/HTTP (mirrors the existing api test style). Web: a render
+    test for the page if the vitest harness covers it (else CDP-verify per the local-tooling constraint
+    [[feedback_minimize_dev_churn]]).
+
+## Tasks / Subtasks — Part B (Data Monitor › EOD page)
+
+- [ ] **Task 6 — Shared dataset metadata on the bucket taxonomy** (AC: #11, #14)
+  - [ ] Extend `lineage/buckets.py` (the import-light single source) so each bucket carries its
+        dataset descriptor(s): `(db, table, date_column)` + whether it's a "wide" dataset that needs the
+        broadly-complete-coverage-session treatment. Keep it dagster-free so the API can import it.
+- [ ] **Task 7 — EOD monitor gateway** (AC: #11, #12, #14)
+  - [ ] New gateway (e.g. `services/api/src/qrp_api/modules/monitor/eod.py`) that, per bucket, opens the
+        owning package's read-only connection and computes actual latest date + expected (calendar session
+        where available, else day-count proxy) + `classify()` status + a coverage note. Reuse
+        `sym/freshness.py` (`classify`, `STALE_AFTER_DAYS`) and the Overview coverage-session SQL; do not
+        re-derive sym's calendar logic — read the latest session it already exposes.
+  - [ ] Per-bucket try/except so one unreadable dataset degrades to `unknown`, never 500s the route.
+- [ ] **Task 8 — Best-effort Dagster run lookup** (AC: #13)
+  - [ ] A small helper that POSTs a GraphQL `runsOrError` query (filter by job/pipeline name) to
+        `DAGSTER_GRAPHQL_URL` (default `http://127.0.0.1:3333/graphql`) with a SHORT timeout; map to
+        `{status, started_at, finished_at}` per bucket. Any error/timeout → `None` (logged once, not raised).
+  - [ ] Fallback: latest `pipeline_run_log` row (sym-backed buckets) so there's a signal even with Dagster
+        down. Label the source so the operator knows where the run info came from.
+- [ ] **Task 9 — API route + new area module** (AC: #10, #14)
+  - [ ] New router (e.g. `services/api/src/qrp_api/modules/data_monitor/router.py`) exposing
+        `GET /api/data-monitor/eod` → `EodMonitor` response model (list of `EodBucketRow`). Mount it in
+        `main.py`. Add the `data-monitor` `[[modules]]` entry to `platform.toml`. Regenerate `api-types.ts`
+        (or hand-add types consistently, per the running-server constraint).
+- [ ] **Task 10 — Page + nav** (AC: #10, #11, #13)
+  - [ ] `apps/web/app/data-monitor/eod/page.tsx` + `app/data-monitor/layout.tsx` (tab strip mirroring
+        `app/monitor/layout.tsx`): a dense table (two-tier density [[feedback_responsive_density_two_tier]],
+        date-axis-free) — bucket · datasets · expected · actual · days-behind · status chip · last run, with
+        a small warehouse-summary header (the migrated Overview counts). Reuse the console status
+        vocabulary/colours (ok/stale/unknown).
+  - [ ] `DATA_MONITOR_SUBNAV = [{ href: "/data-monitor/eod", label: "EOD" }]` + register under
+        `SUBNAV_PROVIDERS["data-monitor"]` in `nav.ts`.
+- [ ] **Task 11 — Remove the sym Overview (superseded)** (AC: #16)
+  - [ ] Delete `app/sym/overview/page.tsx`; drop the "Overview" item from `SYM_SUBNAV`; remove
+        `GET /api/sym/overview` + `overview()` + `SymOverview`/`LastRun`. Keep `sym/freshness.py` (reused).
+        Re-point/retire `test_sym_overview.py`. Confirm no other consumer of `/api/sym/overview` before
+        deleting (grep `api-status.tsx`, `sym/page.tsx`).
+- [ ] **Task 12 — Tests + verify** (AC: #15)
+  - [ ] API tests per AC#15; ruff clean; restart API + CDP-verify `/data-monitor/eod` renders (real Chrome
+        dump-dom) and `/sym/overview` is gone, given the web-tooling-not-runnable-locally constraint.
 
 ## Open Design Questions (defaults chosen — non-blocking)
 

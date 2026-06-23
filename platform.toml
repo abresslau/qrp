@@ -16,6 +16,14 @@ name = "monitor"
 description = "Market boards — world equity indices, heat map, portfolio live"
 enabled = true
 
+# Data/ETL observability. Unlike `monitor` (frontend-only market boards) this area mounts a thin
+# backend router (`/api/data-monitor/*`) that aggregates per-package freshness + Dagster runs.
+[[modules]]
+key = "data-monitor"
+name = "Data Monitor"
+description = "Data/ETL observability — per-bucket EOD freshness + pipeline runs"
+enabled = true
+
 [[modules]]
 key = "sym"
 name = "sym"

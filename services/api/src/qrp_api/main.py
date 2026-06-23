@@ -277,6 +277,10 @@ def create_app() -> FastAPI:
         from qrp_api.modules.lineage.router import router as lineage_router
 
         app.include_router(lineage_router)
+    if "data-monitor" in enabled:  # gateway-resident; aggregates per-package freshness + runs
+        from qrp_api.modules.data_monitor.router import router as data_monitor_router
+
+        app.include_router(data_monitor_router)
 
     _use_route_names_as_operation_ids(app)
     return app

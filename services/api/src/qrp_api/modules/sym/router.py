@@ -29,33 +29,6 @@ class SymHealth(BaseModel):
     healthy: bool
 
 
-class FreshnessItem(BaseModel):
-    area: str
-    as_of_date: str | None
-    days_behind: int | None
-    status: str
-    coverage: str | None = None
-
-
-class LastRun(BaseModel):
-    run_id: str | None
-    mode: str | None
-    status: str | None
-    started_at: str | None
-    finished_at: str | None
-    rows_written: int | None
-
-
-class SymOverview(BaseModel):
-    securities: int
-    universes: int
-    priced_securities: int
-    priced_at_latest: int
-    latest_session: str | None
-    freshness: list[FreshnessItem]
-    last_run: LastRun | None
-
-
 class UniverseSummary(BaseModel):
     universe_id: str
     name: str | None
@@ -334,42 +307,6 @@ class FxMatrixLive(BaseModel):
 @router.get("/health", response_model=SymHealth)
 def sym_health(gw: DbSymGateway = Depends(_gateway)) -> dict:
     return {"module": "sym", "healthy": gw.healthy()}
-
-
-@router.get("/overview", response_model=SymOverview)
-def overview(gw: DbSymGateway = Depends(_gateway)) -> dict:
-    o = gw.overview()
-    return {
-        "securities": o.securities,
-        "universes": o.universes,
-        "priced_securities": o.priced_securities,
-        "priced_at_latest": o.priced_at_latest,
-        "latest_session": o.latest_session.isoformat() if o.latest_session else None,
-        "freshness": [
-            {
-                "area": f.area,
-                "as_of_date": f.as_of_date.isoformat() if f.as_of_date else None,
-                "days_behind": f.days_behind,
-                "status": f.status,
-                "coverage": f.coverage,
-            }
-            for f in o.freshness
-        ],
-        "last_run": (
-            {
-                "run_id": o.last_run.run_id,
-                "mode": o.last_run.mode,
-                "status": o.last_run.status,
-                "started_at": o.last_run.started_at.isoformat() if o.last_run.started_at else None,
-                "finished_at": (
-                    o.last_run.finished_at.isoformat() if o.last_run.finished_at else None
-                ),
-                "rows_written": o.last_run.rows_written,
-            }
-            if o.last_run
-            else None
-        ),
-    }
 
 
 @router.get("/universes", response_model=list[UniverseSummary])

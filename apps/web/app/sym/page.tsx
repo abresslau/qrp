@@ -128,7 +128,7 @@ export default async function UniversesPage() {
         <span className="text-amber-600 dark:text-amber-400">partial</span> = some members lag/missing ·{" "}
         <span className="text-rose-600 dark:text-rose-400">missing</span> = none. Fundamentals are
         low-cadence (reported ~quarterly), so a recent-enough figure counts as covered. Warehouse
-        health + per-area freshness is on <Link href="/sym/overview" className="underline">Overview</Link>.
+        health + per-area freshness is on <Link href="/data-monitor/eod" className="underline">Data Monitor</Link>.
       </p>
     </div>
   );
