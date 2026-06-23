@@ -14,11 +14,18 @@ from __future__ import annotations
 from dagster import Definitions, in_process_executor
 
 from .assets import all_assets
-from .schedules import rates_curve_daily, rates_curve_job, sym_eod_daily, sym_eod_job
+from .schedules import (
+    rates_curve_daily,
+    rates_curve_job,
+    rates_world_daily,
+    rates_world_job,
+    sym_eod_daily,
+    sym_eod_job,
+)
 
 defs = Definitions(
     assets=all_assets(),
-    jobs=[sym_eod_job, rates_curve_job],
-    schedules=[sym_eod_daily, rates_curve_daily],
+    jobs=[sym_eod_job, rates_curve_job, rates_world_job],
+    schedules=[sym_eod_daily, rates_curve_daily, rates_world_daily],
     executor=in_process_executor,
 )

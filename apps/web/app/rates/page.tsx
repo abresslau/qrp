@@ -1,6 +1,6 @@
 "use client";
 
-// UK rates — the fixed-income curve view. Derive-on-read over rates.curve_point (BoE curves):
+// Rates — the multi-country fixed-income curve view. Derive-on-read over rates.curve_point (BoE curves):
 // a curve chart (spot/forward × nominal/real/inflation + OIS) plus spread monitors (2s10s, fly,
 // breakeven, asset-swap) with z-score/percentile context and a click-through history chart.
 // EOD-only (a live mark is a later story). Theme-aware via currentColor; SSR-safe; newest-wins fetch.
@@ -11,10 +11,35 @@ import { axisTickCount, dateAxisTicks, tickAnchor } from "@/lib/date-axis";
 
 type CurvePoint = { tenor: number; value: number };
 type Curve = {
+  country?: string;
   curve_set: string;
   basis: string;
   rate_type: string;
   vintage: string;
+  as_of_date: string | null;
+  points: CurvePoint[];
+};
+type Series = {
+  country: string;
+  curve_set: string;
+  basis: string;
+  rate_type: string;
+  days: number;
+  start_date: string | null;
+  end_date: string | null;
+};
+type CountryRow = {
+  country: string;
+  currency: string | null;
+  start_date: string | null;
+  end_date: string | null;
+};
+type CompareCurve = {
+  country: string;
+  currency: string | null;
+  curve_set: string;
+  basis: string;
+  rate_type: string;
   as_of_date: string | null;
   points: CurvePoint[];
 };
@@ -31,9 +56,29 @@ type Spread = {
 };
 type SpreadHistory = { key: string; label: string; unit: string; points: SparkPoint[] };
 
-type CurveSet = "glc" | "ois";
-type Basis = "nominal" | "real" | "inflation";
-type RateType = "spot" | "forward";
+// Country display: short label + a stable overlay colour (used in the cross-country compare chart).
+const CNAME: Record<string, string> = {
+  GB: "UK", DE: "Germany", EU: "Euro area", FR: "France", IT: "Italy", ES: "Spain",
+  US: "US", JP: "Japan", CH: "Switzerland", CA: "Canada", AU: "Australia", NZ: "New Zealand",
+  SE: "Sweden", NO: "Norway", HK: "Hong Kong", BR: "Brazil",
+};
+const CCOLOR: Record<string, string> = {
+  GB: "#0ea5e9", DE: "#10b981", EU: "#6366f1", FR: "#f59e0b", IT: "#a78bfa", ES: "#f43f5e",
+  US: "#ef4444", JP: "#14b8a6", CH: "#eab308", CA: "#fb923c", AU: "#22c55e", NZ: "#06b6d4",
+  SE: "#8b5cf6", NO: "#ec4899", HK: "#84cc16", BR: "#f97316",
+};
+const cLabel = (c: string) => CNAME[c] ?? c;
+const cColor = (c: string) => CCOLOR[c] ?? "#64748b";
+
+// Preferred ordering when a country publishes several series — its richest nominal curve wins.
+const CS_RANK = (c: string) => {
+  const i = ["glc", "govt", "ois", "irs"].indexOf(c);
+  return i < 0 ? 9 : i;
+};
+const RT_RANK = (c: string) => {
+  const i = ["spot", "par", "yield", "forward"].indexOf(c);
+  return i < 0 ? 9 : i;
+};
 
 const fmtVal = (v: number | null | undefined, unit: string): string => {
   if (v == null || !Number.isFinite(v)) return "N/A";
@@ -439,15 +484,23 @@ function Seg<T extends string>({ value, options, onChange }: { value: T; options
 }
 
 export default function RatesPage() {
-  const [curveSet, setCurveSet] = useState<CurveSet>("glc");
-  const [basis, setBasis] = useState<Basis>("nominal");
-  const [rateType, setRateType] = useState<RateType>("spot");
+  const [country, setCountry] = useState<string>("GB");
+  const [countries, setCountries] = useState<CountryRow[]>([]);
+  const [series, setSeries] = useState<Series[]>([]);
+  const [curveSet, setCurveSet] = useState<string>("glc");
+  const [basis, setBasis] = useState<string>("nominal");
+  const [rateType, setRateType] = useState<string>("spot");
   const [curve, setCurve] = useState<Curve | null>(null);
   const [curveErr, setCurveErr] = useState<string | null>(null);
   const curveAbort = useRef<AbortController | null>(null);
   const [compare, setCompare] = useState<Set<string>>(new Set());
   const [compareCurves, setCompareCurves] = useState<Record<string, Curve>>({});
   const cmpAbort = useRef<AbortController | null>(null);
+
+  // cross-country comparison: overlay several countries' latest primary curves on one tenor axis
+  const [xcCountries, setXcCountries] = useState<Set<string>>(new Set(["GB"]));
+  const [xcCurves, setXcCurves] = useState<CompareCurve[]>([]);
+  const xcAbort = useRef<AbortController | null>(null);
 
   // timelapse: a "movie" of historical curves (oldest→latest) animated frame by frame
   type Frame = { as_of_date: string; points: CurvePoint[] };
@@ -464,19 +517,85 @@ export default function RatesPage() {
   const [histWindow, setHistWindow] = useState<"1Y" | "5Y" | "MAX">("MAX");
   const histAbort = useRef<AbortController | null>(null);
 
-  // OIS publishes nominal only — keep the basis valid when switching curve sets.
+  // the list of countries (for the switcher) — once.
   useEffect(() => {
-    if (curveSet === "ois" && basis !== "nominal") setBasis("nominal");
-  }, [curveSet, basis]);
+    let alive = true;
+    fetch("/api/rates/countries", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`countries -> ${r.status}`))))
+      .then((rows: CountryRow[]) => alive && setCountries(rows))
+      .catch(() => alive && setCountries([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // which (curve_set, basis, rate_type) the selected country actually publishes.
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/rates/curve/series?country=${country}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`series -> ${r.status}`))))
+      .then((rows: Series[]) => alive && setSeries(rows))
+      .catch(() => alive && setSeries([]));
+    return () => {
+      alive = false;
+    };
+  }, [country]);
+
+  // option lists derived from what this country publishes (replaces the UK-only OIS special-case).
+  const curveSetOptions = useMemo(
+    () => [...new Set(series.map((s) => s.curve_set))].sort((a, b) => CS_RANK(a) - CS_RANK(b)),
+    [series],
+  );
+  const basisOptions = useMemo(
+    () =>
+      [...new Set(series.filter((s) => s.curve_set === curveSet).map((s) => s.basis))].sort(),
+    [series, curveSet],
+  );
+  const rateTypeOptions = useMemo(
+    () =>
+      [
+        ...new Set(
+          series
+            .filter((s) => s.curve_set === curveSet && s.basis === basis)
+            .map((s) => s.rate_type),
+        ),
+      ].sort((a, b) => RT_RANK(a) - RT_RANK(b)),
+    [series, curveSet, basis],
+  );
+
+  // when the country's series arrive (or change), snap the selection to its richest nominal curve.
+  useEffect(() => {
+    if (series.length === 0) return;
+    const nominal = series.filter((s) => s.basis === "nominal");
+    const pool = nominal.length ? nominal : series;
+    const best = [...pool].sort(
+      (a, b) =>
+        CS_RANK(a.curve_set) - CS_RANK(b.curve_set) ||
+        RT_RANK(a.rate_type) - RT_RANK(b.rate_type) ||
+        b.days - a.days,
+    )[0];
+    setCurveSet(best.curve_set);
+    setBasis(best.basis);
+    setRateType(best.rate_type);
+  }, [series]);
+
+  // keep basis/rate_type valid as curve_set/basis change within a country (generic clamp).
+  useEffect(() => {
+    if (basisOptions.length && !basisOptions.includes(basis)) setBasis(basisOptions[0]);
+  }, [basisOptions, basis]);
+  useEffect(() => {
+    if (rateTypeOptions.length && !rateTypeOptions.includes(rateType)) setRateType(rateTypeOptions[0]);
+  }, [rateTypeOptions, rateType]);
 
   useEffect(() => {
+    // don't fetch until the selection is consistent with what this country publishes.
+    if (series.length === 0 || !curveSetOptions.includes(curveSet)) return;
+    if (basisOptions.length && !basisOptions.includes(basis)) return;
+    if (rateTypeOptions.length && !rateTypeOptions.includes(rateType)) return;
     curveAbort.current?.abort();
     const ac = new AbortController();
     curveAbort.current = ac;
-    // OIS publishes nominal only — clamp here so no request is issued for an unpublished
-    // (ois, real/inflation) combo on the frame before the correcting effect settles `basis`.
-    const effBasis = curveSet === "ois" ? "nominal" : basis;
-    const qs = `curve_set=${curveSet}&basis=${effBasis}&rate_type=${rateType}`;
+    const qs = `country=${country}&curve_set=${curveSet}&basis=${basis}&rate_type=${rateType}`;
     void (async () => {
       setCurveErr(null);
       try {
@@ -489,7 +608,7 @@ export default function RatesPage() {
       }
     })();
     return () => ac.abort();
-  }, [curveSet, basis, rateType]);
+  }, [country, curveSet, basis, rateType, series, curveSetOptions, basisOptions, rateTypeOptions]);
 
   // historical comparison overlays — fetch each active offset's curve (as-of the latest curve date
   // minus the offset). Re-runs when the selection changes (new series) or the toggle set changes.
@@ -502,14 +621,13 @@ export default function RatesPage() {
     cmpAbort.current?.abort();
     const ac = new AbortController();
     cmpAbort.current = ac;
-    const effBasis = curveSet === "ois" ? "nominal" : basis;
     void (async () => {
       const got = await Promise.all(
         COMPARE_OFFSETS.filter((o) => compare.has(o.key)).map(async (o) => {
           const target = offsetDate(anchor, o.off);
           try {
             const r = await fetch(
-              `/api/rates/curve?curve_set=${curveSet}&basis=${effBasis}&rate_type=${rateType}&as_of_date=${target}`,
+              `/api/rates/curve?country=${country}&curve_set=${curveSet}&basis=${basis}&rate_type=${rateType}&as_of_date=${target}`,
               { cache: "no-store", signal: ac.signal },
             );
             if (!r.ok) return null;
@@ -523,18 +641,46 @@ export default function RatesPage() {
       setCompareCurves(Object.fromEntries(got.filter(Boolean) as (readonly [string, Curve])[]));
     })();
     return () => ac.abort();
-  }, [curve?.as_of_date, compare, curveSet, basis, rateType]);
+  }, [curve?.as_of_date, compare, country, curveSet, basis, rateType]);
 
   useEffect(() => {
     let alive = true;
-    fetch("/api/rates/spreads", { cache: "no-store" })
+    setSpreads(null);
+    setSelKey(null);
+    fetch(`/api/rates/spreads?country=${country}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`spreads -> ${r.status}`))))
       .then((rows: Spread[]) => alive && setSpreads(rows))
       .catch(() => alive && setSpreads([]));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [country]);
+
+  // cross-country comparison overlay — each selected country's latest primary curve, one axis.
+  useEffect(() => {
+    if (xcCountries.size === 0) {
+      setXcCurves([]);
+      return;
+    }
+    xcAbort.current?.abort();
+    const ac = new AbortController();
+    xcAbort.current = ac;
+    const list = [...xcCountries].join(",");
+    void (async () => {
+      try {
+        const r = await fetch(`/api/rates/curve/compare?countries=${list}`, {
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (!r.ok) throw new Error(`${r.status}`);
+        const d: CompareCurve[] = await r.json();
+        if (!ac.signal.aborted) setXcCurves(d);
+      } catch {
+        /* keep prior */
+      }
+    })();
+    return () => ac.abort();
+  }, [xcCountries]);
 
   useEffect(() => {
     if (selKey == null) return;
@@ -543,7 +689,10 @@ export default function RatesPage() {
     histAbort.current = ac;
     void (async () => {
       try {
-        const r = await fetch(`/api/rates/spread/${selKey}?window=${histWindow}`, { cache: "no-store", signal: ac.signal });
+        const r = await fetch(
+          `/api/rates/spread/${selKey}?window=${histWindow}&country=${country}`,
+          { cache: "no-store", signal: ac.signal },
+        );
         if (!r.ok) throw new Error(`${r.status}`);
         const d: SpreadHistory = await r.json();
         if (!ac.signal.aborted) setHist(d);
@@ -552,7 +701,7 @@ export default function RatesPage() {
       }
     })();
     return () => ac.abort();
-  }, [selKey, histWindow]);
+  }, [selKey, histWindow, country]);
 
   // drive the timelapse: advance one frame at a time; stop at the last (latest)
   useEffect(() => {
@@ -570,9 +719,7 @@ export default function RatesPage() {
     setPlaying(false);
     setMovie(null);
     setFrameIdx(0);
-  }, [curveSet, basis, rateType]);
-
-  const bases: Basis[] = curveSet === "ois" ? ["nominal"] : ["nominal", "real", "inflation"];
+  }, [country, curveSet, basis, rateType]);
 
   const toggleCompare = (key: string) =>
     setCompare((prev) => {
@@ -594,18 +741,17 @@ export default function RatesPage() {
       return;
     }
     if (!curve?.as_of_date) return;
-    const effB = curveSet === "ois" ? "nominal" : basis;
     // window starts at the OLDEST selected comparison (e.g. 1Y → last year); default 1Y if none picked.
     const selected = COMPARE_OFFSETS.filter((o) => compare.has(o.key));
     const oldest = selected.length ? selected[selected.length - 1] : COMPARE_OFFSETS[COMPARE_OFFSETS.length - 1];
     const startDate = offsetDate(curve.as_of_date, oldest.off);
-    const key = `${curveSet}/${effB}/${rateType}/${startDate}`;
+    const key = `${country}/${curveSet}/${basis}/${rateType}/${startDate}`;
     let mv = movieCache.current[key];
     if (!mv) {
       setMovieLoading(true);
       try {
         const r = await fetch(
-          `/api/rates/curve/movie?curve_set=${curveSet}&basis=${effB}&rate_type=${rateType}&frames=120&start_date=${startDate}`,
+          `/api/rates/curve/movie?country=${country}&curve_set=${curveSet}&basis=${basis}&rate_type=${rateType}&frames=120&start_date=${startDate}`,
           { cache: "no-store" },
         );
         if (!r.ok) throw new Error(`${r.status}`);
@@ -673,21 +819,67 @@ export default function RatesPage() {
     ];
   }, [playing, movie, frameIdx, curve, compare, compareCurves, movieDomains]);
 
+  // cross-country compare: one line per selected country, its own colour, on the shared tenor axis.
+  const xcLines: CurveLine[] = useMemo(
+    () =>
+      xcCurves
+        .filter((c) => c.points.length >= 2)
+        .map((c) => ({
+          points: c.points,
+          stroke: cColor(c.country),
+          width: 1.8,
+          label: cLabel(c.country),
+        })),
+    [xcCurves],
+  );
+  const toggleXc = (code: string) =>
+    setXcCountries((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+
   return (
     <div className="w-full">
-      <header className="mb-4">
-        <h1 className="text-xl font-semibold text-fg">UK rates</h1>
-        <p className="mt-1 text-sm text-muted">
-          Bank of England gilt &amp; SONIA/OIS curves (EOD). Spreads, breakeven and carry are derived on
-          read from the stored curve — nothing here is a separate dataset.
-        </p>
+      <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-fg">Rates — curves &amp; spreads</h1>
+          <p className="mt-1 text-sm text-muted">
+            Sovereign yield curves from the respective central banks (EOD). Spreads and carry are
+            derived on read from the stored curve — nothing here is a separate dataset.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <span className="text-muted">Country</span>
+          <select
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-fg"
+          >
+            {(countries.length ? countries : [{ country, currency: null } as CountryRow]).map(
+              (c) => (
+                <option key={c.country} value={c.country}>
+                  {cLabel(c.country)}
+                  {c.currency ? ` · ${c.currency}` : ""}
+                </option>
+              ),
+            )}
+          </select>
+        </label>
       </header>
 
       <section className="relative mb-5 rounded-xl border border-border bg-surface p-4">
         <div className="mb-3 flex flex-wrap items-center gap-3">
-          <Seg value={curveSet} options={["glc", "ois"] as const} onChange={setCurveSet} />
-          <Seg value={basis} options={bases} onChange={setBasis} />
-          <Seg value={rateType} options={["spot", "forward"] as const} onChange={setRateType} />
+          {curveSetOptions.length > 1 ? (
+            <Seg value={curveSet} options={curveSetOptions} onChange={setCurveSet} />
+          ) : null}
+          {basisOptions.length > 1 ? (
+            <Seg value={basis} options={basisOptions} onChange={setBasis} />
+          ) : null}
+          {rateTypeOptions.length > 1 ? (
+            <Seg value={rateType} options={rateTypeOptions} onChange={setRateType} />
+          ) : null}
           <button
             type="button"
             onClick={onPlay}
@@ -781,7 +973,7 @@ export default function RatesPage() {
           ))}
         </div>
         <div className="mt-1 text-right text-xs text-muted">
-          {curveSet.toUpperCase()} {basis} {rateType} · % per annum (continuously compounded)
+          {cLabel(country)} · {curveSet.toUpperCase()} {basis} {rateType} · % per annum
         </div>
       </section>
 
@@ -845,9 +1037,64 @@ export default function RatesPage() {
         ) : null}
       </section>
 
+      <section className="mt-6">
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
+          Compare across countries
+        </h2>
+        <div className="rounded-xl border border-border bg-surface p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            {(countries.length ? countries.map((c) => c.country) : [country]).map((code) => {
+              const on = xcCountries.has(code);
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => toggleXc(code)}
+                  className={`rounded-md border px-2 py-0.5 text-xs tabular-nums transition ${
+                    on ? "font-medium" : "border-border text-muted hover:text-fg"
+                  }`}
+                  style={on ? { borderColor: cColor(code), color: cColor(code) } : undefined}
+                  aria-pressed={on}
+                >
+                  {code}
+                </button>
+              );
+            })}
+          </div>
+          {xcLines.length >= 1 ? (
+            <CurveChart lines={xcLines} />
+          ) : (
+            <p className="text-sm text-muted">Select one or more countries to overlay their curves.</p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            {xcCurves.map((c) => (
+              <span key={c.country} className="flex items-center gap-1.5 text-muted">
+                <span
+                  className="inline-block h-0.5 w-4"
+                  style={{ backgroundColor: cColor(c.country) }}
+                />
+                {cLabel(c.country)}
+                <span className="text-muted/70">
+                  · {c.rate_type}
+                  {c.as_of_date ? ` · ${c.as_of_date}` : ""}
+                </span>
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            Each line is the country&apos;s headline nominal government curve as published
+            (spot/par/yield differ by source) — a standardized level comparison, not a like-for-like
+            methodology match.
+          </p>
+        </div>
+      </section>
+
       <p className="mt-4 text-xs text-muted">
-        Source: Bank of England published yield curves (Open Government Licence). Breakeven is RPI-based
-        (lagged), not CPI. Asset-swap is a gilt-yield−OIS proxy. EOD; derive-on-read.
+        Sources: each country&apos;s central bank / official statistics (BoE, Bundesbank, ECB, US
+        Treasury, MoF Japan, SNB, Bank of Canada, RBA, RBNZ, Riksbank, Norges Bank, HKMA, Tesouro
+        Nacional). UK adds RPI breakeven (real curve) and a gilt−OIS asset-swap proxy. Cross-country
+        compare overlays each country&apos;s headline nominal curve (spot/par/yield as published);
+        EOD, derive-on-read.
       </p>
     </div>
   );

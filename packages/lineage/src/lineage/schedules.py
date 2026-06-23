@@ -20,7 +20,7 @@ runs its own `sym` subcommand). The schedule ships **STOPPED** — enable it in 
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 
 from dagster import (
     Config,
@@ -137,5 +137,56 @@ rates_curve_daily = ScheduleDefinition(
     job=rates_curve_job,
     cron_schedule="15 17 * * 1-5",
     execution_timezone="Europe/London",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
+
+
+@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
+def rates_world_load(context) -> None:
+    """Tail-load every FX-matrix country's curve (euro area by member) then validate.
+
+    Manual: ``uv run rates curve load-world`` then ``uv run rates validate``. Each source returns its
+    full published history; we pass a short ``--start_date`` window (last ~12 days) so the daily tick
+    is a light idempotent top-up (equal-value rows skip), not a full re-pull. The driver is
+    attempt-all: a single source failing is logged and skipped, so the op only goes red if validate
+    FAILs (exit 2). GB stays on ``rates_curve_daily`` (the BoE archive is a separate fetch)."""
+    root = str(repo_root())
+    scheduled = getattr(context, "run", None)
+    tick = (scheduled.tags.get("dagster/scheduled_execution_time") if scheduled else None)
+    end = (tick or "")[:10] or date.today().isoformat()
+    start = (date.fromisoformat(end) - timedelta(days=12)).isoformat()
+    load = subprocess.run(
+        [sys.executable, "-m", "rates.cli", "curve", "load-world",
+         "--start_date", start, "--end_date", end],
+        cwd=root, capture_output=True, text=True, timeout=5400,
+    )
+    context.log.info((load.stdout or "")[-6000:])
+    if load.returncode != 0:
+        context.log.error(
+            f"rates load-world FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
+        raise RuntimeError(f"`rates curve load-world` exited {load.returncode}")
+    val = subprocess.run(
+        [sys.executable, "-m", "rates.cli", "validate"],
+        cwd=root, capture_output=True, text=True, timeout=900,
+    )
+    context.log.info((val.stdout or "")[-6000:])
+    if val.returncode != 0:
+        raise RuntimeError(f"`rates validate` exited {val.returncode} (a curve check FAILED)")
+
+
+@job(description="Multi-country yield-curve tail load + validate. Manual: `uv run rates curve "
+                 "load-world`.")
+def rates_world_job():
+    rates_world_load()
+
+
+# Weekdays 18:30 America/New_York — after the US Treasury par-curve publish and the US cash close,
+# by which point the day's EU/UK/Asia EOD series are also out (Asia is the prior session, fine for
+# daily EOD curves). Timezone ALWAYS explicit (the hard requirement). STOPPED until enabled in the UI.
+rates_world_daily = ScheduleDefinition(
+    name="rates_world_daily",
+    job=rates_world_job,
+    cron_schedule="30 18 * * 1-5",
+    execution_timezone="America/New_York",
     default_status=DefaultScheduleStatus.STOPPED,
 )
