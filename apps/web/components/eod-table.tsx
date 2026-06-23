@@ -46,56 +46,97 @@ function subStatus(d: number | null): "ok" | "stale" | null {
   return d == null ? null : d > 0 ? "stale" : "ok";
 }
 
+const isStaleSub = (s: Subgroup) => s.days_behind != null && s.days_behind > 0;
+const bucketIsStale = (b: BucketRow) => b.status === "stale" || b.subgroups.some(isStaleSub);
+
 export function EodTable({ buckets }: { buckets: BucketRow[] }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [staleOnly, setStaleOnly] = useState(false);
+
+  const staleCount = buckets.filter(bucketIsStale).length;
+  const shown = staleOnly ? buckets.filter(bucketIsStale) : buckets;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full min-w-[820px] text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
-            <th className="px-3 py-2 font-medium">Bucket</th>
-            <th className="px-3 py-2 font-medium">Dataset</th>
-            <th className="px-3 py-2 text-right font-medium">Expected</th>
-            <th className="px-3 py-2 text-right font-medium">Actual</th>
-            <th className="px-3 py-2 text-right font-medium">Behind</th>
-            <th className="px-3 py-2 text-center font-medium">Status</th>
-            <th className="px-3 py-2 font-medium">Last run</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {buckets.map((b) => {
-            const hasSub = b.subgroups.length > 0;
-            const isOpen = !!open[b.key];
-            return (
-              <BucketRows
-                key={b.key}
-                b={b}
-                hasSub={hasSub}
-                isOpen={isOpen}
-                onToggle={() => hasSub && setOpen((o) => ({ ...o, [b.key]: !o[b.key] }))}
-              />
-            );
-          })}
-        </tbody>
-      </table>
+    <div>
+      <div className="mb-2 flex items-center justify-end gap-3">
+        {staleOnly && (
+          <span className="text-xs text-muted">{shown.length} of {buckets.length} buckets behind</span>
+        )}
+        <button
+          type="button"
+          onClick={() => setStaleOnly((v) => !v)}
+          aria-pressed={staleOnly}
+          className={`rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition ${
+            staleOnly
+              ? "bg-amber-500/15 text-amber-700 ring-amber-600/30 dark:text-amber-300"
+              : "text-muted ring-border hover:text-fg hover:bg-fg/5"
+          }`}
+        >
+          {staleOnly ? "Showing stale only" : "Stale only"} ({staleCount})
+        </button>
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-border">
+        <table className="w-full min-w-[820px] text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
+              <th className="px-3 py-2 font-medium">Bucket</th>
+              <th className="px-3 py-2 font-medium">Dataset</th>
+              <th className="px-3 py-2 text-right font-medium">Expected</th>
+              <th className="px-3 py-2 text-right font-medium">Actual</th>
+              <th className="px-3 py-2 text-right font-medium">Behind</th>
+              <th className="px-3 py-2 text-center font-medium">Status</th>
+              <th className="px-3 py-2 font-medium">Last run</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {shown.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted">
+                  Nothing stale — every bucket is current. 🎉
+                </td>
+              </tr>
+            )}
+            {shown.map((b) => {
+              // When filtering, show only the stale subgroups and force the breakdown open.
+              const subs = staleOnly ? b.subgroups.filter(isStaleSub) : b.subgroups;
+              const expanded = staleOnly ? subs.length > 0 : !!open[b.key];
+              const toggleable = !staleOnly && b.subgroups.length > 0;
+              return (
+                <BucketRows
+                  key={b.key}
+                  b={b}
+                  subs={subs}
+                  expanded={expanded}
+                  toggleable={toggleable}
+                  onToggle={() => toggleable && setOpen((o) => ({ ...o, [b.key]: !o[b.key] }))}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
 
-function BucketRows({ b, hasSub, isOpen, onToggle }: {
-  b: BucketRow; hasSub: boolean; isOpen: boolean; onToggle: () => void;
+function BucketRows({ b, subs, expanded, toggleable, onToggle }: {
+  b: BucketRow; subs: Subgroup[]; expanded: boolean; toggleable: boolean; onToggle: () => void;
 }) {
+  const hasSub = b.subgroups.length > 0;
   return (
     <>
       <tr
-        className={`align-top ${hasSub ? "cursor-pointer" : ""} hover:bg-fg/5`}
+        className={`align-top ${toggleable ? "cursor-pointer" : ""} hover:bg-fg/5`}
         onClick={onToggle}
       >
         <td className="px-3 py-2.5">
           <div className="flex items-center gap-1.5 font-medium text-fg">
             {hasSub && (
-              <span className={`text-muted transition-transform ${isOpen ? "rotate-90" : ""}`} aria-hidden>
+              <span
+                className={`text-muted transition-transform ${expanded ? "rotate-90" : ""} ${toggleable ? "" : "opacity-40"}`}
+                aria-hidden
+              >
                 ▸
               </span>
             )}
@@ -134,8 +175,8 @@ function BucketRows({ b, hasSub, isOpen, onToggle }: {
           )}
         </td>
       </tr>
-      {isOpen &&
-        b.subgroups.map((s) => {
+      {expanded &&
+        subs.map((s) => {
           const st = subStatus(s.days_behind);
           return (
             <tr key={`${b.key}:${s.group}`} className="bg-fg/[0.02] text-xs">
