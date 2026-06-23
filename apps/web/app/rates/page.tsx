@@ -820,16 +820,23 @@ export default function RatesPage() {
   }, [playing, movie, frameIdx, curve, compare, compareCurves, movieDomains]);
 
   // cross-country compare: one line per selected country, its own colour, on the shared tenor axis.
+  // keep single-point countries (FR/IT/ES publish only a 10y) — they can't draw a line but the
+  // chart renders them as a labelled node marker, so toggling them on isn't a dead click.
   const xcLines: CurveLine[] = useMemo(
     () =>
       xcCurves
-        .filter((c) => c.points.length >= 2)
+        .filter((c) => c.points.length >= 1)
         .map((c) => ({
           points: c.points,
           stroke: cColor(c.country),
           width: 1.8,
           label: cLabel(c.country),
         })),
+    [xcCurves],
+  );
+  // countries the user picked that have no full curve to draw (single tenor only) — surfaced as a note.
+  const xcPointOnly = useMemo(
+    () => xcCurves.filter((c) => c.points.length === 1).map((c) => cLabel(c.country)),
     [xcCurves],
   );
   const toggleXc = (code: string) =>
@@ -1085,6 +1092,13 @@ export default function RatesPage() {
             Each line is the country&apos;s headline nominal government curve as published
             (spot/par/yield differ by source) — a standardized level comparison, not a like-for-like
             methodology match.
+            {xcPointOnly.length > 0 ? (
+              <>
+                {" "}
+                {xcPointOnly.join(", ")} publish{xcPointOnly.length === 1 ? "es" : ""} only a 10y
+                point (ECB) — shown as a marker, not a curve.
+              </>
+            ) : null}
           </p>
         </div>
       </section>
