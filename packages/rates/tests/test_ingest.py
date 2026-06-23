@@ -6,7 +6,7 @@ import contextlib
 from datetime import date
 
 from rates.ingest import fill_curve
-from rates.sources.boe import CurvePoint
+from rates.sources.base import CurvePoint
 
 
 class _Cur:
@@ -35,7 +35,7 @@ class _Conn:
         if "curve_point_review" in sql:
             self.reviews.append(params)
             return _Cur(one=None)
-        if "DISTINCT ON (curve_set" in sql:
+        if "DISTINCT ON (country" in sql:
             return _Cur(all_=self.seed_prev)
         if "INSERT INTO rates.curve_point" in sql:
             self.inserts.append(params)
@@ -58,7 +58,7 @@ class _Source:
 
 
 def _p(cs, b, rt, t, d, v):
-    return CurvePoint(cs, b, rt, t, d, v)
+    return CurvePoint("GB", "GBP", cs, b, rt, t, d, v)
 
 
 def test_first_load_inserts_with_first_value_equal_to_value():
@@ -84,7 +84,7 @@ def test_restate_and_skip_paths():
 def test_implausible_move_routes_to_review_not_store():
     d = date(2026, 6, 2)
     # seed: yesterday this tenor was 4.0; today it's 41.0 (decimal shift) → > 5pp band → review
-    seed = [("glc", "nominal", "spot", 1.0, 4.0)]
+    seed = [("GB", "glc", "nominal", "spot", 1.0, 4.0)]
     src = _Source([_p("glc", "nominal", "spot", 1.0, d, 41.0)])
     conn = _Conn(seed_prev=seed)
     s = fill_curve(conn, src, end_date=d)
@@ -95,7 +95,7 @@ def test_implausible_move_routes_to_review_not_store():
 
 def test_plausible_move_within_band_is_stored():
     d = date(2026, 6, 2)
-    seed = [("glc", "nominal", "spot", 1.0, 4.0)]
+    seed = [("GB", "glc", "nominal", "spot", 1.0, 4.0)]
     src = _Source([_p("glc", "nominal", "spot", 1.0, d, 4.3)])  # +0.3pp, fine
     conn = _Conn(seed_prev=seed)
     s = fill_curve(conn, src, end_date=d)

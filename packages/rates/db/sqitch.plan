@@ -3,3 +3,4 @@
 %uri=https://github.com/abresslau/qrp-rates
 
 curve_point 2026-06-22T18:00:00Z Andre <ab@gladstone-management.com> # rates schema: BoE UK yield-curve grid (gilt nominal/real/inflation + OIS), two vintages, own database
+multi_country [curve_point] 2026-06-23T03:00:00Z Andre <ab@gladstone-management.com> # add country/currency dimension (FX-matrix countries; EUR by country)

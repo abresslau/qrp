@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import io
 import zipfile
-from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 import openpyxl
+
+from .base import CurvePoint
 
 BOE_BASE = "https://www.bankofengland.co.uk/-/media/boe/files/statistics/yield-curves"
 LATEST_ZIP = f"{BOE_BASE}/latest-yield-curve-data.zip"
@@ -60,18 +61,6 @@ _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) QRP-rates/0.1"
 
 class CurveLayoutError(RuntimeError):
     """BoE's file layout drifted from what the probe recorded (fail loud, never mis-map)."""
-
-
-@dataclass(frozen=True)
-class CurvePoint:
-    """One published curve node. ``value`` is % per annum; ``as_of_date`` is the curve's date."""
-
-    curve_set: str
-    basis: str
-    rate_type: str
-    tenor: float
-    as_of_date: date
-    value: float
 
 
 def _curve_set_basis(filename: str) -> tuple[str, str] | None:
@@ -113,7 +102,11 @@ def _parse_sheet(ws, curve_set: str, basis: str, rate_type: str) -> list[CurvePo
                 continue
             v = r[j]
             if isinstance(v, (int, float)):
-                out.append(CurvePoint(curve_set, basis, rate_type, round(tenor, 6), d, float(v)))
+                out.append(
+                    CurvePoint(
+                        "GB", "GBP", curve_set, basis, rate_type, round(tenor, 6), d, float(v)
+                    )
+                )
     return out
 
 
@@ -179,6 +172,8 @@ class BoeCurveSource:
     """Fetches + parses BoE UK yield curves. ``SOURCE`` tags every stored row."""
 
     SOURCE = "boe"
+    COUNTRY = "GB"
+    CURRENCY = "GBP"
 
     def __init__(self, *, archive: bool = False) -> None:
         # archive=False → the latest (current-month) bundle (the daily/tail case);

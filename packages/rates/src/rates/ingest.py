@@ -13,13 +13,14 @@ from datetime import date
 
 import psycopg
 
-from .sources.boe import CurvePoint
+from .sources.base import CurvePoint
 
 # Gross-corruption band: a day-over-day move (percentage points) beyond this for one tenor is a
 # decimal shift / inverted feed / bad print, not a real move. Routes to review, not the store.
 MAX_DAILY_MOVE_PP = 5.0
 
-_SeriesKey = tuple[str, str, str, float]  # (curve_set, basis, rate_type, tenor)
+# (country, curve_set, basis, rate_type, tenor)
+_SeriesKey = tuple[str, str, str, str, float]
 
 
 @dataclass
@@ -36,22 +37,25 @@ class CurveLoadSummary:
 
 
 def _series_key(p: CurvePoint) -> _SeriesKey:
-    return (p.curve_set, p.basis, p.rate_type, p.tenor)
+    return (p.country, p.curve_set, p.basis, p.rate_type, p.tenor)
 
 
-def _latest_before(conn: psycopg.Connection, window_start: date) -> dict[_SeriesKey, float]:
-    """Latest stored value per series strictly before the load window (plausibility seed)."""
+def _latest_before(
+    conn: psycopg.Connection, window_start: date, countries: list[str]
+) -> dict[_SeriesKey, float]:
+    """Latest stored value per series strictly before the load window (plausibility seed). Scoped to
+    the countries present in this batch so a multi-decade backfill doesn't scan all countries."""
     rows = conn.execute(
         """
-        SELECT DISTINCT ON (curve_set, basis, rate_type, tenor)
-               curve_set, basis, rate_type, tenor, value
+        SELECT DISTINCT ON (country, curve_set, basis, rate_type, tenor)
+               country, curve_set, basis, rate_type, tenor, value
           FROM rates.curve_point
-         WHERE as_of_date < %(ws)s
-         ORDER BY curve_set, basis, rate_type, tenor, as_of_date DESC
+         WHERE as_of_date < %(ws)s AND country = ANY(%(c)s)
+         ORDER BY country, curve_set, basis, rate_type, tenor, as_of_date DESC
         """,
-        {"ws": window_start},
+        {"ws": window_start, "c": countries},
     ).fetchall()
-    return {(r[0], r[1], r[2], float(r[3])): float(r[4]) for r in rows}
+    return {(r[0], r[1], r[2], r[3], float(r[4])): float(r[5]) for r in rows}
 
 
 def fill_curve(
@@ -72,23 +76,26 @@ def fill_curve(
     if not pts:
         return summary
 
-    pts.sort(key=lambda p: (p.as_of_date, p.curve_set, p.basis, p.rate_type, p.tenor))
+    pts.sort(key=lambda p: (p.as_of_date, p.country, p.curve_set, p.basis, p.rate_type, p.tenor))
     window_start = pts[0].as_of_date
     summary.start_date = window_start
     summary.end_date = pts[-1].as_of_date
 
-    prev: dict[_SeriesKey, float] = _latest_before(conn, window_start)
+    countries = sorted({p.country for p in pts})
+    prev: dict[_SeriesKey, float] = _latest_before(conn, window_start, countries)
 
     by_day: dict[date, list[CurvePoint]] = defaultdict(list)
     for p in pts:
         by_day[p.as_of_date].append(p)
 
-    # Desync gate (tail case only): the expected basis-set = what the most complete recent day has.
-    expected_pairs: set[tuple[str, str]] = set()
+    # Desync gate (tail case only): the expected (country, curve_set, basis) set = what the most
+    # complete recent day carries. Country is in the key so a multi-country tail never gates one
+    # country because another's curve is absent that day.
+    expected_pairs: set[tuple[str, str, str]] = set()
     tail_case = (start_date is None) if tail is None else tail
     if tail_case:
         expected_pairs = max(
-            ({(p.curve_set, p.basis) for p in day_pts} for day_pts in by_day.values()),
+            ({(p.country, p.curve_set, p.basis) for p in day_pts} for day_pts in by_day.values()),
             key=len,
             default=set(),
         )
@@ -96,7 +103,7 @@ def fill_curve(
     for day in sorted(by_day):
         day_pts = by_day[day]
         if tail_case and expected_pairs:
-            present = {(p.curve_set, p.basis) for p in day_pts}
+            present = {(p.country, p.curve_set, p.basis) for p in day_pts}
             if not expected_pairs.issubset(present):
                 summary.gated_days.append(day.isoformat())
                 continue  # desynced partial current day — skip, don't land half a curve
@@ -109,18 +116,20 @@ def fill_curve(
                     conn.execute(
                         """
                         INSERT INTO rates.curve_point_review
-                            (curve_set, basis, rate_type, tenor, as_of_date, value, prev_value,
-                             reason, source)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        ON CONFLICT (curve_set, basis, rate_type, tenor, as_of_date) DO NOTHING
+                            (country, currency, curve_set, basis, rate_type, tenor, as_of_date,
+                             value, prev_value, reason, source)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (country, curve_set, basis, rate_type, tenor, as_of_date)
+                            DO NOTHING
                         """,
-                        (p.curve_set, p.basis, p.rate_type, p.tenor, p.as_of_date, p.value, base,
+                        (p.country, p.currency, p.curve_set, p.basis, p.rate_type, p.tenor,
+                         p.as_of_date, p.value, base,
                          f"move {abs(p.value - base):.2f}pp > {band_pp}pp", source.SOURCE),
                     )
                     summary.flagged += 1
                     if len(summary.flagged_samples) < 10:
                         summary.flagged_samples.append(
-                            f"{p.curve_set}/{p.basis}/{p.rate_type}/{p.tenor}y {day}: "
+                            f"{p.country}/{p.curve_set}/{p.basis}/{p.rate_type}/{p.tenor}y {day}: "
                             f"{base:.2f}->{p.value:.2f}"
                         )
                     continue
@@ -128,17 +137,19 @@ def fill_curve(
                 cur = conn.execute(
                     """
                     INSERT INTO rates.curve_point
-                        (curve_set, basis, rate_type, tenor, as_of_date, value, first_value, source)
-                    VALUES (%(cs)s,%(b)s,%(rt)s,%(t)s,%(d)s,%(v)s,%(v)s,%(src)s)
-                    ON CONFLICT (curve_set, basis, rate_type, tenor, as_of_date) DO UPDATE
+                        (country, currency, curve_set, basis, rate_type, tenor, as_of_date,
+                         value, first_value, source)
+                    VALUES (%(co)s,%(cc)s,%(cs)s,%(b)s,%(rt)s,%(t)s,%(d)s,%(v)s,%(v)s,%(src)s)
+                    ON CONFLICT (country, curve_set, basis, rate_type, tenor, as_of_date) DO UPDATE
                        SET value = EXCLUDED.value,
                            last_changed_at = now(),
                            source = EXCLUDED.source
                      WHERE rates.curve_point.value IS DISTINCT FROM EXCLUDED.value
                     RETURNING (xmax = 0) AS inserted
                     """,
-                    {"cs": p.curve_set, "b": p.basis, "rt": p.rate_type, "t": p.tenor,
-                     "d": p.as_of_date, "v": p.value, "src": source.SOURCE},
+                    {"co": p.country, "cc": p.currency, "cs": p.curve_set, "b": p.basis,
+                     "rt": p.rate_type, "t": p.tenor, "d": p.as_of_date, "v": p.value,
+                     "src": source.SOURCE},
                 ).fetchone()
                 if cur is None:
                     summary.skipped_existing += 1  # equal-value re-ingest (WHERE blocked update)
