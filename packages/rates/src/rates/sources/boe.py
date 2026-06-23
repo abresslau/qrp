@@ -147,18 +147,30 @@ def parse_workbook(path: str | Path, curve_set: str, basis: str) -> list[CurvePo
     return flat_curve + extra
 
 
-def _parse_zip_bytes(blob: bytes) -> list[CurvePoint]:
+def _parse_zip_bytes(blob: bytes, _depth: int = 0) -> list[CurvePoint]:
+    """Parse the BoE curve xlsx out of a zip — recursing into NESTED zips.
+
+    The ``latest-yield-curve-data.zip`` bundle wraps the four daily xlsx inside an inner
+    ``Latest Yield Curve data (current month).zip`` (alongside some .gif previews), so a flat
+    top-level scan finds no xlsx and silently parses 0 points. We recurse one level (bounded) so
+    both the nested 'latest' bundle and the flat per-curve archive zips work."""
+    if _depth > 3:  # bounded guard against a pathological nested zip; BoE nests exactly one level
+        return []
     out: list[CurvePoint] = []
     with zipfile.ZipFile(io.BytesIO(blob)) as zf:
         for name in zf.namelist():
-            if not name.lower().endswith((".xlsx", ".xls")):
+            low = name.lower()
+            if low.endswith(".zip"):
+                with zf.open(name) as fh:
+                    out.extend(_parse_zip_bytes(fh.read(), _depth + 1))
+                continue
+            if not low.endswith((".xlsx", ".xls")):
                 continue
             cb = _curve_set_basis(Path(name).name)
             if cb is None:
                 continue
             with zf.open(name) as fh:
-                data = fh.read()
-            out.extend(parse_workbook(io.BytesIO(data), cb[0], cb[1]))
+                out.extend(parse_workbook(io.BytesIO(fh.read()), cb[0], cb[1]))
     return out
 
 

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import io
+import zipfile
 from datetime import datetime
 
 import openpyxl
 import pytest
 
-from rates.sources.boe import CurveLayoutError, parse_workbook
+from rates.sources.boe import CurveLayoutError, _parse_zip_bytes, parse_workbook
 
 # (sheet title, has 'years:' header) — BoE's four curve sheets.
 _SHEETS = ["1. fwds, short end", "2. fwd curve", "3. spot, short end", "4. spot curve"]
@@ -96,3 +97,26 @@ def test_no_expected_sheets_raises_layout_error():
     buf.seek(0)
     with pytest.raises(CurveLayoutError):
         parse_workbook(buf, "glc", "nominal")
+
+
+def test_parse_zip_recurses_into_nested_zip():
+    """Regression: the BoE 'latest' bundle wraps the four xlsx inside an INNER zip (plus .gif
+    previews). A flat top-level scan parses 0 points and the daily load silently no-ops — so the
+    parser must recurse into the nested zip and ignore the gifs."""
+    d = datetime(2026, 6, 22)
+    xlsx = _wb({
+        "4. spot curve": ([1.0, 10.0], [(d, [4.0, 4.84])]),
+        "2. fwd curve": ([1.0, 10.0], [(d, [4.1, 4.9])]),
+    }).getvalue()
+    inner = io.BytesIO()
+    with zipfile.ZipFile(inner, "w") as z:
+        z.writestr("GLC Nominal daily data current month.xlsx", xlsx)
+    outer = io.BytesIO()
+    with zipfile.ZipFile(outer, "w") as z:
+        z.writestr("Latest Yield Curve data (current month).zip", inner.getvalue())
+        z.writestr("uknom.gif", b"not a curve")  # must be ignored, not parsed
+
+    pts = _parse_zip_bytes(outer.getvalue())
+    assert pts, "nested-zip xlsx must be parsed (BoE wraps the daily xlsx in an inner zip)"
+    assert all(p.curve_set == "glc" and p.basis == "nominal" for p in pts)
+    assert {p.as_of_date for p in pts} == {d.date()}
