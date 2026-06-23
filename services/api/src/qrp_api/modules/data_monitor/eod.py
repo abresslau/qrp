@@ -118,10 +118,79 @@ class EodMonitorGateway:
                 # clamp at 0: a rates curve can be NEWER than the latest equity session (independent
                 # series), which would otherwise render a negative "days behind".
                 "days_behind": max(0, (latest_session - d).days) if latest_session else None,
+                "detail": None,
             }
             for g, d in sorted(groups, key=lambda gd: gd[1])
         ]
         return worst, note, subgroups
+
+    # -- per-bucket breakdowns (informational sub-rows; don't change the bucket status) -----
+
+    def _subgroup(self, group: str, d: date | None, expected: date | None, detail: str | None) -> dict:
+        return {
+            "group": group,
+            "as_of_date": d.isoformat() if d else None,
+            "days_behind": max(0, (expected - d).days) if (expected and d) else None,
+            "detail": detail,
+        }
+
+    def _equity_universe_breakdown(self, conn, expected: date | None) -> list[dict]:
+        """Per-universe price freshness: the latest session each universe is broadly priced
+        (>= COVERAGE_FRACTION of its CURRENT members), so a single lagging universe is visible."""
+        rows = conn.execute(
+            f"""
+            WITH mem AS (
+                SELECT universe_id, composite_figi FROM universe_membership WHERE valid_to IS NULL
+            ),
+            sz AS (SELECT universe_id, count(*) AS total FROM mem GROUP BY universe_id),
+            cov AS (
+                SELECT m.universe_id, p.session_date, count(DISTINCT p.composite_figi) AS n
+                  FROM mem m JOIN prices_raw p USING (composite_figi)
+                 WHERE p.session_date >= (SELECT max(session_date) FROM prices_raw)
+                                          - {COVERAGE_WINDOW_DAYS}
+                 GROUP BY m.universe_id, p.session_date
+            )
+            SELECT s.universe_id, s.total,
+                   max(c.session_date) FILTER (WHERE c.n >= {COVERAGE_FRACTION} * s.total) AS covered
+              FROM sz s LEFT JOIN cov c USING (universe_id)
+             GROUP BY s.universe_id, s.total
+             ORDER BY s.universe_id
+            """
+        ).fetchall()
+        return [self._subgroup(uid, _as_date(cov), expected, f"{total} names")
+                for uid, total, cov in rows]
+
+    def _index_breakdown(self, conn, expected: date | None) -> list[dict]:
+        """Per-index latest level date (one row per index instrument by name)."""
+        rows = conn.execute(
+            "SELECT i.name, max(l.session_date) FROM index_levels l "
+            "JOIN instrument i USING (sym_id) GROUP BY i.name ORDER BY i.name"
+        ).fetchall()
+        return [self._subgroup(name or "(unnamed)", _as_date(d), expected, None) for name, d in rows]
+
+    def _universe_breakdown(self, conn) -> list[dict]:
+        """Per-universe membership: current member count + last membership-event date. Informational
+        (event-log; ``days_behind`` is left null — a universe with no recent change is not 'stale')."""
+        rows = conn.execute(
+            """
+            SELECT u.universe_id,
+                   (SELECT count(*) FROM universe_membership m
+                     WHERE m.universe_id = u.universe_id AND m.valid_to IS NULL) AS members,
+                   (SELECT max(recorded_at) FROM membership_event e
+                     WHERE e.universe_id = u.universe_id) AS last_event
+              FROM universe u ORDER BY u.universe_id
+            """
+        ).fetchall()
+        out = []
+        for uid, members, last_event in rows:
+            d = _as_date(last_event)
+            out.append({
+                "group": uid,
+                "as_of_date": d.isoformat() if d else None,
+                "days_behind": None,  # event-log: no-change ≠ stale
+                "detail": f"{members} members",
+            })
+        return out
 
     # -- per-bucket row --------------------------------------------------------------------
 
@@ -145,6 +214,14 @@ class EodMonitorGateway:
                     actual, coverage = self._coverage_session(conn, ds)
                 else:
                     actual = self._max_date(conn, ds)
+                # Per-subcategory breakdowns (informational sub-rows; the bucket's headline status
+                # is unchanged). rates already produced its per-country subgroups via _grouped.
+                if b.key == "equity_prices":
+                    subgroups = self._equity_universe_breakdown(conn, latest_session)
+                elif b.key == "index_levels":
+                    subgroups = self._index_breakdown(conn, latest_session)
+                elif b.key == "universe":
+                    subgroups = self._universe_breakdown(conn)
             finally:
                 if owns_conn:
                     conn.close()

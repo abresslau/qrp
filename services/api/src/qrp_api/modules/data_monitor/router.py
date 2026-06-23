@@ -35,8 +35,9 @@ class EodRun(BaseModel):
 
 class EodSubgroup(BaseModel):
     group: str
-    as_of_date: str
+    as_of_date: str | None = None
     days_behind: int | None = None
+    detail: str | None = None
 
 
 class EodBucketRow(BaseModel):

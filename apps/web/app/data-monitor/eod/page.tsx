@@ -1,34 +1,10 @@
+import { type BucketRow, EodTable } from "@/components/eod-table";
 import { apiGet } from "@/lib/api";
 
 // Data Monitor › EOD — every data-pipeline bucket's expected-vs-actual business date + (best-effort)
-// its latest Dagster run, in one board. Supersedes the old sym Overview (whose warehouse-summary +
-// freshness content lives here now). Server-rendered live read; reload to refresh.
-
-type Run = {
-  status: string | null;
-  started_at: string | null;
-  finished_at: string | null;
-  source: string | null;
-} | null;
-
-type Subgroup = { group: string; as_of_date: string; days_behind: number | null };
-
-type BucketRow = {
-  key: string;
-  label: string;
-  subcategory: string;
-  datasets: string[];
-  cadence: string;
-  note: string | null;
-  actual_date: string | null;
-  expected_date: string | null;
-  days_behind: number | null;
-  status: "ok" | "stale" | "unknown";
-  coverage: string | null;
-  error: string | null;
-  subgroups: Subgroup[];
-  last_run: Run;
-};
+// its latest Dagster run, in one board, with an expandable per-subcategory breakdown (equity by
+// universe, rates by country, index levels by index, universe membership by universe). Supersedes
+// the old sym Overview. Server-rendered live read; reload to refresh.
 
 type PipelineRun = {
   run_id: string | null;
@@ -52,16 +28,6 @@ type Eod = {
   };
   buckets: BucketRow[];
 };
-
-function pill(status: string): string {
-  if (status === "ok" || status === "SUCCESS" || status === "success")
-    return "bg-emerald-500/10 text-emerald-700 ring-emerald-600/20 dark:text-emerald-400 dark:ring-emerald-500/30";
-  if (status === "stale" || status === "STARTED" || status === "partial")
-    return "bg-amber-500/10 text-amber-700 ring-amber-600/20 dark:text-amber-400 dark:ring-amber-500/30";
-  if (status === "FAILURE" || status === "CANCELED" || status === "failed")
-    return "bg-red-500/10 text-red-700 ring-red-600/20 dark:text-red-400 dark:ring-red-500/30";
-  return "bg-fg/5 text-muted ring-border";
-}
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -117,61 +83,8 @@ export default async function EodMonitorPage() {
         <Stat label="Latest session" value={d.summary.latest_session ?? "—"} />
       </div>
 
-      <div className="mt-5 overflow-x-auto rounded-xl border border-border">
-        <table className="w-full min-w-[820px] text-sm">
-          <thead>
-            <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
-              <th className="px-3 py-2 font-medium">Bucket</th>
-              <th className="px-3 py-2 font-medium">Dataset</th>
-              <th className="px-3 py-2 text-right font-medium">Expected</th>
-              <th className="px-3 py-2 text-right font-medium">Actual</th>
-              <th className="px-3 py-2 text-right font-medium">Behind</th>
-              <th className="px-3 py-2 text-center font-medium">Status</th>
-              <th className="px-3 py-2 font-medium">Last run</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {d.buckets.map((b) => (
-              <tr key={b.key} className="align-top hover:bg-fg/5">
-                <td className="px-3 py-2.5">
-                  <div className="font-medium text-fg">{b.label}</div>
-                  <div className="text-xs text-muted">
-                    by {b.subcategory}
-                    {b.cadence === "slow" && <span className="ml-1 text-muted/60">· slow-cadence</span>}
-                  </div>
-                  {(b.coverage || b.note) && (
-                    <div className="mt-0.5 text-xs text-muted/70">{b.coverage ?? b.note}</div>
-                  )}
-                </td>
-                <td className="px-3 py-2.5 font-mono text-xs text-muted">{b.datasets.join(", ")}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-muted">{b.expected_date ?? "—"}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-fg">{b.actual_date ?? "—"}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-muted">
-                  {b.days_behind === null ? "—" : `${b.days_behind}d`}
-                </td>
-                <td className="px-3 py-2.5 text-center">
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${pill(b.status)}`}>
-                    {b.error ? "unknown" : b.status}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 text-xs">
-                  {b.last_run ? (
-                    <span className="flex flex-wrap items-center gap-1.5">
-                      <span className={`rounded-full px-2 py-0.5 ring-1 ${pill(b.last_run.status ?? "")}`}>
-                        {b.last_run.status ?? "—"}
-                      </span>
-                      <span className="tabular-nums text-muted/70">
-                        {ts(b.last_run.finished_at ?? b.last_run.started_at)}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="text-muted/50">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="mt-5">
+        <EodTable buckets={d.buckets} />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-muted">
