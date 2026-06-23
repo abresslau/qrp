@@ -1,6 +1,6 @@
 # Story: Dagster job buckets — bucketed, sub-selectable, date-parameterised data jobs
 
-Status: ready-for-dev
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-23 (Andre: "you need to create jobs into big buckets: fx,
 equity prices, index levels, rates, fundamental, alt data, calculations. each of the category will then
@@ -375,6 +375,32 @@ thin follow-on op-graph; keep it out of this story unless Andre asks.
 4. **Single `as_of_date` → window width** for windowed buckets? → Default: single day for `equity_prices`/
    `fx`/`calculations:returns`; reuse the 12-day tail for `rates` (matches `rates_world_load`). Adjustable
    via optional `start_date`/`end_date`.
+
+## Review Findings
+
+Code review 2026-06-23 (bmad-code-review, 3 adversarial layers: Blind Hunter, Edge Case Hunter,
+Acceptance Auditor) on commit 042ce9b. 10 patches applied, 3 deferred, 1 dismissed. No unresolved
+High/Med. Re-verified: 44 lineage+EOD tests (13 new Part-A) + 169 api green, ruff clean.
+
+### Patches applied
+- [x] [Review][Patch] Fail-fast on unknown subcategory + empty plan no longer passes green [bucket_jobs.py `_run_bucket`] — validate explicit subcats against the discovered/declared set (raise listing valid values); an empty resolved plan now RAISES instead of a silent green run. (AC#2; blind+edge+auditor)
+- [x] [Review][Patch] Catch `subprocess.TimeoutExpired` in `_run_cmd` → non-critical [bucket_jobs.py] — a hung non-critical ingest is logged `[FAIL]` and skipped (attempt-all integrity); a critical step still propagates. (edge)
+- [x] [Review][Patch] Validate `as_of_date` once up front [bucket_jobs.py `_run_bucket`] — a malformed date gets a clear error, not a stack trace from a window builder. (edge)
+- [x] [Review][Patch] EOD endpoint never-500 [eod.py `eod()`] — `latest_session` + `_summary` wrapped; a sym hiccup degrades to a renderable board (AC#14). (edge)
+- [x] [Review][Patch] Clamp per-country `days_behind` ≥ 0 [eod.py `_grouped`] — a rates curve newer than the equity session no longer renders negative. (blind+edge)
+- [x] [Review][Patch] Guard `_run_cmd` against an empty command tuple [bucket_jobs.py] — defensive, no IndexError. (edge)
+- [x] [Review][Patch] Mark `calculations:returns` (recompute) critical [bucket_jobs.py `_calc_cmds`] — a recompute failure reddens the run (Dev Notes compute-vs-ingest rule). (auditor)
+- [x] [Review][Patch] `calculations:returns` now date-windowed [bucket_jobs.py] — `recompute --start_date/--end_date` so a backfill targets `as_of_date` (AC#3). (auditor)
+- [x] [Review][Patch] Honest deferred-selection log for single-source buckets (fx/macro/alt_data) [bucket_jobs.py] — a subcategory selection on a no-selector bucket is logged as NOT applied, not silently implied. (AC#2; auditor)
+- [x] [Review][Patch] Added Part A bucket-job tests (AC#8) [packages/lineage/tests/test_bucket_jobs.py] — config default⇒all, unknown rejected, window translation, attempt-all isolation, empty-plan-fails. (auditor)
+
+### Deferred
+- [x] [Review][Defer] universe `mode: monitor|refresh` config flag — spec-optional; default `monitor` already correct. Deferred: a feature add, not a defect.
+- [x] [Review][Defer] rates per-country *registry* discovery — the `rates` CLI owns the country list (`load-world` iterates; a bad `--country` errors). Acceptable until a cheap registry read is wanted.
+- [x] [Review][Defer] regenerate `api-types.ts` (stale `SymOverview` entries) — web/openapi toolchain not runnable locally; no live consumer. Regen when the toolchain is available.
+
+### Dismissed
+- Dagster null-`startTime` ordering among QUEUED runs — harmless (`or 0`; a real run replaces it).
 
 ## Dev Agent Record
 

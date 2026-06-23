@@ -138,19 +138,26 @@ def _universe_one(u: str, a: str) -> list[Cmd]:
     return [("sym.cli", "universe", "monitor", u)]
 
 
-_CALC = {
-    "returns": [("sym.cli", "recompute")],
-    "gics": [("sym.cli", "classify")],
-    "index_returns": [("sym.cli", "indices")],
-}
+CALC_TYPES = ("returns", "gics", "index_returns")
+
+
+def _calc_cmds(t: str, a: str) -> list[Cmd]:
+    s, e = _window(a)
+    # returns (recompute) is the CRITICAL compute step (trailing "!" → reddens the run on failure,
+    # per the Dev Notes compute-vs-ingest rule) and is date-windowed so a backfill targets `as_of`.
+    return {
+        "returns": [("sym.cli", "recompute", "--start_date", s, "--end_date", e, "!")],
+        "gics": [("sym.cli", "classify")],
+        "index_returns": [("sym.cli", "indices")],
+    }.get(t, [])
 
 
 def _calc_all(a: str) -> list[Cmd]:
-    return [c for cmds in _CALC.values() for c in cmds]
+    return [c for t in CALC_TYPES for c in _calc_cmds(t, a)]
 
 
 def _calc_one(t: str, a: str) -> list[Cmd]:
-    return _CALC.get(t, [])
+    return _calc_cmds(t, a)
 
 
 # bucket key -> (all_cmds, one_cmds | None, discover | None)
@@ -163,22 +170,33 @@ _BUILDERS: dict[str, tuple[Callable, Callable | None, Callable | None]] = {
     "alt_data": (_altdata_all, None, None),
     "macro": (_macro_all, None, None),
     "universe": (_universe_all, _universe_one, _discover_universes),
-    "calculations": (_calc_all, _calc_one, lambda: list(_CALC)),
+    "calculations": (_calc_all, _calc_one, lambda: list(CALC_TYPES)),
 }
 
 
 def _run_cmd(context, raw: Cmd) -> bool:
     """Run one ``python -m <module> <args>``; True on success. ``critical`` (trailing '!') re-raises."""
-    critical = raw and raw[-1] == "!"
+    critical = bool(raw) and raw[-1] == "!"
     parts = list(raw[:-1] if critical else raw)
+    if not parts:  # defensive: a builder must never yield an empty command
+        context.log.error("[FAIL] empty command tuple (builder bug) — skipping")
+        return False
     module, args = parts[0], parts[1:]
     pretty = f"{module} " + " ".join(args)
     context.log.info(f"run: python -m {pretty}")
     started = time.monotonic()
-    proc = subprocess.run(
-        [sys.executable, "-m", module, *args],
-        cwd=str(repo_root()), capture_output=True, text=True, timeout=CMD_TIMEOUT_S,
-    )
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", module, *args],
+            cwd=str(repo_root()), capture_output=True, text=True, timeout=CMD_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        # A hung non-critical ingest must NOT take the whole run red (attempt-all): log + skip.
+        # A critical step (validate/recompute) still propagates.
+        context.log.error(f"[FAIL] {pretty}: timed out after {CMD_TIMEOUT_S}s")
+        if critical:
+            raise
+        return False
     tail = (proc.stdout or "")[-3000:]
     if proc.returncode != 0:
         context.log.error(f"[FAIL] {pretty} (exit {proc.returncode}):\n{tail}\n{(proc.stderr or '')[-1500:]}")
@@ -195,21 +213,51 @@ class BucketConfig(Config):
 
 
 def _run_bucket(context, key: str, config: BucketConfig) -> None:
-    all_cmds, one_cmds, _discover = _BUILDERS[key]
+    all_cmds, one_cmds, discover = _BUILDERS[key]
     as_of = _resolve_as_of(context, config.as_of_date)
+    # Validate the business date ONCE, up front — a malformed value (e.g. an operator typo) gets a
+    # clear error instead of a stack trace from deep inside a window builder.
+    try:
+        date.fromisoformat(as_of)
+    except ValueError as exc:
+        raise RuntimeError(f"bucket '{key}': invalid as_of_date {as_of!r} (expected YYYY-MM-DD)") from exc
     subcats = [s.strip() for s in (config.subcategories or []) if s.strip()]
+
+    # Fail-fast on an unknown subcategory (AC#2) where the bucket can enumerate its valid set.
+    if subcats and discover is not None:
+        valid = set(discover())
+        unknown = [s for s in subcats if s not in valid]
+        if valid and unknown:
+            raise RuntimeError(
+                f"bucket '{key}': unknown subcategor{'y' if len(unknown) == 1 else 'ies'} "
+                f"{unknown}; valid: {sorted(valid)}"
+            )
 
     if not subcats:
         plan: list[Cmd] = list(all_cmds(as_of))
         context.log.info(f"bucket '{key}': ALL subcategories, as_of={as_of} ({len(plan)} commands)")
         units = [("(all)", plan)]
     elif one_cmds is None:
-        # single-subcategory bucket (fx/alt_data/macro) — any selection just runs the whole thing
-        context.log.info(f"bucket '{key}': single-subcategory, as_of={as_of}")
+        # single-subcategory bucket (fx/alt_data/macro) — the CLI has no per-subcategory selector,
+        # so it runs the whole thing; be HONEST that the selection was not applied (don't silently
+        # imply it was). [Review: macro/fx/alt_data selector deferral]
+        context.log.warning(
+            f"bucket '{key}': no per-subcategory selector for this source; selection {subcats} "
+            f"NOT applied — running the whole bucket. as_of={as_of}"
+        )
         units = [("(all)", list(all_cmds(as_of)))]
     else:
         context.log.info(f"bucket '{key}': {subcats}, as_of={as_of}")
         units = [(s, list(one_cmds(s, as_of))) for s in subcats]
+
+    # An empty plan is NOT success — it means discovery returned nothing or a selection resolved to
+    # no commands. Fail loudly instead of a green run that ingested zero rows. [Review]
+    total = sum(len(cmds) for _, cmds in units)
+    if total == 0:
+        raise RuntimeError(
+            f"bucket '{key}': nothing to run (no commands resolved for "
+            f"{subcats or 'all'} — discovery empty or unsupported selection)"
+        )
 
     ok = failed = 0
     for label, cmds in units:

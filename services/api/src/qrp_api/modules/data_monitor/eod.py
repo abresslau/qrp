@@ -105,7 +105,9 @@ class EodMonitorGateway:
             {
                 "group": g,
                 "as_of_date": d.isoformat(),
-                "days_behind": (latest_session - d).days if latest_session else None,
+                # clamp at 0: a rates curve can be NEWER than the latest equity session (independent
+                # series), which would otherwise render a negative "days behind".
+                "days_behind": max(0, (latest_session - d).days) if latest_session else None,
             }
             for g, d in sorted(groups, key=lambda gd: gd[1])
         ]
@@ -198,14 +200,28 @@ class EodMonitorGateway:
     # -- entrypoint ------------------------------------------------------------------------
 
     def eod(self) -> dict:
-        latest_session = self._max_date(
-            self._sym, Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw")
-        )
+        # "Never 500s the page": even the platform-level reads (latest session + summary) degrade to
+        # None rather than raising, so a sym hiccup still returns a renderable board (each bucket row
+        # already has its own try/except).
+        try:
+            latest_session = self._max_date(
+                self._sym, Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw")
+            )
+        except Exception:  # noqa: BLE001 — resilience contract: degrade, don't 500
+            latest_session = None
         runs = latest_runs_by_job()
+        try:
+            summary = self._summary(latest_session)
+        except Exception:  # noqa: BLE001
+            summary = {
+                "securities": None, "universes": None, "priced_securities": None,
+                "latest_session": latest_session.isoformat() if latest_session else None,
+                "last_pipeline_run": None,
+            }
         return {
             "expected_date": latest_session.isoformat() if latest_session else None,
             "expected_basis": "latest equity trading session (sym prices_raw)",
             "dagster_runs_available": bool(runs),
-            "summary": self._summary(latest_session),
+            "summary": summary,
             "buckets": [self._row(b, latest_session, runs) for b in BUCKETS],
         }
