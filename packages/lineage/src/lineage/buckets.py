@@ -12,8 +12,9 @@ them, the date column to read, and how to read "latest" honestly (a plain ``max`
 point-in-time series; the broadly-complete *coverage session* for a wide cross-sectional table so
 one fresh sub-universe can't mask a stale rest — the documented max-masks-laggards trap). The
 ``job`` name is both the Dagster job (Part A) and the key the EOD page uses to look up the latest
-run. Cadence + ``stale_after_days`` make the ok/stale verdict honest per dataset (a monthly macro
-series is not "stale" at 5 days).
+run. Freshness is judged against the **previous business date** (the last completed trading session,
+not today's in-progress one): a dataset behind that by even one business day is "stale"
+(``stale_after_days = 0``). ``cadence`` is kept for labelling (slow-cadence rows say so on the page).
 """
 
 from __future__ import annotations
@@ -51,7 +52,8 @@ class Bucket:
     subcategory: str        # the breakdown dimension ("source" | "universe" | "country" | …)
     datasets: tuple[Dataset, ...]
     cadence: str = "daily"          # "daily" (trading sessions) | "slow" (weekly/monthly/event)
-    stale_after_days: int = 4       # days behind the expected session before flagged "stale"
+    stale_after_days: int = 0       # days behind the EXPECTED (previous) business date before
+    #                                 flagged "stale". 0 ⇒ behind by even one business day is stale.
     note: str | None = None         # honest caveat shown on the row (cadence, proxy, …)
 
 
@@ -80,24 +82,24 @@ BUCKETS: tuple[Bucket, ...] = (
     Bucket(
         "fundamental", "Fundamentals", "universe",
         (Dataset(SYM, "fundamentals", "as_of_date", "sym.fundamentals"),),
-        cadence="slow", stale_after_days=14,
+        cadence="slow",
         note="vendor-cadence; lags the price tape by design",
     ),
     Bucket(
         "alt_data", "Alt data", "source",
         (Dataset(ALTDATA, "altdata.observation", "obs_date", "altdata.observation"),),
-        cadence="slow", stale_after_days=8,
+        cadence="slow",
     ),
     Bucket(
         "macro", "Macro", "source",
         (Dataset(MACRO, "macro.observation", "obs_date", "macro.observation"),),
-        cadence="slow", stale_after_days=45,
+        cadence="slow",
         note="monthly/quarterly series; large lag is normal",
     ),
     Bucket(
         "universe", "Universe membership", "universe",
         (Dataset(SYM, "membership_event", "recorded_at", "sym.membership_event"),),
-        cadence="slow", stale_after_days=31,
+        cadence="slow",
         note="event-log; only changes on a constituent move",
     ),
     Bucket(

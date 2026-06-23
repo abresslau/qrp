@@ -45,6 +45,16 @@ class EodMonitorGateway:
         # Table/column come from our own constant taxonomy, never user input — safe to interpolate.
         return _as_date(self._scalar(conn, f"SELECT max({ds.date_column}) FROM {ds.table}"))
 
+    def _expected_business_date(self) -> date | None:
+        """The PREVIOUS business date — the last completed equity trading session STRICTLY before
+        today. This is the EOD bar: after the close you expect data through the prior session, not
+        today's in-progress one. Using the trading-session calendar (prices_raw) skips weekends and
+        holidays for free."""
+        return _as_date(self._scalar(
+            self._sym,
+            "SELECT max(session_date) FROM prices_raw WHERE session_date < CURRENT_DATE",
+        ))
+
     def _coverage_session(
         self, conn: psycopg.Connection, ds: Dataset
     ) -> tuple[date | None, str | None]:
@@ -200,28 +210,33 @@ class EodMonitorGateway:
     # -- entrypoint ------------------------------------------------------------------------
 
     def eod(self) -> dict:
-        # "Never 500s the page": even the platform-level reads (latest session + summary) degrade to
-        # None rather than raising, so a sym hiccup still returns a renderable board (each bucket row
-        # already has its own try/except).
+        # "Never 500s the page": even the platform-level reads degrade to None rather than raising,
+        # so a sym hiccup still returns a renderable board (each bucket row has its own try/except).
+        # Freshness is judged against the EXPECTED (previous) business date; the summary still shows
+        # the TRUE latest session in the warehouse (today's partial session, if any) for context.
         try:
-            latest_session = self._max_date(
+            expected = self._expected_business_date()
+        except Exception:  # noqa: BLE001 — resilience contract: degrade, don't 500
+            expected = None
+        try:
+            true_latest = self._max_date(
                 self._sym, Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw")
             )
-        except Exception:  # noqa: BLE001 — resilience contract: degrade, don't 500
-            latest_session = None
+        except Exception:  # noqa: BLE001
+            true_latest = None
         runs = latest_runs_by_job()
         try:
-            summary = self._summary(latest_session)
+            summary = self._summary(true_latest)
         except Exception:  # noqa: BLE001
             summary = {
                 "securities": None, "universes": None, "priced_securities": None,
-                "latest_session": latest_session.isoformat() if latest_session else None,
+                "latest_session": true_latest.isoformat() if true_latest else None,
                 "last_pipeline_run": None,
             }
         return {
-            "expected_date": latest_session.isoformat() if latest_session else None,
-            "expected_basis": "latest equity trading session (sym prices_raw)",
+            "expected_date": expected.isoformat() if expected else None,
+            "expected_basis": "previous business date (last completed equity trading session)",
             "dagster_runs_available": bool(runs),
             "summary": summary,
-            "buckets": [self._row(b, latest_session, runs) for b in BUCKETS],
+            "buckets": [self._row(b, expected, runs) for b in BUCKETS],
         }
