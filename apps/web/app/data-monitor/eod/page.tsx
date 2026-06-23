@@ -1,4 +1,3 @@
-import { DataSnapshotCards } from "@/components/data-snapshot-cards";
 import { apiGet } from "@/lib/api";
 
 // Data Monitor › EOD — every data-pipeline bucket's expected-vs-actual business date + (best-effort)
@@ -116,10 +115,6 @@ export default async function EodMonitorPage() {
         <Stat label="Universes" value={d.summary.universes ?? "—"} />
         <Stat label="Priced" value={(d.summary.priced_securities ?? 0).toLocaleString()} />
         <Stat label="Latest session" value={d.summary.latest_session ?? "—"} />
-      </div>
-
-      <div className="mt-5">
-        <DataSnapshotCards />
       </div>
 
       <div className="mt-5 overflow-x-auto rounded-xl border border-border">
