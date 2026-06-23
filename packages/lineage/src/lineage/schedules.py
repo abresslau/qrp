@@ -125,7 +125,13 @@ def rates_curve_load(context) -> None:
         raise RuntimeError(f"`rates validate` exited {val.returncode} (a curve check FAILED)")
 
 
-@job(description="BoE UK yield-curve daily load + validate. Manual: `uv run rates curve load`.")
+@job(
+    name="rates_uk_boe",
+    description="UK (Bank of England) yield curve — daily load + validate. GB ONLY (all other "
+    "countries are in `rates_world`); the BoE is a separate, richer fetch (full gilt nominal/real/"
+    "implied-inflation + OIS). For everything in one run use the `rates` bucket. "
+    "Manual: `uv run rates curve load`.",
+)
 def rates_curve_job():
     rates_curve_load()
 
@@ -133,7 +139,7 @@ def rates_curve_job():
 # Weekdays 17:15 Europe/London — after BoE's daily yield-curve publish (London time, DST-aware).
 # Timezone is ALWAYS set explicitly (the hard requirement for every schedule). STOPPED until enabled.
 rates_curve_daily = ScheduleDefinition(
-    name="rates_curve_daily",
+    name="rates_uk_boe_daily",
     job=rates_curve_job,
     cron_schedule="15 17 * * 1-5",
     execution_timezone="Europe/London",
@@ -174,8 +180,12 @@ def rates_world_load(context) -> None:
         raise RuntimeError(f"`rates validate` exited {val.returncode} (a curve check FAILED)")
 
 
-@job(description="Multi-country yield-curve tail load + validate. Manual: `uv run rates curve "
-                 "load-world`.")
+@job(
+    name="rates_world",
+    description="World yield curves (ex-UK) — tail load + validate for every FX-matrix country "
+    "from its central bank (euro area by member). UK is in `rates_uk_boe`; for everything in one "
+    "run use the `rates` bucket. Manual: `uv run rates curve load-world`.",
+)
 def rates_world_job():
     rates_world_load()
 
