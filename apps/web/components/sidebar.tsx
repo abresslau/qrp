@@ -160,7 +160,7 @@ export function Sidebar({
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <div className="text-lg font-semibold tracking-tight text-fg">{name}</div>
+              <Link href="/" className="text-lg font-semibold tracking-tight text-fg hover:text-fg/80">{name}</Link>
               <ApiStatus />
               <button
                 type="button"
