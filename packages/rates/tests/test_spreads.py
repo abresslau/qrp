@@ -29,7 +29,7 @@ class _Conn:
 
     def execute(self, sql, params=None):
         if "as_of_date, tenor, value FROM rates.curve_point" in sql:
-            cs, b, rt, tenors = params
+            _co, cs, b, rt, tenors = params
             rows = self.rows_by_group.get((cs, b, rt), [])
             want = set(tenors)
             return _Cur([(d, t, v) for d, t, v in rows if t in want])
@@ -76,7 +76,7 @@ class _MovieConn:
         if "DISTINCT as_of_date" in sql:
             return _Cur(all_=[(d,) for d in self.dates])
         if "as_of_date, tenor, value" in sql:
-            sampled = set(params[3])
+            sampled = set(params[4])
             rows = []
             for d in self.dates:
                 if d in sampled:
@@ -89,7 +89,9 @@ class _MovieConn:
 def test_curve_movie_samples_evenly_with_first_and_last():
     dates = [date(2000, 1, 1 + i) for i in range(10)]
     pbd = {d: [(2.0, 4.0 + i * 0.1), (10.0, 4.5 + i * 0.1)] for i, d in enumerate(dates)}
-    m = DbRatesGateway(_MovieConn(dates, pbd)).curve_movie("glc", "nominal", "spot", frames=4)
+    m = DbRatesGateway(_MovieConn(dates, pbd)).curve_movie(
+        "GB", "glc", "nominal", "spot", frames=4
+    )
     fr = m["frames"]
     assert 2 <= len(fr) <= 4
     assert fr[0]["as_of_date"] == dates[0].isoformat()  # oldest always first
@@ -98,14 +100,16 @@ def test_curve_movie_samples_evenly_with_first_and_last():
 
 
 def test_curve_movie_empty_series():
-    assert DbRatesGateway(_MovieConn([], {})).curve_movie("ois", "real", "spot")["frames"] == []
+    assert (
+        DbRatesGateway(_MovieConn([], {})).curve_movie("GB", "ois", "real", "spot")["frames"] == []
+    )
 
 
 def test_curve_movie_start_date_windows_the_history():
     dates = [date(2000, 1, 1 + i) for i in range(10)]
     pbd = {d: [(2.0, 4.0)] for d in dates}
     m = DbRatesGateway(_MovieConn(dates, pbd)).curve_movie(
-        "glc", "nominal", "spot", frames=10, start_date=date(2000, 1, 6)
+        "GB", "glc", "nominal", "spot", frames=10, start_date=date(2000, 1, 6)
     )
     fr = m["frames"]
     assert fr[0]["as_of_date"] == "2000-01-06"  # window starts at start_date

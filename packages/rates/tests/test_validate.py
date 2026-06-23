@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from rates.validate import (
     FAIL,
@@ -26,22 +26,25 @@ class _Cur:
 
 
 class _Conn:
-    def __init__(self, latest=None, pairs=None, curves=None, prior_counts=None):
+    def __init__(self, latest=None, recent=None, series=None, curves=None, prior_counts=None):
         self.latest = latest
-        self.pairs = pairs or []
+        self.recent = recent  # DESC list of distinct dates (for staleness cadence)
+        self.series = series or []  # [(cs, b, rt), ...] present on the latest date
         self.curves = curves or {}  # {(cs,b,rt): [(tenor, value), ...]}
-        self.prior_counts = prior_counts or {}  # {(cs,b): prior-day spot tenor count}
+        self.prior_counts = prior_counts or {}  # {(cs,b,rt): prior-day tenor count}
 
     def execute(self, sql, params=None):
-        if "count(*)" in sql:  # the hole-guard prior-day count (checked before the generic SELECT)
-            cs, b = params[0], params[1]
-            return _Cur(one=(self.prior_counts.get((cs, b)),))
+        if "count(*)" in sql:  # hole-guard prior-day count; params=(co,cs,b,rt,co,cs,b,rt,latest)
+            cs, b, rt = params[1], params[2], params[3]
+            return _Cur(one=(self.prior_counts.get((cs, b, rt)),))
+        if "DISTINCT as_of_date" in sql:  # staleness recent-dates window
+            return _Cur(all_=[(d,) for d in (self.recent or [])])
         if "max(as_of_date)" in sql:
             return _Cur(one=(self.latest,))
-        if "DISTINCT curve_set, basis" in sql:
-            return _Cur(all_=self.pairs)
-        if "tenor, value FROM rates.curve_point" in sql:
-            cs, b, rt, _asof = params
+        if "DISTINCT curve_set, basis, rate_type" in sql:
+            return _Cur(all_=self.series)
+        if "tenor, value FROM rates.curve_point" in sql:  # params=(co,cs,b,rt,asof)
+            _co, cs, b, rt, _asof = params
             return _Cur(all_=self.curves.get((cs, b, rt), []))
         return _Cur()
 
@@ -77,41 +80,52 @@ def test_inflation_reconcile_skips_when_no_real_curve():
 
 def test_plausible_band_fails_out_of_band():
     d = date(2026, 6, 19)
-    conn = _Conn(latest=d, pairs=[("glc", "nominal")],
+    conn = _Conn(latest=d, series=[("glc", "nominal", "spot")],
                  curves={("glc", "nominal", "spot"): [(1.0, 4.0), (2.0, 99.0)]})  # 99% impossible
-    r = check_plausible_band(conn)
+    r = check_plausible_band(conn, "GB")
     assert r.status == FAIL and r.failures == 1 and "99.00% out of band" in r.samples[0]
 
 
 def test_plausible_band_passes_with_negative_real_yield():
     d = date(2026, 6, 19)
-    conn = _Conn(latest=d, pairs=[("glc", "real")],
+    conn = _Conn(latest=d, series=[("glc", "real", "spot")],
                  curves={("glc", "real", "spot"): [(2.0, -0.23), (10.0, 1.1)]})  # negative is OK
-    r = check_plausible_band(conn)
+    r = check_plausible_band(conn, "GB")
     assert r.status == PASS and r.failures == 0
 
 
 def test_plausible_band_warns_on_a_tenor_shrink_vs_prior_day():
     d = date(2026, 6, 19)
-    # latest day has 2 spot tenors but the prior published day had 80 → suspicious shrink.
-    # WARN (not FAIL): BoE can legitimately trim a tenor, so it shouldn't hard-block validate.
-    conn = _Conn(latest=d, pairs=[("glc", "nominal")],
+    # latest day has 2 tenors but the prior published day had 80 → suspicious shrink → WARN.
+    conn = _Conn(latest=d, series=[("glc", "nominal", "spot")],
                  curves={("glc", "nominal", "spot"): [(1.0, 4.0), (2.0, 4.1)]},
-                 prior_counts={("glc", "nominal"): 80})
-    r = check_plausible_band(conn)
+                 prior_counts={("glc", "nominal", "spot"): 80})
+    r = check_plausible_band(conn, "GB")
     assert r.status == WARN and r.failures == 0 and any("holes" in s for s in r.samples)
 
 
+def _daily(latest: date, n: int = 10) -> list[date]:
+    # a DESC run of weekday-ish daily dates ending at `latest` (cadence ~1d)
+    return [latest - timedelta(days=i) for i in range(n)]
+
+
 def test_staleness_warns_when_old_and_handles_empty():
-    # latest is a Monday; as-of two weeks later → stale warning
-    conn = _Conn(latest=date(2026, 6, 1))
-    r = check_staleness(conn, as_of_date=date(2026, 6, 15))
+    # daily cadence, latest two weeks before as-of → stale warning
+    conn = _Conn(recent=_daily(date(2026, 6, 1)))
+    r = check_staleness(conn, "GB", as_of_date=date(2026, 6, 15))
     assert r.status == WARN
     # empty store → warn, not crash
-    assert check_staleness(_Conn(latest=None)).status == WARN
+    assert check_staleness(_Conn(recent=[]), "GB").status == WARN
 
 
-def test_staleness_ok_when_one_business_day():
-    # Fri 2026-06-19 latest, as-of Mon 2026-06-22 → 1 business day → ok
-    r = check_staleness(_Conn(latest=date(2026, 6, 19)), as_of_date=date(2026, 6, 22))
+def test_staleness_ok_when_recent_vs_cadence():
+    # Fri 2026-06-19 latest (daily cadence), as-of Mon 2026-06-22 → 3d ≤ ~5d grace → ok
+    r = check_staleness(_Conn(recent=_daily(date(2026, 6, 19))), "GB", as_of_date=date(2026, 6, 22))
+    assert r.status == PASS
+
+
+def test_staleness_monthly_series_not_flagged():
+    # monthly cadence (ECB 10y): latest 5 weeks before as-of is within the scaled grace, not stale
+    monthly = [date(2026, 5, 1) - timedelta(days=30 * i) for i in range(10)]
+    r = check_staleness(_Conn(recent=monthly), "FR", as_of_date=date(2026, 6, 5))
     assert r.status == PASS

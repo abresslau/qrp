@@ -1,15 +1,18 @@
 """Curve-store validation checks (the data-quality pre-mortem, as guards).
 
 Each check returns a ``CheckResult`` (PASS / WARN / FAIL), mirroring ``sym.validate``. ``run_all``
-orchestrates them in isolation. Two exact FAIL-level free checks: inflation = nominal − real, and
-the forward↔spot continuous-compounding identity (BoE's compounding/day-count are pinned from the
-FAQ — see MAINTENANCE.md). The plausible-band tenor-shrink guard is WARN (a legitimate grid trim).
+runs the country-agnostic checks (staleness, plausible band) for every country present, plus the two
+UK-only exact FREE checks (inflation = nominal − real; the forward↔spot continuous-compounding
+identity) which depend on the BoE gilt real/forward curves. Staleness adapts its threshold to each
+series' own cadence so a monthly series (e.g. ECB 10y) isn't flagged as stale against a daily yard-
+stick. The plausible-band tenor-shrink guard is WARN (a legitimate grid trim).
 """
 
 from __future__ import annotations
 
+import statistics as st
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 
 import psycopg
 
@@ -52,109 +55,124 @@ class CheckResult:
         )
 
 
-def _latest_date(conn: psycopg.Connection) -> date | None:
-    row = conn.execute("SELECT max(as_of_date) FROM rates.curve_point").fetchone()
+def _countries(conn: psycopg.Connection) -> list[str]:
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT country FROM rates.curve_point ORDER BY country").fetchall()]
+
+
+def _latest_date(conn: psycopg.Connection, country: str) -> date | None:
+    row = conn.execute(
+        "SELECT max(as_of_date) FROM rates.curve_point WHERE country=%s", (country,)
+    ).fetchone()
     return row[0] if row else None
 
 
+def _recent_dates(conn: psycopg.Connection, country: str, n: int = 20) -> list[date]:
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT as_of_date FROM rates.curve_point WHERE country=%s "
+        "ORDER BY as_of_date DESC LIMIT %s", (country, n)).fetchall()]
+
+
 def _curve(
-    conn: psycopg.Connection, curve_set: str, basis: str, rate_type: str, as_of_date: date
+    conn: psycopg.Connection, country: str, curve_set: str, basis: str, rate_type: str,
+    as_of_date: date,
 ) -> dict[float, float]:
     rows = conn.execute(
         """
         SELECT tenor, value FROM rates.curve_point
-         WHERE curve_set=%s AND basis=%s AND rate_type=%s AND as_of_date=%s
+         WHERE country=%s AND curve_set=%s AND basis=%s AND rate_type=%s AND as_of_date=%s
          ORDER BY tenor
         """,
-        (curve_set, basis, rate_type, as_of_date),
+        (country, curve_set, basis, rate_type, as_of_date),
     ).fetchall()
     return {float(t): float(v) for t, v in rows}
 
 
-def check_staleness(conn: psycopg.Connection, *, as_of_date: date | None = None) -> CheckResult:
-    """The latest stored curve must be recent vs the business day — never silently carried."""
+def check_staleness(
+    conn: psycopg.Connection, country: str, *, as_of_date: date | None = None
+) -> CheckResult:
+    """The latest stored curve must be recent vs the series' own cadence — never silently carried.
+    Threshold scales to the median spacing of recent observations (daily vs monthly feeds)."""
     today = as_of_date or date.today()
-    latest = _latest_date(conn)
-    if latest is None:
+    recent = _recent_dates(conn, country)
+    if not recent:
         return CheckResult.from_items(
-            "curve_staleness", checked=0,
-            warnings=["rates.curve_point is empty — run `rates curve load`"],
-            detail="no curves stored",
-        )
-    # business-day age (ignore Sat/Sun); BoE doesn't publish on UK weekends/holidays.
-    age = 0
-    d = today
-    while d > latest:
-        if d.weekday() < 5:
-            age += 1
-        d -= timedelta(days=1)
+            f"staleness[{country}]", checked=0, warnings=["no curves stored"], detail="empty")
+    latest = recent[0]
+    gaps = [(recent[i] - recent[i + 1]).days for i in range(min(len(recent) - 1, 10))]
+    median_gap = st.median(gaps) if gaps else 1
+    allowed = max(5, 2 * median_gap)  # daily → ~5d grace; monthly → ~60d grace
+    age = (today - latest).days
     warnings = (
-        [f"latest curve {latest.isoformat()} is {age} business day(s) stale"] if age > 1 else []
+        [f"latest {latest.isoformat()} is {age}d old "
+         f"(cadence ~{median_gap:.0f}d, allow {allowed:.0f}d)"]
+        if age > allowed else []
     )
     return CheckResult.from_items(
-        "curve_staleness", checked=1, warnings=warnings,
-        detail=f"latest={latest.isoformat()} (as-of {today.isoformat()})",
+        f"staleness[{country}]", checked=1, warnings=warnings,
+        detail=f"latest={latest.isoformat()} cadence~{median_gap:.0f}d (as-of {today.isoformat()})",
     )
 
 
 def check_plausible_band(
-    conn: psycopg.Connection, *, as_of_date: date | None = None
+    conn: psycopg.Connection, country: str, *, as_of_date: date | None = None
 ) -> CheckResult:
-    """Latest spot curves are within a plausible band and have no missing tenors (holes)."""
-    latest = as_of_date or _latest_date(conn)
+    """Latest curves are within a plausible band and have no missing tenors (holes). Band is wide
+    enough for EM nominal yields and deep history (-5..40%); a hole (fewer tenors than the prior
+    day) is WARN (a legitimate grid trim), an out-of-band value is FAIL (corruption)."""
+    latest = as_of_date or _latest_date(conn, country)
     if latest is None:
-        return CheckResult.from_items("curve_plausible_band", checked=0,
-                                      warnings=["no curves stored"], detail="empty")
+        return CheckResult.from_items(
+            f"plausible_band[{country}]", checked=0, warnings=["no curves stored"], detail="empty")
     failures: list[str] = []
     warnings: list[str] = []
     checked = 0
-    pairs = conn.execute(
-        "SELECT DISTINCT curve_set, basis FROM rates.curve_point WHERE as_of_date=%s", (latest,)
+    series = conn.execute(
+        "SELECT DISTINCT curve_set, basis, rate_type FROM rates.curve_point "
+        "WHERE country=%s AND as_of_date=%s", (country, latest)
     ).fetchall()
-    for cs, b in pairs:
-        spot = _curve(conn, cs, b, "spot", latest)
-        checked += len(spot)
-        for t, v in spot.items():
-            if not (-5.0 < v < 25.0):
-                failures.append(f"{cs}/{b}/spot/{t}y = {v:.2f}% out of band")  # corruption → FAIL
-        # hole guard: fewer spot tenors than the prior published day. WARN not FAIL — BoE can
-        # legitimately trim a tenor (tenor-as-data), so a shrink is suspicious, not corruption.
+    for cs, b, rt in series:
+        curve = _curve(conn, country, cs, b, rt, latest)
+        checked += len(curve)
+        for t, v in curve.items():
+            if not (-5.0 < v < 40.0):
+                failures.append(f"{cs}/{b}/{rt}/{t}y = {v:.2f}% out of band")
         prior = conn.execute(
             """
             SELECT count(*) FROM rates.curve_point
-             WHERE curve_set=%s AND basis=%s AND rate_type='spot'
+             WHERE country=%s AND curve_set=%s AND basis=%s AND rate_type=%s
                AND as_of_date = (
                    SELECT max(as_of_date) FROM rates.curve_point
-                    WHERE curve_set=%s AND basis=%s AND rate_type='spot' AND as_of_date < %s)
+                    WHERE country=%s AND curve_set=%s AND basis=%s AND rate_type=%s
+                      AND as_of_date < %s)
             """,
-            (cs, b, cs, b, latest),
+            (country, cs, b, rt, country, cs, b, rt, latest),
         ).fetchone()
         prior_n = prior[0] if prior and prior[0] else None
-        if prior_n and len(spot) < prior_n:
+        if prior_n and len(curve) < prior_n:
             warnings.append(
-                f"{cs}/{b}/spot: {len(spot)} tenors vs {prior_n} on the prior day (possible holes)"
+                f"{cs}/{b}/{rt}: {len(curve)} tenors vs {prior_n} on the prior day (possible holes)"
             )
     return CheckResult.from_items(
-        "curve_plausible_band", checked=checked, failures=failures, warnings=warnings,
-        detail=f"{checked} latest spot nodes checked on {latest.isoformat()} "
-        f"(band=FAIL, tenor-shrink=WARN)",
+        f"plausible_band[{country}]", checked=checked, failures=failures, warnings=warnings,
+        detail=f"{checked} latest nodes on {latest.isoformat()} (band=FAIL, tenor-shrink=WARN)",
     )
 
 
 def check_inflation_reconcile(
     conn: psycopg.Connection, *, as_of_date: date | None = None, tol_pp: float = 0.02
 ) -> CheckResult:
-    """FREE CHECK: implied inflation == nominal - real (gilt spot), matching tenors. RPI not CPI."""
-    latest = as_of_date or _latest_date(conn)
+    """FREE CHECK (GB): implied inflation == nominal - real (gilt spot), matching tenors. RPI."""
+    latest = as_of_date or _latest_date(conn, "GB")
     if latest is None:
-        return CheckResult.from_items("curve_inflation_reconcile", checked=0,
-                                      warnings=["no curves stored"], detail="empty")
-    nominal = _curve(conn, "glc", "nominal", "spot", latest)
-    real = _curve(conn, "glc", "real", "spot", latest)
-    infl = _curve(conn, "glc", "inflation", "spot", latest)
+        return CheckResult.from_items("inflation_reconcile[GB]", checked=0,
+                                      warnings=["no GB curves stored"], detail="empty")
+    nominal = _curve(conn, "GB", "glc", "nominal", "spot", latest)
+    real = _curve(conn, "GB", "glc", "real", "spot", latest)
+    infl = _curve(conn, "GB", "glc", "inflation", "spot", latest)
     if not infl or not real:
         return CheckResult.from_items(
-            "curve_inflation_reconcile", checked=0,
+            "inflation_reconcile[GB]", checked=0,
             warnings=["no real/inflation gilt curve on the latest date — skipped"],
             detail=f"as-of {latest.isoformat()}",
         )
@@ -170,7 +188,7 @@ def check_inflation_reconcile(
                     f"(delta {abs(infl_v - expected):.3f}pp)"
                 )
     return CheckResult.from_items(
-        "curve_inflation_reconcile", checked=checked, failures=failures,
+        "inflation_reconcile[GB]", checked=checked, failures=failures,
         detail=f"RPI breakeven = nominal-real within {tol_pp}pp on {latest.isoformat()}",
     )
 
@@ -178,29 +196,26 @@ def check_inflation_reconcile(
 def check_forward_spot_reconcile(
     conn: psycopg.Connection, *, as_of_date: date | None = None, tol_pp: float = 0.50
 ) -> CheckResult:
-    """The continuous-compounding identity s(t)·t = integral(f, 0..t) — confirmed from the BoE FAQ
-    ("spot and forward are continuously compounded, annual basis"). Reconstruct spot(t) as the mean
-    instantaneous forward over [0,t] and FAIL on a breach beyond ``tol_pp`` (which sits above the
-    trapezoidal-discretization residual on the published grid, ~0.36pp max). A large breach means a
-    convention mismatch (e.g. simple- vs continuous-compounding), not discretization."""
-    latest = as_of_date or _latest_date(conn)
+    """FREE CHECK (GB): the continuous-compounding identity s(t)·t = integral(f, 0..t) — confirmed
+    from the BoE FAQ. Reconstruct spot(t) as the mean instantaneous forward over [0,t]; FAIL on a
+    breach beyond ``tol_pp`` (above the trapezoidal-discretization residual, ~0.36pp max)."""
+    latest = as_of_date or _latest_date(conn, "GB")
     if latest is None:
-        return CheckResult.from_items("curve_forward_spot_reconcile", checked=0,
-                                      warnings=["no curves stored"], detail="empty")
-    spot = _curve(conn, "glc", "nominal", "spot", latest)
-    fwd = _curve(conn, "glc", "nominal", "forward", latest)
+        return CheckResult.from_items("forward_spot_reconcile[GB]", checked=0,
+                                      warnings=["no GB curves stored"], detail="empty")
+    spot = _curve(conn, "GB", "glc", "nominal", "spot", latest)
+    fwd = _curve(conn, "GB", "glc", "nominal", "forward", latest)
     shared = sorted(set(spot) & set(fwd))
     if len(shared) < 3:
-        return CheckResult.from_items("curve_forward_spot_reconcile", checked=0,
+        return CheckResult.from_items("forward_spot_reconcile[GB]", checked=0,
                                       warnings=["too few shared nominal tenors"], detail="skipped")
     failures: list[str] = []
     checked = 0
-    # trapezoidal cumulative integral of f over the shared grid, anchored flat-to-zero at node 0.
     cum = 0.0
     prev_t = shared[0]
     for t in shared[1:]:
         cum += 0.5 * (fwd[t] + fwd[prev_t]) * (t - prev_t)
-        recon = (fwd[shared[0]] * shared[0] + cum) / t  # mean inst. forward over [0,t] = spot(t)
+        recon = (fwd[shared[0]] * shared[0] + cum) / t
         checked += 1
         if abs(recon - spot[t]) > tol_pp:
             failures.append(
@@ -208,28 +223,29 @@ def check_forward_spot_reconcile(
             )
         prev_t = t
     return CheckResult.from_items(
-        "curve_forward_spot_reconcile", checked=checked, failures=failures,
-        detail=f"continuous-compounding fwd->spot identity within {tol_pp}pp on "
-        f"{latest.isoformat()} (BoE FAQ confirmed; residual = grid discretization)",
+        "forward_spot_reconcile[GB]", checked=checked, failures=failures,
+        detail=f"continuous-compounding fwd->spot within {tol_pp}pp on {latest.isoformat()}",
     )
 
 
 def run_all(conn: psycopg.Connection, *, as_of_date: date | None = None) -> list[CheckResult]:
-    checks = [
-        ("curve_staleness", lambda: check_staleness(conn, as_of_date=as_of_date)),
-        ("curve_plausible_band", lambda: check_plausible_band(conn, as_of_date=as_of_date)),
-        ("curve_inflation_reconcile",
-         lambda: check_inflation_reconcile(conn, as_of_date=as_of_date)),
-        ("curve_forward_spot_reconcile",
-         lambda: check_forward_spot_reconcile(conn, as_of_date=as_of_date)),
-    ]
+    """Per-country staleness + plausible-band, plus the two GB-only free checks."""
     results: list[CheckResult] = []
-    for name, fn in checks:
+
+    def _run(name: str, fn) -> None:
         try:
             results.append(fn())
         except Exception as exc:  # noqa: BLE001 — a crashed check is a FAIL, not a crash
-            results.append(
-                CheckResult.from_items(name, checked=0, failures=[f"check crashed: {exc!r}"],
-                                       detail="check raised")
-            )
+            results.append(CheckResult.from_items(
+                name, checked=0, failures=[f"check crashed: {exc!r}"], detail="check raised"))
+
+    for country in _countries(conn):
+        _run(f"staleness[{country}]",
+             lambda c=country: check_staleness(conn, c, as_of_date=as_of_date))
+        _run(f"plausible_band[{country}]",
+             lambda c=country: check_plausible_band(conn, c, as_of_date=as_of_date))
+    _run("inflation_reconcile[GB]",
+         lambda: check_inflation_reconcile(conn, as_of_date=as_of_date))
+    _run("forward_spot_reconcile[GB]",
+         lambda: check_forward_spot_reconcile(conn, as_of_date=as_of_date))
     return results
