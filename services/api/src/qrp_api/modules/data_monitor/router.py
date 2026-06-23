@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from lineage.buckets import bucket_keys
 from pydantic import BaseModel
 
+from qrp_api.config import dagster_run_url
 from qrp_api.db import connect
+from qrp_api.modules.data_monitor.dagster_runs import launch_job
 from qrp_api.modules.data_monitor.eod import EodMonitorGateway
 
 router = APIRouter(prefix="/api/data-monitor", tags=["data-monitor"])
@@ -56,6 +59,7 @@ class EodBucketRow(BaseModel):
     subgroups: list[EodSubgroup] = []
     last_run: EodRun | None = None
     dagster_url: str | None = None
+    run_subcategories: list[str] = []
 
 
 class EodPipelineRun(BaseModel):
@@ -87,3 +91,36 @@ class EodMonitor(BaseModel):
 def data_monitor_eod(gw: EodMonitorGateway = Depends(_gateway)) -> dict:
     """Per-bucket EOD freshness (expected vs actual business date) + best-effort latest Dagster run."""
     return gw.eod()
+
+
+class LaunchRequest(BaseModel):
+    job: str  # a bucket key (fx, equity_prices, index_levels, rates, …)
+    subcategories: list[str] = []  # empty ⇒ the whole bucket; e.g. ["msci"] ⇒ only that subcategory
+    as_of_date: str | None = None
+
+
+class LaunchResult(BaseModel):
+    ok: bool
+    run_id: str | None = None
+    status: str | None = None
+    run_url: str | None = None
+    error: str | None = None
+
+
+@router.post("/launch", response_model=LaunchResult)
+def data_monitor_launch(req: LaunchRequest) -> dict:
+    """Trigger a bucket job in the running Dagster instance (one-click run from the EOD board).
+
+    ``subcategories`` narrows the run (e.g. ``index_levels`` + ``["msci"]`` runs only `sym msci-pull`).
+    Mutating + same-origin-guarded (Story O.3); returns the run id + a deep link to the run, or a
+    clean error if Dagster isn't running.
+    """
+    if req.job not in set(bucket_keys()):
+        raise HTTPException(status_code=422, detail=f"unknown job {req.job!r}")
+    res = launch_job(req.job, req.subcategories or None, req.as_of_date)
+    out: dict = {"ok": res["ok"], "error": res.get("error")}
+    if res["ok"]:
+        out["run_id"] = res["run_id"]
+        out["status"] = res.get("status")
+        out["run_url"] = dagster_run_url(res["run_id"])
+    return out

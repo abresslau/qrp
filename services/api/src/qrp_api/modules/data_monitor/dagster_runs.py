@@ -13,9 +13,63 @@ import os
 import urllib.request
 from datetime import UTC, datetime
 
+from qrp_api.config import dagster_code_location, dagster_repository
+
 
 def graphql_url() -> str:
     return os.environ.get("DAGSTER_GRAPHQL_URL", "http://127.0.0.1:3333/graphql")
+
+
+_LAUNCH_MUTATION = """
+mutation Launch($selector: JobOrPipelineSelector!, $rc: RunConfigData) {
+  launchRun(executionParams: {selector: $selector, runConfigData: $rc, mode: "default"}) {
+    __typename
+    ... on LaunchRunSuccess { run { runId status } }
+    ... on RunConfigValidationInvalid { errors { message } }
+    ... on PipelineNotFoundError { message }
+    ... on InvalidSubsetError { message }
+    ... on PythonError { message }
+  }
+}
+"""
+
+
+def launch_job(
+    job: str, subcategories: list[str] | None = None, as_of_date: str | None = None,
+    timeout: float = 8.0,
+) -> dict:
+    """Launch a bucket job in the running Dagster instance via GraphQL ``launchRun``.
+
+    The bucket jobs wrap a single op ``<job>_load`` whose config is the BucketConfig
+    (``subcategories``/``as_of_date``) — so ``subcategories=["msci"]`` on ``index_levels`` runs only
+    ``sym msci-pull``. Returns ``{ok, run_id?, status?, error?}``; never raises (a dead daemon →
+    ``{ok: False, error: …}``)."""
+    cfg: dict = {}
+    if subcategories is not None:
+        cfg["subcategories"] = list(subcategories)
+    if as_of_date:
+        cfg["as_of_date"] = as_of_date
+    run_config = {"ops": {f"{job}_load": {"config": cfg}}}
+    selector = {
+        "repositoryLocationName": dagster_code_location(),
+        "repositoryName": dagster_repository(),
+        "pipelineName": job,
+    }
+    payload = {"query": _LAUNCH_MUTATION, "variables": {"selector": selector, "rc": run_config}}
+    try:
+        body = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            graphql_url(), data=body, headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 — fixed local host
+            data = json.load(resp)
+        res = data["data"]["launchRun"]
+    except Exception as exc:  # noqa: BLE001 — surface a clean error, never raise
+        return {"ok": False, "error": f"Dagster not reachable ({type(exc).__name__})"}
+    if res.get("__typename") == "LaunchRunSuccess":
+        return {"ok": True, "run_id": res["run"]["runId"], "status": res["run"].get("status")}
+    msg = res.get("message") or "; ".join(e.get("message", "") for e in res.get("errors", []))
+    return {"ok": False, "error": f"{res.get('__typename')}: {msg or 'launch failed'}"}
 
 
 # Last 50 runs across all jobs (one request); we group to the latest per job name client-side.

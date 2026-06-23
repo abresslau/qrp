@@ -105,20 +105,39 @@ def db_dsn() -> str:
     return package_dsn("sym")
 
 
-def dagster_job_url(job: str) -> str:
-    """Deep link to a bucket's job in the Dagster UI (the lineage code location).
-
-    The bucket jobs are named exactly the bucket keys, so ``{job}`` is the bucket key. Fully
-    overridable for a different host/port or code-location name via ``DAGSTER_JOB_URL_TEMPLATE``
-    (default targets ``dagster dev -m lineage.definitions`` on :3333). The link is best-effort —
-    it just opens the Dagster UI; it doesn't require Dagster to be reachable from the API.
-    """
+def dagster_ui_base() -> str:
+    """Base URL of the Dagster UI (``dagster dev`` on :3333 by default; override DAGSTER_UI_URL)."""
     _load_dotenv()
-    tmpl = os.environ.get(
-        "DAGSTER_JOB_URL_TEMPLATE",
-        "http://localhost:3333/locations/lineage.definitions/jobs/{job}",
-    )
-    return tmpl.format(job=job)
+    return os.environ.get("DAGSTER_UI_URL", "http://localhost:3333").rstrip("/")
+
+
+def dagster_code_location() -> str:
+    """The Dagster code-location name (``dagster dev -m lineage.definitions`` ⇒ "lineage.definitions")."""
+    _load_dotenv()
+    return os.environ.get("DAGSTER_CODE_LOCATION", "lineage.definitions")
+
+
+def dagster_repository() -> str:
+    """The repository name within the code location (single-repo default is "__repository__")."""
+    _load_dotenv()
+    return os.environ.get("DAGSTER_REPOSITORY", "__repository__")
+
+
+def dagster_job_url(job: str) -> str:
+    """Deep link to a bucket's job in the Dagster UI (bucket jobs are named exactly the bucket key).
+
+    Override the whole template via ``DAGSTER_JOB_URL_TEMPLATE`` ({job} placeholder), else built from
+    DAGSTER_UI_URL + code location. Best-effort — opening it doesn't require Dagster reachable here.
+    """
+    tmpl = os.environ.get("DAGSTER_JOB_URL_TEMPLATE")
+    if tmpl:
+        return tmpl.format(job=job)
+    return f"{dagster_ui_base()}/locations/{dagster_code_location()}/jobs/{job}"
+
+
+def dagster_run_url(run_id: str) -> str:
+    """Deep link to a specific run in the Dagster UI."""
+    return f"{dagster_ui_base()}/runs/{run_id}"
 
 
 def sym_readonly_dsn() -> str:

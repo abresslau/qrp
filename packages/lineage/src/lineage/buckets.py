@@ -55,6 +55,10 @@ class Bucket:
     stale_after_days: int = 0       # days behind the EXPECTED (previous) business date before
     #                                 flagged "stale". 0 ⇒ behind by even one business day is stale.
     note: str | None = None         # honest caveat shown on the row (cadence, proxy, …)
+    run_options: tuple[str, ...] = ()  # small fixed launchable subcategories surfaced as one-click
+    #                                    run chips on the EOD board (e.g. index_levels: yahoo/msci).
+    #                                    Empty ⇒ only a whole-bucket "Run" (per-universe/country sets
+    #                                    are too large to chip; run the whole bucket or use the CLI).
 
 
 # The nine buckets, in rail order. The dataset chosen per bucket is the one whose recency best
@@ -72,6 +76,7 @@ BUCKETS: tuple[Bucket, ...] = (
     Bucket(
         "index_levels", "Index levels", "provider",
         (Dataset(SYM, "index_levels", "session_date", "sym.index_levels"),),
+        run_options=("yahoo", "msci"),  # yahoo = `sym indices`; msci = `sym msci-pull`
     ),
     Bucket(
         "rates", "Rates curves", "country",
@@ -109,6 +114,7 @@ BUCKETS: tuple[Bucket, ...] = (
         # recomputed FROM prices, so the equity_prices bucket already carries the laggard story; the
         # last as_of_date with returns is the honest signal here.
         (Dataset(SYM, "fact_returns", "as_of_date", "sym.fact_returns"),),
+        run_options=("returns", "gics", "index_returns"),
     ),
 )
 

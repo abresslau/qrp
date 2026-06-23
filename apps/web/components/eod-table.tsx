@@ -26,7 +26,10 @@ export type BucketRow = {
   subgroups: Subgroup[];
   last_run: Run;
   dagster_url: string | null;
+  run_subcategories: string[];
 };
+
+type LaunchState = { state: "loading" | "ok" | "err"; msg?: string; url?: string };
 
 function pill(status: string): string {
   if (status === "ok" || status === "SUCCESS" || status === "success")
@@ -53,6 +56,28 @@ const bucketIsStale = (b: BucketRow) => b.status === "stale" || b.subgroups.some
 export function EodTable({ buckets }: { buckets: BucketRow[] }) {
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [staleOnly, setStaleOnly] = useState(false);
+  const [launch, setLaunch] = useState<Record<string, LaunchState>>({});
+
+  // Trigger a bucket job (optionally a single subcategory) in the running Dagster instance.
+  async function runJob(job: string, subcategories: string[], tag: string) {
+    setLaunch((l) => ({ ...l, [tag]: { state: "loading" } }));
+    try {
+      const r = await fetch("/api/data-monitor/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job, subcategories }),
+      });
+      const d = await r.json();
+      setLaunch((l) => ({
+        ...l,
+        [tag]: d.ok
+          ? { state: "ok", msg: (d.status ?? "queued").toLowerCase(), url: d.run_url }
+          : { state: "err", msg: d.error ?? `${r.status}` },
+      }));
+    } catch {
+      setLaunch((l) => ({ ...l, [tag]: { state: "err", msg: "network error" } }));
+    }
+  }
 
   const staleCount = buckets.filter(bucketIsStale).length;
   const shown = staleOnly ? buckets.filter(bucketIsStale) : buckets;
@@ -111,6 +136,8 @@ export function EodTable({ buckets }: { buckets: BucketRow[] }) {
                   expanded={expanded}
                   toggleable={toggleable}
                   onToggle={() => toggleable && setOpen((o) => ({ ...o, [b.key]: !o[b.key] }))}
+                  launch={launch}
+                  onRun={runJob}
                 />
               );
             })}
@@ -121,8 +148,38 @@ export function EodTable({ buckets }: { buckets: BucketRow[] }) {
   );
 }
 
-function BucketRows({ b, subs, expanded, toggleable, onToggle }: {
+// A small run button that reflects its launch state (idle / launching / queued ↗ / error).
+function RunBtn({ label, st, onClick }: {
+  label: string; st: LaunchState | undefined; onClick: () => void;
+}) {
+  if (st?.state === "ok") {
+    return (
+      <a href={st.url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}
+        className="rounded px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 ring-1 ring-emerald-600/30 hover:underline dark:text-emerald-400">
+        {st.msg} ↗
+      </a>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={st?.state === "loading"}
+      title={st?.state === "err" ? st.msg : `Run ${label.replace("▷ ", "")} in Dagster`}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      className={`rounded px-1.5 py-0.5 text-[11px] font-medium ring-1 transition ${
+        st?.state === "err"
+          ? "text-red-600 ring-red-600/30 dark:text-red-400"
+          : "text-muted ring-border hover:bg-fg/5 hover:text-fg"
+      } ${st?.state === "loading" ? "opacity-50" : ""}`}
+    >
+      {st?.state === "loading" ? "launching…" : st?.state === "err" ? `${label} ✕` : label}
+    </button>
+  );
+}
+
+function BucketRows({ b, subs, expanded, toggleable, onToggle, launch, onRun }: {
   b: BucketRow; subs: Subgroup[]; expanded: boolean; toggleable: boolean; onToggle: () => void;
+  launch: Record<string, LaunchState>; onRun: (job: string, subcats: string[], tag: string) => void;
 }) {
   const hasSub = b.subgroups.length > 0;
   return (
@@ -151,6 +208,17 @@ function BucketRows({ b, subs, expanded, toggleable, onToggle }: {
           {(b.coverage || b.note) && (
             <div className="pl-[1.1rem] mt-0.5 text-xs text-muted/70">{b.coverage ?? b.note}</div>
           )}
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-[1.1rem]">
+            <RunBtn label="▷ Run" st={launch[b.key]} onClick={() => onRun(b.key, [], b.key)} />
+            {b.run_subcategories.map((opt) => (
+              <RunBtn
+                key={opt}
+                label={`▷ ${opt}`}
+                st={launch[`${b.key}:${opt}`]}
+                onClick={() => onRun(b.key, [opt], `${b.key}:${opt}`)}
+              />
+            ))}
+          </div>
         </td>
         <td className="px-3 py-2.5 font-mono text-xs text-muted">{b.datasets.join(", ")}</td>
         <td className="px-3 py-2.5 text-right tabular-nums text-muted">{b.expected_date ?? "—"}</td>

@@ -248,6 +248,7 @@ class EodMonitorGateway:
             "subgroups": subgroups,
             "last_run": runs.get(b.key),
             "dagster_url": dagster_job_url(b.key),
+            "run_subcategories": list(b.run_options),
         }
 
     # -- summary header (migrated from the former sym Overview) ----------------------------
