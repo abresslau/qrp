@@ -15,3 +15,7 @@ def test_curve_routes_exist():
 def test_spread_routes_exist():
     assert "/api/rates/spreads" in _PATHS
     assert "/api/rates/spread/{key}" in _PATHS
+
+
+def test_curve_movie_route_exists():
+    assert "/api/rates/curve/movie" in _PATHS

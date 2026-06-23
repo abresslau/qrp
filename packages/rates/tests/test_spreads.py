@@ -67,6 +67,51 @@ def test_breakeven_level_in_percent():
     assert be["unit"] == "%" and be["value"] == pytest.approx(3.5)
 
 
+class _MovieConn:
+    def __init__(self, dates, points_by_date):
+        self.dates = dates
+        self.pbd = points_by_date
+
+    def execute(self, sql, params=None):
+        if "DISTINCT as_of_date" in sql:
+            return _Cur(all_=[(d,) for d in self.dates])
+        if "as_of_date, tenor, value" in sql:
+            sampled = set(params[3])
+            rows = []
+            for d in self.dates:
+                if d in sampled:
+                    for t, v in self.pbd[d]:
+                        rows.append((d, t, v))
+            return _Cur(all_=rows)
+        return _Cur()
+
+
+def test_curve_movie_samples_evenly_with_first_and_last():
+    dates = [date(2000, 1, 1 + i) for i in range(10)]
+    pbd = {d: [(2.0, 4.0 + i * 0.1), (10.0, 4.5 + i * 0.1)] for i, d in enumerate(dates)}
+    m = DbRatesGateway(_MovieConn(dates, pbd)).curve_movie("glc", "nominal", "spot", frames=4)
+    fr = m["frames"]
+    assert 2 <= len(fr) <= 4
+    assert fr[0]["as_of_date"] == dates[0].isoformat()  # oldest always first
+    assert fr[-1]["as_of_date"] == dates[-1].isoformat()  # latest always last
+    assert fr[0]["points"][0] == {"tenor": 2.0, "value": 4.0}
+
+
+def test_curve_movie_empty_series():
+    assert DbRatesGateway(_MovieConn([], {})).curve_movie("ois", "real", "spot")["frames"] == []
+
+
+def test_curve_movie_start_date_windows_the_history():
+    dates = [date(2000, 1, 1 + i) for i in range(10)]
+    pbd = {d: [(2.0, 4.0)] for d in dates}
+    m = DbRatesGateway(_MovieConn(dates, pbd)).curve_movie(
+        "glc", "nominal", "spot", frames=10, start_date=date(2000, 1, 6)
+    )
+    fr = m["frames"]
+    assert fr[0]["as_of_date"] == "2000-01-06"  # window starts at start_date
+    assert fr[-1]["as_of_date"] == "2000-01-10"
+
+
 def test_spread_history_window_filter_and_unknown_key():
     conn = _Conn({("glc", "nominal", "spot"): [
         (date(2020, 1, 1), 2.0, 3.0), (date(2020, 1, 1), 10.0, 3.5),  # old (outside 1Y)

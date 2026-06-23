@@ -154,6 +154,55 @@ class DbRatesGateway:
             out.append(row)
         return out
 
+    def curve_movie(
+        self,
+        curve_set: str = "glc",
+        basis: str = "nominal",
+        rate_type: str = "spot",
+        frames: int = 120,
+        start_date: date | None = None,
+    ) -> dict:
+        """A timelapse: up to ``frames`` curves evenly sampled (oldest→latest, first+last kept) over
+        the history for a (curve_set, basis, rate_type). ``start_date`` bounds the window to the
+        selected comparison range (else full history). One query."""
+        frames = max(2, min(frames, 240))
+        dates = [
+            r[0]
+            for r in self._conn.execute(
+                """
+                SELECT DISTINCT as_of_date FROM rates.curve_point
+                 WHERE curve_set=%s AND basis=%s AND rate_type=%s ORDER BY as_of_date
+                """,
+                (curve_set, basis, rate_type),
+            ).fetchall()
+        ]
+        if start_date is not None:
+            dates = [d for d in dates if d >= start_date]
+        out = {"curve_set": curve_set, "basis": basis, "rate_type": rate_type, "frames": []}
+        if not dates:
+            return out
+        if len(dates) <= frames:
+            sampled = dates
+        else:  # evenly spaced incl. first & last, de-duped
+            n = len(dates)
+            idx = sorted({round(i * (n - 1) / (frames - 1)) for i in range(frames)})
+            sampled = [dates[i] for i in idx]
+        rows = self._conn.execute(
+            """
+            SELECT as_of_date, tenor, value FROM rates.curve_point
+             WHERE curve_set=%s AND basis=%s AND rate_type=%s AND as_of_date = ANY(%s)
+             ORDER BY as_of_date, tenor
+            """,
+            (curve_set, basis, rate_type, sampled),
+        ).fetchall()
+        by_date: dict = {}
+        for d, t, v in rows:
+            by_date.setdefault(d, []).append({"tenor": float(t), "value": float(v)})
+        out["frames"] = [
+            {"as_of_date": d.isoformat(), "points": by_date[d]} for d in sampled if d in by_date
+        ]
+        return out
+
     def spread_history(self, key: str, window: str = "MAX") -> dict:
         """One spread's full daily history over a window (1Y/5Y/MAX) for the detail chart."""
         spec = _SPEC_BY_KEY.get(key)

@@ -68,6 +68,18 @@ class SpreadHistory(BaseModel):
     points: list[SparkPoint]
 
 
+class CurveMovieFrame(BaseModel):
+    as_of_date: str
+    points: list[CurvePointOut]
+
+
+class CurveMovie(BaseModel):
+    curve_set: str
+    basis: str
+    rate_type: str
+    frames: list[CurveMovieFrame]
+
+
 @router.get("/curve/series", response_model=list[CurveSeries])
 def list_curve_series(gw: DbRatesGateway = Depends(_gateway)) -> list[dict]:
     return gw.curve_sets()
@@ -85,6 +97,18 @@ def get_spread(
     gw: DbRatesGateway = Depends(_gateway),
 ) -> dict:
     return gw.spread_history(key, window)
+
+
+@router.get("/curve/movie", response_model=CurveMovie)
+def get_curve_movie(
+    curve_set: str = Query("glc"),
+    basis: str = Query("nominal"),
+    rate_type: str = Query("spot"),
+    frames: int = Query(120, ge=2, le=240, description="max frames sampled across the window"),
+    start_date: date | None = Query(None, description="window start; full history if omitted"),
+    gw: DbRatesGateway = Depends(_gateway),
+) -> dict:
+    return gw.curve_movie(curve_set, basis, rate_type, frames, start_date)
 
 
 @router.get("/curve", response_model=Curve)
