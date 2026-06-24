@@ -37,6 +37,7 @@ export default function OptimiserPage() {
   const [detail, setDetail] = useState<SolDetail | null>(null);
   const [method, setMethod] = useState("min_variance");
   const [universe, setUniverse] = useState("sp500");
+  const [covMethod, setCovMethod] = useState("shrinkage");  // risk model: shrinkage | sample
   const [maxWeight, setMaxWeight] = useState("");  // % per position; blank = unconstrained
   const [factors, setFactors] = useState<FactorSummary[]>([]);
   const [tiltFactor, setTiltFactor] = useState("");  // blank = no tilt
@@ -80,7 +81,7 @@ export default function OptimiserPage() {
   async function solve() {
     setSolveError(null);
     setSavedPid(null);
-    const body: Record<string, unknown> = { universe, method, n: 40, lookback: 315 };
+    const body: Record<string, unknown> = { universe, method, n: 40, lookback: 315, cov_method: covMethod };
     if (maxWeight.trim() !== "") {
       const cap = Number(maxWeight);
       if (!Number.isFinite(cap) || cap <= 0 || cap > 100) {
@@ -150,6 +151,15 @@ export default function OptimiserPage() {
               {m.label}
             </option>
           ))}
+        </select>
+        <select
+          value={covMethod}
+          onChange={(e) => setCovMethod(e.target.value)}
+          title="Risk model: Ledoit-Wolf shrinkage (recommended) or the raw sample covariance"
+          className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+        >
+          <option value="shrinkage">Ledoit-Wolf shrinkage</option>
+          <option value="sample">sample covariance</option>
         </select>
         <select
           value={universe}
@@ -277,17 +287,30 @@ export default function OptimiserPage() {
                     ✓ optimised vol {pct(detail.exp_vol)} ≤ equal-weight vol {pct(detail.ew_vol)}
                   </p>
                 )}
-              {detail.spec && (
-                <p className="mt-2 text-xs text-muted">
-                  spec: {detail.spec.max_weight != null
-                    ? `cap ${parseFloat((detail.spec.max_weight * 100).toFixed(1))}% · `
-                    : ""}
-                  {detail.spec.signal_tilt
-                    ? `tilt ${detail.spec.signal_tilt.factor} ×${detail.spec.signal_tilt.strength} · `
-                    : ""}
-                  train {detail.spec.train_start} → {detail.spec.train_end}
-                </p>
-              )}
+              {detail.spec && (() => {
+                const sm = detail.summary as
+                  | { cov_method?: string | null; shrink_delta?: number | null }
+                  | null
+                  | undefined;
+                const cov = detail.spec.cov_method ?? sm?.cov_method;
+                const delta = sm?.shrink_delta;
+                return (
+                  <p className="mt-2 text-xs text-muted">
+                    spec: {detail.spec.max_weight != null
+                      ? `cap ${parseFloat((detail.spec.max_weight * 100).toFixed(1))}% · `
+                      : ""}
+                    {cov
+                      ? `${cov === "shrinkage" ? "Ledoit-Wolf" : "sample"} cov${
+                          cov === "shrinkage" && delta != null ? ` (δ ${delta.toFixed(2)})` : ""
+                        } · `
+                      : ""}
+                    {detail.spec.signal_tilt
+                      ? `tilt ${detail.spec.signal_tilt.factor} ×${detail.spec.signal_tilt.strength} · `
+                      : ""}
+                    train {detail.spec.train_start} → {detail.spec.train_end}
+                  </p>
+                );
+              })()}
               {(() => {
                 const h = detail.summary?.holdout as HoldoutBlock | null | undefined;
                 if (!h?.strategy) return null;

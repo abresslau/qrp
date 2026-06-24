@@ -63,6 +63,53 @@ function EquityCurve({ detail }: { detail: RunDetail }) {
   );
 }
 
+type Summary = Schemas["Summary"];
+
+/** Credibility strip: turnover + transaction cost + the spread t-stat vs the t>3.0 hurdle. */
+function SignificanceBar({ summary }: { summary: Summary }) {
+  const t = summary.spread_tstat;
+  const hurdle = summary.spread_tstat_hurdle ?? 3.0;
+  const sig = summary.spread_significant ?? false;
+  const costed = (summary.cost_bps ?? 0) > 0;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
+      <span
+        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-medium tabular-nums ${
+          sig
+            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+            : "bg-fg/5 text-muted"
+        }`}
+        title="Spread (strategy − baseline) t-stat vs the Harvey-Liu-Zhu multiple-testing hurdle of 3.0 (not the naive 2.0)"
+      >
+        {sig ? "✓" : "○"} spread t = {t == null ? "—" : t.toFixed(2)}
+        <span className="text-muted">vs {hurdle.toFixed(1)} hurdle</span>
+      </span>
+      {summary.turnover_ann != null && (
+        <span className="text-muted">
+          turnover{" "}
+          <span className="tabular-nums text-fg">{(summary.turnover_ann * 100).toFixed(0)}%/yr</span>
+        </span>
+      )}
+      <span className="text-muted">
+        {costed ? (
+          <>
+            net of <span className="tabular-nums text-fg">{summary.cost_bps}bps</span> · drag{" "}
+            <span className="tabular-nums text-fg">{pct(summary.cost_drag_total)}</span>
+            {summary.strategy_gross?.total_return != null && (
+              <>
+                {" "}· gross{" "}
+                <span className="tabular-nums text-fg">{pct(summary.strategy_gross.total_return)}</span>
+              </>
+            )}
+          </>
+        ) : (
+          "gross (no transaction costs)"
+        )}
+      </span>
+    </div>
+  );
+}
+
 function StatBlock({ title, s, accent }: { title: string; s: Stats; accent?: boolean }) {
   return (
     <div className={`rounded-lg border border-border p-3 ${accent ? "bg-sky-500/5" : "bg-bg"}`}>
@@ -93,6 +140,7 @@ export default function BacktestPage() {
   const [weighting, setWeighting] = useState<string>("equal");
   const [rebalance, setRebalance] = useState<string>("monthly");
   const [topN, setTopN] = useState<string>("");  // empty = top quintile (top_pct 0.2)
+  const [costBps, setCostBps] = useState<string>("10");  // one-way bps; 0 = gross
   const [busy, setBusy] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
   const [savePortfolio, setSavePortfolio] = useState(false);
@@ -143,6 +191,11 @@ export default function BacktestPage() {
       }
       selection = { top_n: n };
     }
+    const cb = costBps.trim() === "" ? 0 : Number(costBps);
+    if (!Number.isFinite(cb) || cb < 0) {
+      setRunError(`"${costBps}" is not a valid cost in bps — use 0 for a gross run`);
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/backtest/run", {
@@ -150,7 +203,7 @@ export default function BacktestPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           factor, universe, weighting, rebalance, ...selection,
-          save_portfolio: savePortfolio,
+          cost_bps: cb, save_portfolio: savePortfolio,
         }),
       }).then((r) => r.json());
       if (res.ok) {
@@ -223,6 +276,13 @@ export default function BacktestPage() {
           placeholder="top N (blank = quintile)"
           className="w-40 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
         />
+        <input
+          value={costBps}
+          onChange={(e) => setCostBps(e.target.value)}
+          placeholder="cost bps"
+          title="One-way transaction cost in bps charged on turnover (0 = gross)"
+          className="w-24 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+        />
         <select
           value={universe}
           onChange={(e) => setUniverse(e.target.value)}
@@ -277,7 +337,7 @@ export default function BacktestPage() {
                     </div>
                     <div className="text-xs text-muted">
                       {r.spec
-                        ? `${r.spec.top_n != null ? `top ${r.spec.top_n}` : `top ${((r.spec.top_pct ?? 0) * 100).toFixed(0)}%`} · ${r.spec.weighting} · ${r.spec.rebalance} · `
+                        ? `${r.spec.top_n != null ? `top ${r.spec.top_n}` : `top ${((r.spec.top_pct ?? 0) * 100).toFixed(0)}%`} · ${r.spec.weighting} · ${r.spec.rebalance}${(r.spec.cost_bps ?? 0) > 0 ? ` · ${r.spec.cost_bps}bps` : ""} · `
                         : ""}
                       {r.n_rebalances} rebals · {r.n_days}d ·{" "}
                       {pct(r.summary?.strategy?.ann_return)} ann
@@ -305,12 +365,17 @@ export default function BacktestPage() {
                 <EquityCurve detail={detail} />
               </div>
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <StatBlock title="Strategy" s={detail.summary.strategy} accent />
+                <StatBlock
+                  title={(detail.summary.cost_bps ?? 0) > 0 ? "Strategy (net of costs)" : "Strategy"}
+                  s={detail.summary.strategy}
+                  accent
+                />
                 <StatBlock title="Baseline (EW universe)" s={detail.summary.baseline} />
               </div>
+              <SignificanceBar summary={detail.summary} />
               <p className="mt-3 text-xs text-muted">
                 Excess total return {pct(detail.summary.excess_total)} · first rebalance held{" "}
-                {detail.summary.first_holding_n} names. rf = 0; monthly rebalance; coverage-gated start.
+                {detail.summary.first_holding_n} names. rf = 0; coverage-gated start.
               </p>
             </>
           ) : (

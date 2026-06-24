@@ -1120,6 +1120,11 @@ export interface components {
              * @default monthly
              */
             rebalance: string;
+            /**
+             * Cost Bps
+             * @default 10
+             */
+            cost_bps: number;
             /** Start Date */
             start_date?: string | null;
             /** End Date */
@@ -2075,6 +2080,11 @@ export interface components {
             lookback: number;
             /** Max Weight */
             max_weight?: number | null;
+            /**
+             * Cov Method
+             * @default shrinkage
+             */
+            cov_method: string;
             signal_tilt?: components["schemas"]["SignalTilt"] | null;
             /**
              * Holdout Days
@@ -2678,6 +2688,8 @@ export interface components {
             lookback: number;
             /** Max Weight */
             max_weight?: number | null;
+            /** Cov Method */
+            cov_method?: string | null;
             signal_tilt?: components["schemas"]["SignalTilt"] | null;
             /**
              * Holdout Days
@@ -2730,6 +2742,8 @@ export interface components {
              * @default monthly
              */
             rebalance: string;
+            /** Cost Bps */
+            cost_bps?: number | null;
             /** Start Date */
             start_date?: string | null;
             /** End Date */
@@ -2747,6 +2761,21 @@ export interface components {
             first_holding_n?: number | null;
             /** Dropped No Mcap */
             dropped_no_mcap?: number | null;
+            /** Turnover Ann */
+            turnover_ann?: number | null;
+            /** Turnover Total */
+            turnover_total?: number | null;
+            /** Cost Bps */
+            cost_bps?: number | null;
+            /** Cost Drag Total */
+            cost_drag_total?: number | null;
+            strategy_gross?: components["schemas"]["Stats"] | null;
+            /** Spread Tstat */
+            spread_tstat?: number | null;
+            /** Spread Tstat Hurdle */
+            spread_tstat_hurdle?: number | null;
+            /** Spread Significant */
+            spread_significant?: boolean | null;
         };
         /** SymHealth */
         SymHealth: {
