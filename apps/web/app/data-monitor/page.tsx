@@ -61,6 +61,11 @@ export default async function DataMonitorPage() {
     );
   }
 
+  // asset-class instrument counts for the summary cards — reuse the per-bucket counts already on the
+  // board (single source of truth; no extra query). null → "—".
+  const countByKey = new Map(d.buckets.map((b) => [b.key, b.instrument_count]));
+  const fmtCount = (k: string) => countByKey.get(k)?.toLocaleString() ?? "—";
+
   return (
     <div className="w-full">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -76,11 +81,15 @@ export default async function DataMonitorPage() {
         </div>
       </div>
 
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4 2xl:gap-3">
+      {/* one card per asset class — equities (securities) + universes from the warehouse summary,
+          FX / rates / commodities from their bucket instrument counts. */}
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6 2xl:gap-3">
         <Stat label="Securities" value={(d.summary.securities ?? 0).toLocaleString()} />
         <Stat label="Universes" value={d.summary.universes ?? "—"} />
-        <Stat label="Priced" value={(d.summary.priced_securities ?? 0).toLocaleString()} />
-        <Stat label="Latest session" value={d.summary.latest_session ?? "—"} />
+        <Stat label="Indices" value={fmtCount("index_levels")} />
+        <Stat label="FX pairs" value={fmtCount("fx")} />
+        <Stat label="Rates curves" value={fmtCount("rates")} />
+        <Stat label="Commodities" value={fmtCount("commodities")} />
       </div>
 
       <div className="mt-3">

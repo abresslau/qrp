@@ -90,6 +90,41 @@ class EodMonitorGateway:
             note += f"; broadly complete through {cov.isoformat()}"
         return (cov or latest), note
 
+    def _calc_coverage(
+        self, conn: psycopg.Connection, ds: Dataset
+    ) -> tuple[date | None, str | None]:
+        """fact_returns recency, PARTIAL-AWARE but without the coverage-session scan. A full
+        broadly-complete scan over fact_returns (28 windows × figis × dates) is the documented
+        count(DISTINCT) perf trap, so we use a cheap two-day check instead: if the latest as_of_date
+        carries far fewer names than the prior day, it's a partial recompute (e.g. the European
+        indexes priced/returned ahead of the US close) — fall back to the prior broadly-complete day
+        so the bucket reports honestly stale instead of flashing green on a slice. Three single-day,
+        date-indexed reads (max, count@latest, count@prev) — never a full-table aggregate."""
+        latest = self._max_date(conn, ds)
+        if latest is None:
+            return None, None
+        n_latest = self._scalar(
+            conn,
+            f"SELECT count(DISTINCT composite_figi) FROM {ds.table} WHERE {ds.date_column} = %s",
+            (latest,),
+        )
+        prev = _as_date(self._scalar(
+            conn,
+            f"SELECT max({ds.date_column}) FROM {ds.table} WHERE {ds.date_column} < %s",
+            (latest,),
+        ))
+        note = f"{n_latest} names at {latest.isoformat()}"
+        if prev is not None and n_latest:
+            n_prev = self._scalar(
+                conn,
+                f"SELECT count(DISTINCT composite_figi) FROM {ds.table} WHERE {ds.date_column} = %s",
+                (prev,),
+            )
+            if n_prev and n_latest < COVERAGE_FRACTION * n_prev:
+                # latest is a partial slice — the broadly-complete day is `prev`
+                return prev, note + f"; partial vs {n_prev} on {prev.isoformat()} — using {prev.isoformat()}"
+        return latest, note
+
     def _grouped(
         self, conn: psycopg.Connection, ds: Dataset, latest_session: date | None
     ) -> tuple[date | None, str | None, list[dict]]:
@@ -237,6 +272,8 @@ class EodMonitorGateway:
                     actual, coverage, subgroups = self._grouped(conn, ds, latest_session)
                 elif ds.wide:
                     actual, coverage = self._coverage_session(conn, ds)
+                elif b.key == "calculations":
+                    actual, coverage = self._calc_coverage(conn, ds)
                 else:
                     actual = self._max_date(conn, ds)
                 # Per-subcategory breakdowns (informational sub-rows; the bucket's headline status
