@@ -78,9 +78,9 @@ def fx_rate(
     # Latest observation on/before as_of_date; when two sources hold the same date, the lower
     # fx_source_rank wins (Frankfurter over ECB over fawazahmed0) so the pick is deterministic.
     row = conn.execute(
-        "SELECT as_of_date, rate FROM fx_rate "
+        "SELECT as_of_date, rate FROM fx.fx_rate "
         "WHERE base_currency = 'USD' AND quote_currency = %s AND as_of_date <= %s "
-        "ORDER BY as_of_date DESC, fx_source_rank(source) ASC LIMIT 1",
+        "ORDER BY as_of_date DESC, fx.fx_source_rank(source) ASC LIMIT 1",
         (currency, as_of_date),
     ).fetchone()
     observed_date, rate = (row[0], row[1]) if row else (None, None)

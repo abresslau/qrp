@@ -32,6 +32,16 @@ from sym.validate.symbology import (
 )
 
 
+def _fx_coverage(conn: psycopg.Connection) -> CheckResult:
+    """FX coverage is cross-DB now (fx lives in its own database). Open the fx connection here so
+    a failure to reach it is isolated as a FAIL by run_all's per-check try/except (not a suite
+    abort)."""
+    from fx.db import connect as fx_connect
+
+    with fx_connect() as fx_conn:
+        return check_fx_coverage(conn, fx_conn)
+
+
 def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[CheckResult]:
     """Run every validation check (V1 refreshes the completeness log; rest read-only).
 
@@ -55,7 +65,7 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
         ("projection_reconciliation",                                           # V5
          lambda: check_projection_reconciliation(conn)),
         ("universe_readiness", lambda: check_universe_readiness(conn)),        # V6
-        ("fx_coverage", lambda: check_fx_coverage(conn)),                      # FX4 — SLA
+        ("fx_coverage", lambda: _fx_coverage(conn)),                           # FX4 — SLA (fx DB)
         ("maintenance_plan_coverage",                                  # U3.6 — the populate gate
          lambda: check_maintenance_plan_coverage(conn)),
         ("classification_coverage",                          # multi-source classify — AC6 guardrail

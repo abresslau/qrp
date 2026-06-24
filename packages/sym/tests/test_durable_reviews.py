@@ -11,8 +11,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-
-from sym.fx.review import FxReviewError, list_fx_reviews, resolve_fx_review
+from fx.review import FxReviewError, list_fx_reviews, resolve_fx_review
 
 D = date(2026, 6, 10)
 
@@ -93,13 +92,13 @@ def test_resolve_review_refuses_ambiguity_and_unknown_types():
 
 
 def test_load_fx_persists_both_rejection_kinds():
-    from sym.fx.ingest import load_fx
+    from fx.ingest import load_fx
 
     class _Src:
         SOURCE = "frankfurter"
 
         def fetch(self, ccys, start, end):
-            from sym.fx.ingest import FxObservation
+            from fx.ingest import FxObservation
 
             return [
                 FxObservation("BRL", D, Decimal("-1")),          # non_positive
@@ -113,14 +112,14 @@ def test_load_fx_persists_both_rejection_kinds():
             self.rejections, self.inserted = [], []
 
         def execute(self, sql, params=None):
-            if "INSERT INTO fx_rate_review" in sql:
+            if "INSERT INTO fx.fx_rate_review" in sql:
                 self.rejections.append(params)
                 return _Cur()
-            if "SELECT 1 FROM fx_rate_review" in sql:
+            if "SELECT 1 FROM fx.fx_rate_review" in sql:
                 return _Cur(one=None)                # drain gate: no open rejections
-            if "SELECT rate FROM fx_rate" in sql:
+            if "SELECT rate FROM fx.fx_rate" in sql:
                 return _Cur(one=(Decimal("5.0"),))   # prior rate seeds the band
-            if "INSERT INTO fx_rate" in sql:
+            if "INSERT INTO fx.fx_rate" in sql:
                 self.inserted.append(params)
                 return _Cur(one=("BRL",))
             raise AssertionError(sql)
@@ -143,12 +142,12 @@ def test_accept_inserts_rate_and_closes():
 
         def execute(self, sql, params=None):
             self.calls.append((sql, params))
-            if "FROM fx_rate_review WHERE review_id" in sql:
+            if "FROM fx.fx_rate_review WHERE review_id" in sql:
                 return _Cur(one=("BRL", D, Decimal("9.99"), "frankfurter",
                                  "band_exceeded", False))
-            if "INSERT INTO fx_rate" in sql:
+            if "INSERT INTO fx.fx_rate" in sql:
                 return _Cur(one=("BRL",))
-            if "UPDATE fx_rate_review" in sql:
+            if "UPDATE fx.fx_rate_review" in sql:
                 return _Cur(one=(4,))
             return _Cur()
 
@@ -158,9 +157,9 @@ def test_accept_inserts_rate_and_closes():
     conn = _Conn()
     assert resolve_fx_review(conn, 4, accept=True) == ("accepted", True)
     fx_inserts = [p for sql, p in conn.calls
-                  if "INSERT INTO fx_rate" in sql and "review" not in sql]
+                  if "INSERT INTO fx.fx_rate" in sql and "review" not in sql]
     assert fx_inserts and fx_inserts[0][2] == Decimal("9.99")
-    closes = [sql for sql, _ in conn.calls if "UPDATE fx_rate_review" in sql]
+    closes = [sql for sql, _ in conn.calls if "UPDATE fx.fx_rate_review" in sql]
     assert closes and "NOT reviewed" in closes[0]    # concurrent-close guard
 
 
@@ -171,10 +170,10 @@ def test_reject_closes_without_inserting():
 
         def execute(self, sql, params=None):
             self.calls.append((sql, params))
-            if "FROM fx_rate_review WHERE review_id" in sql:
+            if "FROM fx.fx_rate_review WHERE review_id" in sql:
                 return _Cur(one=("BRL", D, Decimal("9.99"), "frankfurter",
                                  "band_exceeded", False))
-            if "UPDATE fx_rate_review" in sql:
+            if "UPDATE fx.fx_rate_review" in sql:
                 return _Cur(one=(4,))
             return _Cur()
 
@@ -183,7 +182,7 @@ def test_reject_closes_without_inserting():
 
     conn = _Conn()
     assert resolve_fx_review(conn, 4, accept=False) == ("rejected", False)
-    assert not any("INSERT INTO fx_rate" in sql and "review" not in sql
+    assert not any("INSERT INTO fx.fx_rate" in sql and "review" not in sql
                    for sql, _ in conn.calls)
 
 
@@ -226,15 +225,12 @@ def test_list_fx_reviews_open_only_by_default():
 def test_fx_coverage_warns_on_open_rejections():
     from datetime import date as _d
 
+    from sym.validate.fx import check_fx_coverage
     from test_fx_coverage import _Conn as _CovConn
 
-    from sym.validate.fx import check_fx_coverage
-
-    r = check_fx_coverage(
-        _CovConn(["BRL"], 10, {"BRL": (_d(2026, 6, 10), Decimal("5.0"))},
-                 open_rejections=3),
-        as_of_date=_d(2026, 6, 10),
-    )
+    cov = _CovConn(["BRL"], 10, {"BRL": (_d(2026, 6, 10), Decimal("5.0"))},
+                   open_rejections=3)  # one fake serves both the sym + fx reads
+    r = check_fx_coverage(cov, cov, as_of_date=_d(2026, 6, 10))
     assert r.status == "warn"
     assert any("3 open FX rejection" in s for s in r.samples)
 
@@ -243,12 +239,12 @@ def test_accept_honest_when_rate_already_stored():
     # live-proven review finding: ON CONFLICT no-op must NOT report insertion.
     class _Conn:
         def execute(self, sql, params=None):
-            if "FROM fx_rate_review WHERE review_id" in sql:
+            if "FROM fx.fx_rate_review WHERE review_id" in sql:
                 return _Cur(one=("BRL", D, Decimal("9.99"), "frankfurter",
                                  "band_exceeded", False))
-            if "INSERT INTO fx_rate" in sql:
+            if "INSERT INTO fx.fx_rate" in sql:
                 return _Cur(one=None)            # conflict: a rate already exists
-            if "UPDATE fx_rate_review" in sql:
+            if "UPDATE fx.fx_rate_review" in sql:
                 return _Cur(one=(4,))
             return _Cur()
 
@@ -280,12 +276,12 @@ def test_accept_insert_failure_is_typed_and_row_stays_open():
             self.closed = []
 
         def execute(self, sql, params=None):
-            if "FROM fx_rate_review WHERE review_id" in sql:
+            if "FROM fx.fx_rate_review WHERE review_id" in sql:
                 return _Cur(one=("ZZZ", D, Decimal("9.99"), "frankfurter",
                                  "band_exceeded", False))
-            if "INSERT INTO fx_rate" in sql:
+            if "INSERT INTO fx.fx_rate" in sql:
                 raise psycopg.errors.ForeignKeyViolation("currency missing")
-            if "UPDATE fx_rate_review" in sql:
+            if "UPDATE fx.fx_rate_review" in sql:
                 self.closed.append(params)
                 return _Cur(one=(4,))
             return _Cur()
@@ -301,13 +297,13 @@ def test_accept_insert_failure_is_typed_and_row_stays_open():
 
 def test_load_fx_supersedes_moot_rejections():
     # The drain: a successful insert for a key with an open rejection closes it.
-    from sym.fx.ingest import load_fx
+    from fx.ingest import load_fx
 
     class _Src:
         SOURCE = "frankfurter"
 
         def fetch(self, ccys, start, end):
-            from sym.fx.ingest import FxObservation
+            from fx.ingest import FxObservation
 
             return [FxObservation("BRL", D, Decimal("5.1"))]
 
@@ -318,13 +314,13 @@ def test_load_fx_supersedes_moot_rejections():
             self.superseded = []
 
         def execute(self, sql, params=None):
-            if "SELECT 1 FROM fx_rate_review" in sql:
+            if "SELECT 1 FROM fx.fx_rate_review" in sql:
                 return _Cur(one=(1,))            # open rejections exist for BRL
-            if "SELECT rate FROM fx_rate" in sql:
+            if "SELECT rate FROM fx.fx_rate" in sql:
                 return _Cur(one=(Decimal("5.0"),))
-            if "INSERT INTO fx_rate " in sql:
+            if "INSERT INTO fx.fx_rate " in sql:
                 return _Cur(one=("BRL",))        # insert lands
-            if "UPDATE fx_rate_review" in sql and "superseded" in sql:
+            if "UPDATE fx.fx_rate_review" in sql and "superseded" in sql:
                 self.superseded.append(params)
                 return _Cur()
             raise AssertionError(sql)

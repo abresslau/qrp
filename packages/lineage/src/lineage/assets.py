@@ -421,9 +421,13 @@ _RUNNABLE_SYM = [
         ["load"],
     ),
     _sym_asset(
+        # FX now lives in its OWN database (the `fx` package); the runnable still materializes via
+        # `sym fx load` (which loads the fx DB + recomputes sym's market_cap_usd cross-DB), so the
+        # asset key/group stay `sym` while the `database` label honestly points at fx.
         "fx_rate", ("sym", "fx_rate"), [],
-        "USD-base FX rates, multi-source with reconciliation; immutable per source/pair/date.",
-        _md(("sym", "fx_rate"), "sym", "fx_rate", "`sym fx load` (fill)",
+        "USD-base FX rates (own `fx` database), multi-source with reconciliation; immutable per "
+        "source/pair/date.",
+        _md(("sym", "fx_rate"), "fx", "fx.fx_rate", "`sym fx load` (fill) → fx DB",
             source="Frankfurter · ECB SDMX · fawazahmed0"),
         ["fx", "load"],
     ),

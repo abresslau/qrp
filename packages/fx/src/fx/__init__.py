@@ -7,6 +7,6 @@ inverses, crosses, the dense weekday series, and conversion are all *derived*
 
 from __future__ import annotations
 
-from sym.fx.model import USD, canonical_pair, is_canonical_direction
+from fx.model import USD, canonical_pair, is_canonical_direction
 
 __all__ = ["USD", "canonical_pair", "is_canonical_direction"]

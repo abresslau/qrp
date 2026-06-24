@@ -28,6 +28,7 @@ RATES = "rates"
 MACRO = "macro"
 ALTDATA = "altdata"
 COMMODITIES = "commodities"
+FX = "fx"
 
 
 @dataclass(frozen=True)
@@ -69,7 +70,7 @@ class Bucket:
 BUCKETS: tuple[Bucket, ...] = (
     Bucket(
         "fx", "FX rates", "source",
-        (Dataset(SYM, "fx_rate", "as_of_date", "sym.fx_rate",
+        (Dataset(FX, "fx.fx_rate", "as_of_date", "fx.fx_rate",
                  id_column="quote_currency", count_label="pairs"),),
     ),
     Bucket(

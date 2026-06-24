@@ -1,0 +1,6 @@
+%syntax-version=1.0.0
+%project=fx
+%uri=https://github.com/abresslau/qrp-fx
+
+fx_schema 2026-06-24T12:00:00Z Andre <ab@gladstone-management.com> # fx schema: USD-centered FX star (currency ref + fx_rate immutable observations + fx_rate_review queue + v_fx/v_fx_daily derived views + fx_source_rank precedence), own database
+seed_currency [fx_schema] 2026-06-24T13:00:00Z Andre <ab@gladstone-management.com> # Seed the fx-DB currency reference (ISO list) so a fresh deploy is functional (fx_rate FK + default load set); idempotent

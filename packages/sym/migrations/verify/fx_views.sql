@@ -1,9 +1,5 @@
 -- Verify sym:fx_views on pg
-
-BEGIN;
-
-SELECT base_currency, quote_currency, as_of_date, rate, source FROM v_fx WHERE FALSE;
-SELECT quote_currency, weekday_date, observed_date, rate, is_filled, days_stale
-  FROM v_fx_daily WHERE FALSE;
-
-ROLLBACK;
+-- NOTE: FX was extracted into the `fx` package + database (migration sym:fx_extract drops these
+-- objects from the sym DB). This create-migration's objects no longer exist in sym, so the
+-- existence check is intentionally a no-op — `fx_extract` is the authoritative end-state here.
+SELECT 1;

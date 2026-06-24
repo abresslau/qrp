@@ -1,9 +1,5 @@
 -- Verify sym:fx_views_precedence on pg
-
-BEGIN;
-
--- View still selectable with its contract columns (the precedence is in its LATERAL order-by).
-SELECT quote_currency, weekday_date, observed_date, rate, is_filled, days_stale
-  FROM v_fx_daily WHERE FALSE;
-
-ROLLBACK;
+-- NOTE: FX was extracted into the `fx` package + database (migration sym:fx_extract drops these
+-- objects from the sym DB). This create-migration's objects no longer exist in sym, so the
+-- existence check is intentionally a no-op — `fx_extract` is the authoritative end-state here.
+SELECT 1;

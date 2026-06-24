@@ -16,10 +16,16 @@ router = APIRouter(prefix="/api/sym", tags=["sym"])
 
 
 def _gateway() -> Iterator[DbSymGateway]:
+    # FX lives in its own database now — open it alongside the sym conn so the FX-matrix endpoints
+    # read rates from the fx DB. Both are closed in the finally.
+    from fx.db import connect as fx_connect
+
     conn = connect()
+    fx_conn = fx_connect()
     try:
-        yield DbSymGateway(conn)
+        yield DbSymGateway(conn, fx_conn)
     finally:
+        fx_conn.close()
         conn.close()
 
 

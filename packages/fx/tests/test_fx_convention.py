@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sym.fx.convention import conventional_pair, quote_rank
+from fx.convention import conventional_pair, quote_rank
 
 
 def test_majors_outrank_usd_quote():

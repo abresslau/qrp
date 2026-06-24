@@ -126,7 +126,7 @@ def _fx_grid(
     conventional market direction. **All rates within one call must be ONE numeric type** (``Decimal``
     for EOD, ``float`` for LIVE) — mixing the two would raise on division.
     """
-    from sym.fx.convention import conventional_pair
+    from fx.convention import conventional_pair
 
     def cross_chg(base: str, quote: str):
         pb, pq = prior.get(base), prior.get(quote)
@@ -162,8 +162,19 @@ def _fx_grid(
 
 
 class DbSymGateway:
-    def __init__(self, conn: psycopg.Connection) -> None:
-        self._conn = conn
+    def __init__(self, conn: psycopg.Connection, fx_conn: psycopg.Connection | None = None) -> None:
+        self._conn = conn          # the sym database
+        self._fx_conn = fx_conn    # the fx database (FX lives in its own DB now); see _fx()
+
+    def _fx(self) -> tuple[psycopg.Connection, bool]:
+        """The fx-DB connection for the FX-matrix reads: the injected one (lifecycle owned by the
+        caller — the route dependency / a test), else a freshly opened one this method must close.
+        Returns ``(conn, should_close)``."""
+        if self._fx_conn is not None:
+            return self._fx_conn, False
+        from fx.db import connect as fx_connect
+
+        return fx_connect(), True
 
     def healthy(self) -> bool:
         try:
@@ -1248,25 +1259,30 @@ class DbSymGateway:
         in the cross (for the green/red heat map). ``as_of_date`` backdates the whole matrix (omitted ⇒
         the latest FX date). A cell whose base or quote leg isn't ``ok`` (stale/no_data) gets a null
         rate (never a fabricated cross)."""
-        from sym.fx.convention import quote_rank
-        from sym.fx.resolve import fx_rate
+        from fx.convention import quote_rank
+        from fx.resolve import fx_rate
 
-        c = self._conn
         # Dedupe preserving order — a repeated code (e.g. ?currencies=USD,EUR,EUR) must not produce
         # duplicate grid rows/cols (which would collide on the page's per-currency React keys).
         ccys = list(dict.fromkeys(x.strip().upper() for x in (currencies or DEFAULT_FX_MATRIX) if x and x.strip()))
-        if as_of_date is None:
-            row = c.execute("SELECT max(as_of_date) FROM fx_rate").fetchone()
-            as_of_date = row[0] if row and row[0] else date.today()
-        res = {ccy: fx_rate(c, ccy, as_of_date) for ccy in ccys}
-        # the prior observation per currency (the day before its resolved date) — for the cell's
-        # daily change. USD is the constant star base; a leg with no observation has no prior.
-        prev = {
-            ccy: fx_rate(c, ccy, res[ccy].observed_date - timedelta(days=1))
-            if res[ccy].observed_date is not None
-            else None
-            for ccy in ccys
-        }
+        # FX lives in its own database — read rates from the fx conn (the gateway's own conn is sym).
+        c, _close = self._fx()
+        try:
+            if as_of_date is None:
+                row = c.execute("SELECT max(as_of_date) FROM fx.fx_rate").fetchone()
+                as_of_date = row[0] if row and row[0] else date.today()
+            res = {ccy: fx_rate(c, ccy, as_of_date) for ccy in ccys}
+            # the prior observation per currency (the day before its resolved date) — for the
+            # cell's daily change. USD is the constant star base; no observation ⇒ no prior.
+            prev = {
+                ccy: fx_rate(c, ccy, res[ccy].observed_date - timedelta(days=1))
+                if res[ccy].observed_date is not None
+                else None
+                for ccy in ccys
+            }
+        finally:
+            if _close:
+                c.close()
         meta = [
             {
                 "currency": ccy,
@@ -1310,16 +1326,21 @@ class DbSymGateway:
         ``priced``/``total``). Raises ``QuoteSourceUnreachable`` (→503) only when the provider is wholly
         unreachable; a per-currency miss is an ``unavailable`` leg, not a failure.
         """
-        from sym.fx.convention import quote_rank
-        from sym.fx.resolve import fx_rate
+        from fx.convention import quote_rank
+        from fx.resolve import fx_rate
 
-        c = self._conn
         ccys = list(
             dict.fromkeys(x.strip().upper() for x in (currencies or DEFAULT_FX_MATRIX) if x and x.strip())
         )
-        row = c.execute("SELECT max(as_of_date) FROM fx_rate").fetchone()
-        as_of_date = row[0] if row and row[0] else date.today()
-        res = {ccy: fx_rate(c, ccy, as_of_date) for ccy in ccys}  # the latest-EOD anchor per leg
+        # FX lives in its own database — read the EOD anchor rates from the fx conn.
+        c, _close = self._fx()
+        try:
+            row = c.execute("SELECT max(as_of_date) FROM fx.fx_rate").fetchone()
+            as_of_date = row[0] if row and row[0] else date.today()
+            res = {ccy: fx_rate(c, ccy, as_of_date) for ccy in ccys}  # latest-EOD anchor per leg
+        finally:
+            if _close:
+                c.close()
 
         # Live legs: USD{ccy}=X = units of ccy per 1 USD (probed) — the fx_rate per-USD convention.
         # USD is the pivot (1.0, no fetch). One batched, bounded fan-out (no N+1).

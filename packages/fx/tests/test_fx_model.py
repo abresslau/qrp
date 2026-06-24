@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from sym.fx.model import canonical_pair, is_canonical_direction
+from fx.model import canonical_pair, is_canonical_direction
 
 
 def test_usd_is_always_base():

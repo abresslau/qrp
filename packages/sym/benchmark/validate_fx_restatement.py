@@ -23,9 +23,11 @@ import argparse
 import bisect
 from datetime import date
 
+from fx.convert import convert
+from fx.db import connect as fx_connect
+
 from sym.config import load_dotenv
 from sym.db import connect
-from sym.fx.convert import convert
 from sym.fx.restate import restate_return
 from sym.returns.windows import BY_CODE, base_date
 
@@ -48,8 +50,9 @@ def _as_of(series: list[tuple[date, float]], on: date) -> float | None:
 
 def validate(index_name: str, target: str, windows: list[str]) -> int:
     load_dotenv()
-    with connect() as conn:
+    with connect() as conn, fx_connect() as fx_conn:
         conn.autocommit = True
+        fx_conn.autocommit = True
         row = conn.execute(
             "SELECT sym_id, currency_code FROM instrument WHERE name=%s AND kind='index'",
             (index_name,),
@@ -102,8 +105,8 @@ def validate(index_name: str, target: str, windows: list[str]) -> int:
             base = base_date(w, as_of, sessions)
             if base is None:
                 continue
-            f_base = convert(conn, 1, local, target, base)
-            f_asof = convert(conn, 1, local, target, as_of)
+            f_base = convert(fx_conn, 1, local, target, base)
+            f_asof = convert(fx_conn, 1, local, target, as_of)
             if f_base is None or f_asof is None or f_base <= 0:
                 print(f"{code:>5} | (no FX leg)")
                 continue

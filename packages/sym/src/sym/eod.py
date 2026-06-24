@@ -209,13 +209,19 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             link_universe_indices(conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
-            from sym.fx.ingest import fill_fx
-            from sym.fx.source import FrankfurterSource
+            from fx.db import connect as fx_connect
+            from fx.ingest import fill_fx
+            from fx.source import FrankfurterSource
+
             from sym.universe.fundamentals import recompute_market_cap_usd
 
-            # Daily forward fill (start_date=None -> tail since the latest stored date).
-            s = fill_fx(conn, FrankfurterSource(), end_date=as_of_date)
-            usd = recompute_market_cap_usd(conn) if s.inserted else 0
+            # FX lives in its own database — open it here (the sym `conn` is the EOD pipeline's;
+            # the fx conn is scoped to this step). Daily forward fill (start_date=None -> tail
+            # since the latest stored date), then recompute the sym-side market_cap_usd cross-DB.
+            with fx_connect() as fx_conn:
+                fx_conn.autocommit = True
+                s = fill_fx(fx_conn, FrankfurterSource(), end_date=as_of_date)
+                usd = recompute_market_cap_usd(conn, fx_conn) if s.inserted else 0
             return (
                 f"[{s.start_date}..{s.end_date}] inserted={s.inserted} "
                 f"skipped={s.skipped_existing} implausible={s.implausible} "

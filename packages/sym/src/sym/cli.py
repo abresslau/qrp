@@ -572,10 +572,13 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
     if args.all and args.universe:
         print("--all and --universe are mutually exclusive", file=sys.stderr)
         return 1
+    from fx.db import connect as fx_connect
+
     load_dotenv()
     try:
-        with connect() as conn:
+        with connect() as conn, fx_connect() as fx_conn:
             conn.autocommit = True  # durable per-figi upserts (set before any query)
+            fx_conn.autocommit = True
             figis = (
                 all_resolved_member_figis(conn) if args.all
                 else resolved_member_figis(conn, args.universe)
@@ -584,7 +587,8 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
                 figis = figis[: args.limit]
             source = YFinanceSharesHistorySource(make_yahoo_symbol_resolver(conn))
             summary = load_fundamentals_history(conn, source, figis)
-            usd_rows = recompute_market_cap_usd(conn)  # populate market_cap_usd for the new rows
+            # market_cap_usd recompute is cross-DB now (rates live in the fx database).
+            usd_rows = recompute_market_cap_usd(conn, fx_conn)  # populate for the new rows
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -865,7 +869,7 @@ def _fx_currencies(args: argparse.Namespace) -> list[str] | None:
 
 
 def _fx_source(name: str):
-    from sym.fx.source import EcbSdmxSource, FawazahmedSource, FrankfurterSource
+    from fx.source import EcbSdmxSource, FawazahmedSource, FrankfurterSource
 
     return {
         "frankfurter": FrankfurterSource,
@@ -876,6 +880,7 @@ def _fx_source(name: str):
 
 def _cmd_fx(args: argparse.Namespace) -> int:
     import psycopg
+    from fx.db import connect as fx_connect
 
     from sym.config import load_dotenv
     from sym.db import connect
@@ -883,10 +888,14 @@ def _cmd_fx(args: argparse.Namespace) -> int:
     load_dotenv()
     today = date.today()
     try:
-        with connect() as conn:
+        # Two databases now: the sym DB (`conn`: prices/securities/fundamentals/returns) and the fx
+        # DB (`fx_conn`: rates/review queue). FX-native verbs use fx_conn; the security-restatement
+        # verbs (px/returns/mcap/coverage) read sym via `conn` and the FX legs via `fx_conn`.
+        with connect() as conn, fx_connect() as fx_conn:
             conn.autocommit = True
+            fx_conn.autocommit = True
             if args.fx_command == "review":
-                from sym.fx.review import FxReviewError, list_fx_reviews, resolve_fx_review
+                from fx.review import FxReviewError, list_fx_reviews, resolve_fx_review
 
                 if args.accept is not None and args.reject is not None:
                     print("--accept and --reject are mutually exclusive", file=sys.stderr)
@@ -895,7 +904,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                     review_id = args.accept if args.accept is not None else args.reject
                     try:
                         outcome, rate_inserted = resolve_fx_review(
-                            conn, review_id, accept=args.accept is not None
+                            fx_conn, review_id, accept=args.accept is not None
                         )
                     except FxReviewError as exc:
                         print(f"{exc}", file=sys.stderr)
@@ -910,7 +919,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                         detail = " — vendor garbage, closed"
                     print(f"fx review {review_id} {outcome}{detail}")
                     return 0
-                items = list_fx_reviews(conn, include_resolved=args.all)
+                items = list_fx_reviews(fx_conn, include_resolved=args.all)
                 if not items:
                     print("no fx rejections" if args.all else "no open fx rejections")
                     return 0
@@ -927,7 +936,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 print(f"{len(items)} item(s)")
                 return 0
             if args.fx_command == "load":
-                from sym.fx.ingest import fill_fx
+                from fx.ingest import fill_fx
 
                 start_date = date.fromisoformat(args.start_date) if args.start_date else None
                 end_date = date.fromisoformat(args.end_date) if args.end_date else today
@@ -935,7 +944,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                     print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
                     return 1
                 s = fill_fx(
-                    conn, _fx_source(args.source), end_date=end_date, start_date=start_date,
+                    fx_conn, _fx_source(args.source), end_date=end_date, start_date=start_date,
                     currencies=_fx_currencies(args),
                 )
                 # Use the resolved window (s.start_date), not the request: in the tail case
@@ -950,11 +959,14 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 if s.inserted:  # new FX can fill previously-uncovered currency/dates
                     from sym.universe.fundamentals import recompute_market_cap_usd
 
-                    print(f"  market_cap_usd recomputed ({recompute_market_cap_usd(conn)} rows)")
+                    print(
+                        f"  market_cap_usd recomputed "
+                        f"({recompute_market_cap_usd(conn, fx_conn)} rows)"
+                    )
             elif args.fx_command == "coverage":
                 from sym.validate.fx import check_fx_coverage
 
-                r = check_fx_coverage(conn)
+                r = check_fx_coverage(conn, fx_conn)
                 print(f"fx coverage: {r.status} ({r.checked} currencies, {r.failures} fail, "
                       f"{r.warnings} warn)")
                 for s in r.samples[:20]:
@@ -962,12 +974,12 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "divergence":
                 from decimal import Decimal
 
-                from sym.fx.reconcile import DEFAULT_DIVERGENCE, find_divergences
+                from fx.reconcile import DEFAULT_DIVERGENCE, find_divergences
 
                 threshold = Decimal(args.threshold) if args.threshold else DEFAULT_DIVERGENCE
                 start_date = date.fromisoformat(args.start_date) if args.start_date else None
                 rep = find_divergences(
-                    conn, source_a=args.source_a, source_b=args.source_b,
+                    fx_conn, source_a=args.source_a, source_b=args.source_b,
                     threshold=threshold, start_date=start_date,
                     currencies=_fx_currencies(args),
                 )
@@ -985,7 +997,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "convert":
                 from decimal import Decimal, InvalidOperation
 
-                from sym.fx.convert import convert
+                from fx.convert import convert
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
                 try:
@@ -993,7 +1005,9 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 except InvalidOperation:
                     print(f"invalid amount {args.amount!r}", file=sys.stderr)
                     return 1
-                out = convert(conn, amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of_date)
+                out = convert(
+                    fx_conn, amount, args.from_ccy.upper(), args.to_ccy.upper(), as_of_date
+                )
                 if out is None:
                     print(f"convert: unavailable ({args.from_ccy.upper()}->"
                           f"{args.to_ccy.upper()} as-of {as_of_date}: no/stale rate)")
@@ -1004,7 +1018,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 from sym.fx.restate import price_in_currency
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                px = price_in_currency(conn, args.figi, as_of_date, args.ccy.upper())
+                px = price_in_currency(conn, fx_conn, args.figi, as_of_date, args.ccy.upper())
                 if px is None:
                     print(f"px: unavailable ({args.figi} in {args.ccy.upper()} on {as_of_date})")
                     return 1
@@ -1013,7 +1027,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 from sym.fx.restate import returns_in_currency
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                res = returns_in_currency(conn, args.figi, as_of_date, args.ccy.upper())
+                res = returns_in_currency(conn, fx_conn, args.figi, as_of_date, args.ccy.upper())
                 if not res:
                     print(f"returns: none for {args.figi} as-of {as_of_date}")
                     return 1
@@ -1030,7 +1044,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
                 mc = market_cap(
-                    conn, args.figi, as_of_date, args.ccy.upper() if args.ccy else None
+                    conn, fx_conn, args.figi, as_of_date, args.ccy.upper() if args.ccy else None
                 )
                 if mc.value is None:
                     print(f"mcap: unavailable ({args.figi} on {as_of_date})")

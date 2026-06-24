@@ -20,7 +20,7 @@ from decimal import Decimal
 
 import psycopg
 
-from sym.fx.source import FxObservation, FxSource
+from fx.source import FxObservation, FxSource
 
 # ECB reference-rate inception (Frankfurter's historical floor).
 DEFAULT_FX_FLOOR = date(1999, 1, 4)
@@ -53,7 +53,9 @@ def implausible(prev: Decimal | None, new: Decimal, *, band: Decimal = MAX_DAILY
 
 def _default_currencies(conn: psycopg.Connection) -> list[str]:
     """Every non-USD currency in the reference table (Frankfurter returns what it supports)."""
-    rows = conn.execute("SELECT code FROM currency WHERE code <> 'USD' ORDER BY code").fetchall()
+    rows = conn.execute(
+        "SELECT code FROM fx.currency WHERE code <> 'USD' ORDER BY code"
+    ).fetchall()
     return [r[0] for r in rows]
 
 
@@ -67,7 +69,7 @@ def _last_rate_before(
     currency that moved more than the band since (most of EM).
     """
     row = conn.execute(
-        "SELECT rate FROM fx_rate WHERE base_currency='USD' AND quote_currency=%s AND source=%s "
+        "SELECT rate FROM fx.fx_rate WHERE base_currency='USD' AND quote_currency=%s AND source=%s "
         "AND as_of_date < %s ORDER BY as_of_date DESC LIMIT 1",
         (ccy, source, before),
     ).fetchone()
@@ -77,7 +79,7 @@ def _last_rate_before(
 def _last_stored_dates(conn: psycopg.Connection, source: str) -> dict[str, date]:
     """Latest stored as_of_date per quote currency for this source."""
     rows = conn.execute(
-        "SELECT quote_currency, max(as_of_date) FROM fx_rate WHERE source=%s "
+        "SELECT quote_currency, max(as_of_date) FROM fx.fx_rate WHERE source=%s "
         "GROUP BY quote_currency",
         (source,),
     ).fetchall()
@@ -91,7 +93,7 @@ def _record_rejection(conn, ccy, o, prev, source, reason) -> None:
     the process. One OPEN row per (quote, date, source): a daily re-run of the
     same rejection refreshes, never duplicates. A wedged band (genuine move,
     e.g. a peg break) therefore shows up as a growing open queue — and
-    ACCEPTING a row (``sym fx review --accept``) inserts the rate into
+    ACCEPTING a row (``fx review --accept``) inserts the rate into
     ``fx_rate``, after which ``prev`` advances naturally on the next load.
     """
     relative = (
@@ -101,7 +103,7 @@ def _record_rejection(conn, ccy, o, prev, source, reason) -> None:
     )
     conn.execute(
         """
-        INSERT INTO fx_rate_review
+        INSERT INTO fx.fx_rate_review
             (quote_currency, as_of_date, rate, prior_rate, relative_move, source, reason)
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (quote_currency, as_of_date, source) WHERE NOT reviewed DO UPDATE
@@ -138,7 +140,7 @@ def load_fx(
         # Drain gate (S.1): only probe per-insert when this currency HAS open
         # rejection rows — the common clean path pays one query per currency.
         has_open_rejections = conn.execute(
-            "SELECT 1 FROM fx_rate_review WHERE quote_currency = %s AND source = %s "
+            "SELECT 1 FROM fx.fx_rate_review WHERE quote_currency = %s AND source = %s "
             "AND NOT reviewed LIMIT 1",
             (ccy, source.SOURCE),
         ).fetchone() is not None
@@ -154,7 +156,7 @@ def load_fx(
                 _record_rejection(conn, ccy, o, prev, source.SOURCE, "band_exceeded")
                 continue  # reject; do NOT advance prev to a bad value
             row = conn.execute(
-                "INSERT INTO fx_rate (base_currency, quote_currency, as_of_date, rate, source) "
+                "INSERT INTO fx.fx_rate (base_currency, quote_currency, as_of_date, rate, source) "
                 "VALUES ('USD', %s, %s, %s, %s) ON CONFLICT DO NOTHING RETURNING quote_currency",
                 (ccy, o.as_of_date, o.rate, source.SOURCE),
             ).fetchone()
@@ -165,7 +167,7 @@ def load_fx(
                     # (the band un-wedged and this observation passed) — close it
                     # as superseded so a multi-day wedge queue DRAINS itself.
                     conn.execute(
-                        "UPDATE fx_rate_review "
+                        "UPDATE fx.fx_rate_review "
                         "   SET reviewed = TRUE, resolution = 'superseded', "
                         "       reviewed_at = now() "
                         " WHERE quote_currency = %s AND as_of_date = %s "

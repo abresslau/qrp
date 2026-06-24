@@ -26,8 +26,7 @@ from datetime import date
 from decimal import Decimal
 
 import psycopg
-
-from sym.fx.convert import convert
+from fx.convert import convert
 
 # The price leg's recency bound (calendar days). Mirrors the FX resolver's
 # outage-cap philosophy: beyond it, the value is withheld rather than stale.
@@ -67,13 +66,19 @@ def shares_outstanding_asof(
 
 
 def market_cap(
-    conn: psycopg.Connection, figi: str, as_of_date: date, ccy: str | None = None
+    conn: psycopg.Connection,
+    fx_conn: psycopg.Connection,
+    figi: str,
+    as_of_date: date,
+    ccy: str | None = None,
 ) -> MarketCap:
     """Derived market cap of ``figi`` on ``as_of_date``: ``close_raw × shares``, in LCY or ``ccy``.
 
-    ``ccy=None`` returns LCY (the security's own currency); any other code converts via the FX
-    layer (``value=None`` if the FX leg is missing/stale). ``value=None`` also when the price or
-    the share count is unavailable, or the latest price is older than ``MAX_PRICE_STALE_DAYS``.
+    ``conn`` is the sym DB (prices/securities/fundamentals); ``fx_conn`` is the fx DB (rates), read
+    only when a non-local ``ccy`` conversion is needed. ``ccy=None`` returns LCY (the security's own
+    currency); any other code converts via the FX layer (``value=None`` if the FX leg is missing/
+    stale). ``value=None`` also when the price or the share count is unavailable, or the latest
+    price is older than ``MAX_PRICE_STALE_DAYS``.
     """
     sec = conn.execute(
         "SELECT currency_code FROM securities WHERE composite_figi = %s", (figi,)
@@ -100,5 +105,5 @@ def market_cap(
     if ccy is None or ccy == local:
         value = mcap_lcy
     else:
-        value = convert(conn, mcap_lcy, local, ccy, as_of_date)  # None if FX leg missing/stale
+        value = convert(fx_conn, mcap_lcy, local, ccy, as_of_date)  # None if FX leg missing/stale
     return MarketCap(figi, as_of_date, out_ccy, value, local, close_raw, shares, shares_as_of_date)

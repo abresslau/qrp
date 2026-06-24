@@ -179,7 +179,7 @@ def load_fundamentals_history(
     return summary
 
 
-def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
+def recompute_market_cap_usd(conn: psycopg.Connection, fx_conn: psycopg.Connection) -> int:
     """(Re)populate ``fundamentals.market_cap_usd`` = market_cap restated to USD (returns rows set).
 
     Set-based, repeatable, reconstructable: for each row, USD = ``market_cap_lcy`` for USD rows,
@@ -189,10 +189,45 @@ def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
     the recompute NULLs it rather than leaving a stale conversion in place). This mirrors the
     Python ``fx.resolve``/``convert`` semantics (kept in sync with ``OUTAGE_CAP_DAYS``); run it
     after a fundamentals load and/or an FX load.
+
+    Cross-DB: FX lives in its own database now. The set-based join is per-row/per-date (each
+    fundamentals row needs the rate as-of ITS date), so a single latest-rate map won't do. We fetch
+    the USD-base observations for exactly the currencies present in ``fundamentals`` from the fx DB,
+    materialise them into a sym-side TEMP table (local — NO cross-DB join), and run the IDENTICAL
+    LATERAL update against it. ``fundamentals.market_cap_usd`` stays a sym column.
     """
-    from sym.fx.resolve import OUTAGE_CAP_DAYS
+    from fx.resolve import OUTAGE_CAP_DAYS
 
     conn.autocommit = True
+    currencies = [
+        r[0]
+        for r in conn.execute(
+            "SELECT DISTINCT currency_code FROM fundamentals "
+            "WHERE currency_code IS NOT NULL AND currency_code <> 'USD'"
+        ).fetchall()
+    ]
+    fx_rows = (
+        fx_conn.execute(
+            "SELECT quote_currency, as_of_date, rate FROM fx.fx_rate "
+            "WHERE base_currency = 'USD' AND quote_currency = ANY(%s)",
+            (currencies,),
+        ).fetchall()
+        if currencies
+        else []
+    )
+    # Local temp table (this connection/session). DROP-first guards a leftover from a crashed run;
+    # under autocommit a TEMP table persists across statements until dropped / session end.
+    conn.execute("DROP TABLE IF EXISTS _fx_rate_tmp")
+    conn.execute(
+        "CREATE TEMP TABLE _fx_rate_tmp (quote_currency CHAR(3), as_of_date DATE, rate NUMERIC)"
+    )
+    if fx_rows:
+        with conn.cursor() as cur, cur.copy(
+            "COPY _fx_rate_tmp (quote_currency, as_of_date, rate) FROM STDIN"
+        ) as copy:
+            for row in fx_rows:
+                copy.write_row(row)
+    conn.execute("CREATE INDEX ON _fx_rate_tmp (quote_currency, as_of_date)")
     result = conn.execute(
         """
         UPDATE fundamentals f SET market_cap_usd = sub.usd
@@ -207,8 +242,8 @@ def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
                    END AS usd
               FROM fundamentals f2
               LEFT JOIN LATERAL (
-                  SELECT rate, as_of_date FROM fx_rate
-                   WHERE base_currency = 'USD' AND quote_currency = f2.currency_code
+                  SELECT rate, as_of_date FROM _fx_rate_tmp
+                   WHERE quote_currency = f2.currency_code
                      AND as_of_date <= f2.as_of_date
                    ORDER BY as_of_date DESC LIMIT 1
               ) r ON TRUE
@@ -218,6 +253,7 @@ def recompute_market_cap_usd(conn: psycopg.Connection) -> int:
         """,
         (OUTAGE_CAP_DAYS,),
     )
+    conn.execute("DROP TABLE IF EXISTS _fx_rate_tmp")
     return result.rowcount
 
 

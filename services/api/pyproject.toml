@@ -11,6 +11,7 @@ dependencies = [
     "macro",
     "rates",
     "commodities",
+    "fx",
     "portfolios",
     "signals",
     "optimiser",
@@ -25,6 +26,7 @@ dependencies = [
 macro = { workspace = true }
 rates = { workspace = true }
 commodities = { workspace = true }
+fx = { workspace = true }
 portfolios = { workspace = true }
 signals = { workspace = true }
 optimiser = { workspace = true }

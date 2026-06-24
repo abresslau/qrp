@@ -1,6 +1,6 @@
 """Load BoE curve points into ``rates.curve_point`` (immutable first-published + restated latest).
 
-Mirrors ``sym.fx.ingest.fill_fx``: tail-since-latest vs explicit-window backfill, a plausibility
+Mirrors ``fx.ingest.fill_fx``: tail-since-latest vs explicit-window backfill, a plausibility
 band that routes gross-corruption prints to a review queue instead of landing them, and a per-day
 atomic insert. Two vintages live in one row — ``first_value`` (immutable) + ``value`` (restated).
 """

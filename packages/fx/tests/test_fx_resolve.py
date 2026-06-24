@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sym.fx.resolve import OUTAGE_CAP_DAYS, classify
+from fx.resolve import OUTAGE_CAP_DAYS, classify
 
 D = date(2024, 6, 14)  # a Friday
 

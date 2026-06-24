@@ -14,8 +14,8 @@ from __future__ import annotations
 from datetime import date
 
 import psycopg
+from fx.resolve import WEEKEND_SPAN_DAYS, fx_rate
 
-from sym.fx.resolve import WEEKEND_SPAN_DAYS, fx_rate
 from sym.validate.results import CheckResult
 
 
@@ -33,16 +33,24 @@ def needed_currencies(conn: psycopg.Connection) -> list[str]:
     return [r[0] for r in rows]
 
 
-def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = None) -> CheckResult:
-    """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of_date``."""
+def check_fx_coverage(
+    conn: psycopg.Connection,
+    fx_conn: psycopg.Connection,
+    *,
+    as_of_date: date | None = None,
+) -> CheckResult:
+    """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of_date``.
+
+    ``conn`` is the sym DB (priced-instrument currencies = the coverage denominator); ``fx_conn``
+    is the fx DB (the rate observations + the rejection queue)."""
     as_of_date = as_of_date or date.today()
     # Open rejections are counted BEFORE the early returns — the queue must be
     # visible even when no non-USD currency is priced yet or fx_rate is empty.
-    open_rejections = conn.execute(
-        "SELECT count(*) FROM fx_rate_review WHERE NOT reviewed"
+    open_rejections = fx_conn.execute(
+        "SELECT count(*) FROM fx.fx_rate_review WHERE NOT reviewed"
     ).fetchone()[0]
     rejection_warnings = (
-        [f"{open_rejections} open FX rejection(s) awaiting stewarding — `sym fx review`"]
+        [f"{open_rejections} open FX rejection(s) awaiting stewarding — `fx review`"]
         if open_rejections else []
     )
     needed = needed_currencies(conn)
@@ -56,17 +64,17 @@ def check_fx_coverage(conn: psycopg.Connection, *, as_of_date: date | None = Non
             + rejection_warnings,
             detail="no non-USD priced-instrument currencies to check",
         )
-    fx_count = conn.execute("SELECT count(*) FROM fx_rate").fetchone()[0]
+    fx_count = fx_conn.execute("SELECT count(*) FROM fx.fx_rate").fetchone()[0]
     if fx_count == 0:
         return CheckResult.from_items(
             "fx_coverage",
             checked=len(needed),
             warnings=[f"{c}: no FX (table empty)" for c in needed] + rejection_warnings,
-            detail="fx_rate is empty - run `sym fx load --start_date 1999-01-04`.",
+            detail="fx_rate is empty - run `fx load --start_date 1999-01-04`.",
         )
     warnings: list[str] = list(rejection_warnings)
     for ccy in needed:
-        r = fx_rate(conn, ccy, as_of_date)
+        r = fx_rate(fx_conn, ccy, as_of_date)
         if r.status == "no_data":
             warnings.append(f"{ccy}: no USD rate on/before {as_of_date} (source gap)")
         elif r.status == "stale":

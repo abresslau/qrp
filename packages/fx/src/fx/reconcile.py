@@ -7,7 +7,7 @@ Frankfurter *is* ECB rebased to USD server-side, while ``EcbSdmxSource`` rebases
 EUR-base rates client-side — so a divergence beyond rounding signals a mis-mapped date, a
 bad rebase, or a vendor glitch rather than genuine market disagreement.
 
-On-demand (``sym fx divergence``), not an always-on gate: it needs two sources populated, so
+On-demand (``fx divergence``), not an always-on gate: it needs two sources populated, so
 wiring it into ``sym validate`` would make the suite depend on the ECB backfill. Pure
 ``relative_divergence``/``compare`` (unit-tested DB-free) + a thin DB wrapper.
 """
@@ -86,7 +86,7 @@ def find_divergences(
     to print)."""
     sql = [
         "SELECT a.quote_currency, a.as_of_date, a.rate, b.rate",
-        "  FROM fx_rate a JOIN fx_rate b",
+        "  FROM fx.fx_rate a JOIN fx.fx_rate b",
         "    ON a.base_currency = 'USD' AND b.base_currency = 'USD'",
         "   AND a.quote_currency = b.quote_currency AND a.as_of_date = b.as_of_date",
         " WHERE a.source = %s AND b.source = %s",

@@ -19,7 +19,7 @@ from decimal import Decimal
 
 import psycopg
 
-from sym.fx.resolve import WEEKEND_SPAN_DAYS, FxResolution, fx_rate
+from fx.resolve import WEEKEND_SPAN_DAYS, FxResolution, fx_rate
 
 
 def triangulate(

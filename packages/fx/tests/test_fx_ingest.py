@@ -12,8 +12,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sym.fx.ingest import DEFAULT_FX_FLOOR, fill_fx, load_fx
-from sym.fx.source import FxObservation
+from fx.ingest import DEFAULT_FX_FLOOR, fill_fx, load_fx
+from fx.source import FxObservation
 
 END = date(2026, 6, 5)  # a Friday
 
@@ -44,21 +44,21 @@ class _Conn:
         self.rejections: list[tuple] = []       # persisted fx_rate_review rows (S.1)
 
     def execute(self, sql, params=None):
-        if "INSERT INTO fx_rate_review" in sql:
+        if "INSERT INTO fx.fx_rate_review" in sql:
             # (quote, as_of_date, rate, prior, relative, source, reason)
             self.rejections.append(params)
             return _Cur()
-        if "SELECT 1 FROM fx_rate_review" in sql:
+        if "SELECT 1 FROM fx.fx_rate_review" in sql:
             return _Cur(one=None)               # drain gate: no open rejections
-        if "SELECT code FROM currency" in sql:
+        if "SELECT code FROM fx.currency" in sql:
             return _Cur(rows=[(c,) for c in self._currencies])
-        if "SELECT quote_currency, max(as_of_date) FROM fx_rate" in sql:
+        if "SELECT quote_currency, max(as_of_date) FROM fx.fx_rate" in sql:
             if self._max_stored is None:
                 return _Cur(rows=[])
             return _Cur(rows=[(c, self._max_stored) for c in self._stored_ccys])
-        if "SELECT rate FROM fx_rate" in sql:
+        if "SELECT rate FROM fx.fx_rate" in sql:
             return _Cur(one=None)  # no prior stored rate -> first obs seeds the band
-        if "INSERT INTO fx_rate" in sql:
+        if "INSERT INTO fx.fx_rate" in sql:
             ccy, as_of, rate, source = params
             if (ccy, as_of) in self._existing:
                 return _Cur(one=None)  # ON CONFLICT DO NOTHING -> no RETURNING row

@@ -13,7 +13,7 @@ Sources, by trust tier (``SOURCE_PRECEDENCE``):
 - **ECB SDMX** (``ecb``) — the ground-truth reconcile. ECB publishes EUR-base reference
   rates; this adapter rebases them to USD client-side through the EUR/USD leg, so a
   divergence vs Frankfurter (which *is* ECB, rebased) beyond rounding flags a mis-mapped
-  date / bad rebase / vendor glitch (FR4b, ``sym.fx.reconcile``). ECB's ~31-currency set
+  date / bad rebase / vendor glitch (FR4b, ``fx.reconcile``). ECB's ~31-currency set
   does **not** include TWD and a few exotics — those stay on the fawazahmed0 fallback.
 - **fawazahmed0** (``fawazahmed0``) — breadth fallback for currencies the others drop.
 

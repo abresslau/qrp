@@ -5,8 +5,8 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sym.fx.convert import convert, triangulate
-from sym.fx.resolve import FxResolution
+from fx.convert import convert, triangulate
+from fx.resolve import FxResolution
 
 D = date(2024, 6, 14)
 

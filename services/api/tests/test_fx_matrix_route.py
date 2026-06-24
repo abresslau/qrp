@@ -38,9 +38,9 @@ class _FxConn:
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "max(as_of_date) FROM fx_rate" in s:
+        if "max(as_of_date) FROM fx.fx_rate" in s:
             return _Result([(self.AS_OF,)])
-        if "SELECT as_of_date, rate FROM fx_rate" in s:
+        if "SELECT as_of_date, rate FROM fx.fx_rate" in s:
             ccy, as_of = params[0], params[1]
             obs = [o for o in self.OBS.get(ccy, []) if o[0] <= as_of]  # latest ≤ as_of (DESC)
             return _Result([max(obs)] if obs else [])
@@ -48,7 +48,7 @@ class _FxConn:
 
 
 def test_fx_matrix_cross_diagonal_and_stale():
-    out = DbSymGateway(_FxConn()).fx_matrix(["USD", "EUR", "JPY", "XXX"])
+    out = DbSymGateway(_FxConn(), _FxConn()).fx_matrix(["USD", "EUR", "JPY", "XXX"])
     assert out["currencies"] == ["USD", "EUR", "JPY", "XXX"]
     assert out["as_of_date"] == "2026-06-18"  # defaulted to the latest fx_rate date
 
@@ -147,7 +147,7 @@ def test_fx_matrix_live_overlays_quotes_redrives_and_falls_back(monkeypatch):
     }
     monkeypatch.setattr(quotes_mod, "fetch_quotes_batch", lambda syms, **kw: {s: live.get(s) for s in syms})
 
-    out = DbSymGateway(_FxConn()).fx_matrix_live(["USD", "EUR", "EUR", "JPY", "XXX"], now=now)
+    out = DbSymGateway(_FxConn(), _FxConn()).fx_matrix_live(["USD", "EUR", "EUR", "JPY", "XXX"], now=now)
     assert out["currencies"] == ["USD", "EUR", "JPY", "XXX"]  # de-duped, order preserved
     assert "as_of_date" not in out  # LIVE is "now"
 
@@ -197,7 +197,7 @@ def test_fx_matrix_live_all_unavailable_reads_unavailable(monkeypatch):
     from qrp_api.modules.sym import quotes as quotes_mod
 
     monkeypatch.setattr(quotes_mod, "fetch_quotes_batch", lambda syms, **kw: {s: None for s in syms})
-    out = DbSymGateway(_FxConn()).fx_matrix_live(["USD", "EUR", "JPY"], now=1_000_000.0)
+    out = DbSymGateway(_FxConn(), _FxConn()).fx_matrix_live(["USD", "EUR", "JPY"], now=1_000_000.0)
     assert out["priced"] == 0 and out["total"] == 2  # USD excluded; EUR + JPY fetchable, both missed
     assert out["freshness"] == "unavailable"
     assert out["as_of"] is None
@@ -221,7 +221,7 @@ def test_fx_matrix_live_all_priced_reads_live(monkeypatch):
         "USDJPY=X": RawQuote(price=158.0, prev_close=155.0, currency="JPY", quote_epoch=int(now) - 5),
     }
     monkeypatch.setattr(quotes_mod, "fetch_quotes_batch", lambda syms, **kw: {s: fresh.get(s) for s in syms})
-    out = DbSymGateway(_FxConn()).fx_matrix_live(["USD", "EUR", "JPY"], now=now)
+    out = DbSymGateway(_FxConn(), _FxConn()).fx_matrix_live(["USD", "EUR", "JPY"], now=now)
     assert out["priced"] == 2 and out["total"] == 2
     assert out["freshness"] == "live"
     assert out["as_of"] is not None

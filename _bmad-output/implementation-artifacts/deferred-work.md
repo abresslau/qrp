@@ -498,3 +498,11 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
   `unknown`, no count). If the rates schema drifts, the board would mask it behind an "unknown" pill
   rather than failing loudly. Promote the curve key into the `Dataset` (e.g. a `count_columns` tuple)
   if a second composite-count bucket appears.
+
+## Deferred from: code review of fx-package (2026-06-24)
+- fx_extract drop migration has no in-migration copy-verification guard before the destructive DROP (one-time live migration was done safely copy→verify→drop; fresh rebuilds have no data; re-runs no-op). Consider a row-count parity assertion if the pattern is reused.
+- No cross-DB reconciliation between fx.currency and sym.currency: a currency added to sym's seed won't exist in the fx DB → fx load FK-fails for it / fundamentals.market_cap_usd silently NULLs. Add a validate check (cross-DB currency-set equality) or auto-seed unknown currencies on fx load.
+- API FX-matrix (fx_matrix / fx_matrix_live) raises a raw 500, not a 503, if the fx DB is unreachable (the documented 503 contract only covers live-quote unreachability). Map an fx-DB OperationalError to a graceful response.
+- Data Monitor fx-bucket degrade path lost test coverage when the boom test moved to equity_prices; add a test that the fx bucket degrades to 'unknown' when the fx DB read fails.
+- sym fundamentals / sym fx CLI open the fx connection unconditionally, so they now hard-depend on fx-DB availability even for paths that barely use FX. Consider lazy-opening the fx conn only when the FX leg is actually needed.
+- recompute_market_cap_usd uses a fixed TEMP-table name (_fx_rate_tmp); a concurrent recompute reusing one sym connection could collide. Low-probability under single-threaded EOD; use a unique temp name if pooled reuse becomes possible.

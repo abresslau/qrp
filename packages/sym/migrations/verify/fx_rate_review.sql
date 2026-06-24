@@ -1,7 +1,5 @@
 -- Verify sym:fx_rate_review on pg
-
-SELECT review_id, quote_currency, as_of_date, rate, reason, reviewed
-  FROM fx_rate_review WHERE FALSE;
-
-SELECT 1/count(*) FROM pg_indexes
- WHERE tablename = 'fx_rate_review' AND indexname = 'uq_fx_rate_review_open';
+-- NOTE: FX was extracted into the `fx` package + database (migration sym:fx_extract drops these
+-- objects from the sym DB). This create-migration's objects no longer exist in sym, so the
+-- existence check is intentionally a no-op — `fx_extract` is the authoritative end-state here.
+SELECT 1;

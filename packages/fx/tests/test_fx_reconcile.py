@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from sym.fx.reconcile import DEFAULT_DIVERGENCE, compare, relative_divergence
+from fx.reconcile import DEFAULT_DIVERGENCE, compare, relative_divergence
 
 
 def test_relative_divergence_is_symmetric_magnitude_vs_reference():

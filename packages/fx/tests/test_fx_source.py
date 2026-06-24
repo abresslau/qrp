@@ -7,8 +7,8 @@ from decimal import Decimal
 
 import pytest
 
-from sym.fx.ingest import implausible
-from sym.fx.source import (
+from fx.ingest import implausible
+from fx.source import (
     QUOTE_PER_USD,
     USD_PER_QUOTE,
     FrankfurterSource,
@@ -76,7 +76,7 @@ def test_implausibility_band():
 def test_fawazahmed_parse_keeps_wanted_usd_base():
     from datetime import date as _date
 
-    from sym.fx.source import parse_fawazahmed_day
+    from fx.source import parse_fawazahmed_day
 
     payload = {"date": "2026-06-05", "usd": {"twd": 31.53, "brl": 5.06, "eur": 0.88}}
     obs = parse_fawazahmed_day(payload, {"TWD", "EUR"}, _date(2026, 6, 5))
@@ -88,7 +88,7 @@ def test_fawazahmed_parse_keeps_wanted_usd_base():
 def test_fawazahmed_fetch_loops_weekdays_and_skips_404():
     from datetime import date as _date
 
-    from sym.fx.source import FawazahmedSource
+    from fx.source import FawazahmedSource
 
     calls = []
 
@@ -107,7 +107,7 @@ def test_fawazahmed_fetch_loops_weekdays_and_skips_404():
 
 
 def test_source_rank_mirrors_precedence_order():
-    from sym.fx.source import source_rank
+    from fx.source import source_rank
 
     # Frankfurter (primary) < ECB (reconcile) < fawazahmed0 (fallback) < unknown.
     assert source_rank("frankfurter") < source_rank("ecb") < source_rank("fawazahmed0")
@@ -128,7 +128,7 @@ _ECB_CSV = (
 
 
 def test_parse_ecb_csv_yields_eur_base_map_and_skips_blanks():
-    from sym.fx.source import parse_ecb_csv
+    from fx.source import parse_ecb_csv
 
     eur_base = parse_ecb_csv(_ECB_CSV)
     assert eur_base[date(2024, 1, 2)]["USD"] == Decimal("1.10")
@@ -138,7 +138,7 @@ def test_parse_ecb_csv_yields_eur_base_map_and_skips_blanks():
 
 
 def test_rebase_ecb_to_usd_triangulates_through_the_usd_leg():
-    from sym.fx.source import parse_ecb_csv, rebase_ecb_to_usd
+    from fx.source import parse_ecb_csv, rebase_ecb_to_usd
 
     obs = rebase_ecb_to_usd(parse_ecb_csv(_ECB_CSV), {"BRL", "EUR", "USD"})
     by = {(o.currency, o.as_of_date): o.rate for o in obs}
@@ -152,14 +152,14 @@ def test_rebase_ecb_to_usd_triangulates_through_the_usd_leg():
 
 
 def test_rebase_skips_a_date_with_no_usd_pivot_leg():
-    from sym.fx.source import rebase_ecb_to_usd
+    from fx.source import rebase_ecb_to_usd
 
     eur_base = {date(2024, 1, 2): {"BRL": Decimal("5.40")}}  # BRL but no USD leg
     assert rebase_ecb_to_usd(eur_base, {"BRL"}) == []  # cannot rebase -> skipped
 
 
 def test_ecb_fetch_requests_usd_pivot_plus_non_eur_currencies():
-    from sym.fx.source import EcbSdmxSource
+    from fx.source import EcbSdmxSource
 
     calls = []
 

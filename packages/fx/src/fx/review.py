@@ -22,7 +22,7 @@ def list_fx_reviews(conn: psycopg.Connection, *, include_resolved: bool = False)
     sql = (
         "SELECT review_id, quote_currency, as_of_date, rate, prior_rate, "
         "relative_move, source, reason, resolution, created_at "
-        "FROM fx_rate_review"
+        "FROM fx.fx_rate_review"
     )
     if not include_resolved:
         sql += " WHERE NOT reviewed"
@@ -56,7 +56,7 @@ def resolve_fx_review(
     with conn.transaction():
         row = conn.execute(
             "SELECT quote_currency, as_of_date, rate, source, reason, reviewed "
-            "FROM fx_rate_review WHERE review_id = %s",
+            "FROM fx.fx_rate_review WHERE review_id = %s",
             (review_id,),
         ).fetchone()
         if row is None:
@@ -72,7 +72,7 @@ def resolve_fx_review(
         if accept:
             try:
                 landed = conn.execute(
-                    "INSERT INTO fx_rate "
+                    "INSERT INTO fx.fx_rate "
                     "    (base_currency, quote_currency, as_of_date, rate, source) "
                     "VALUES ('USD', %s, %s, %s, %s) "
                     "ON CONFLICT DO NOTHING RETURNING quote_currency",
@@ -87,7 +87,7 @@ def resolve_fx_review(
                 ) from exc
             rate_inserted = landed is not None
         closed = conn.execute(
-            "UPDATE fx_rate_review "
+            "UPDATE fx.fx_rate_review "
             "   SET reviewed = TRUE, resolution = %s, reviewed_at = now() "
             " WHERE review_id = %s AND NOT reviewed "
             "RETURNING review_id",

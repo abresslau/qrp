@@ -21,8 +21,8 @@ from datetime import date
 from decimal import Decimal
 
 import psycopg
+from fx.convert import convert
 
-from sym.fx.convert import convert
 from sym.returns.loader import _calendar_sessions
 from sym.returns.windows import WINDOWS, base_date, end_date, period_years
 
@@ -57,9 +57,15 @@ def restate_return(
 
 
 def price_in_currency(
-    conn: psycopg.Connection, figi: str, as_of_date: date, target: str
+    conn: psycopg.Connection,
+    fx_conn: psycopg.Connection,
+    figi: str,
+    as_of_date: date,
+    target: str,
 ) -> Decimal | None:
-    """The adjusted close of ``figi`` on ``as_of_date`` folded to ``target`` (None on any gap)."""
+    """The adjusted close of ``figi`` on ``as_of_date`` folded to ``target`` (None on any gap).
+
+    ``conn`` is the sym DB (price/security); ``fx_conn`` is the fx DB (the conversion legs)."""
     row = conn.execute(
         "SELECT adj_close FROM v_prices_adjusted WHERE composite_figi=%s AND session_date=%s",
         (figi, as_of_date),
@@ -71,14 +77,19 @@ def price_in_currency(
     ).fetchone()
     if not sec or not sec[0]:
         return None
-    return convert(conn, row[0], sec[0].strip(), target, as_of_date)
+    return convert(fx_conn, row[0], sec[0].strip(), target, as_of_date)
 
 
 def returns_in_currency(
-    conn: psycopg.Connection, figi: str, as_of_date: date, target: str
+    conn: psycopg.Connection,
+    fx_conn: psycopg.Connection,
+    figi: str,
+    as_of_date: date,
+    target: str,
 ) -> dict[str, dict[str, Decimal | None]]:
     """Restate every materialized return window for ``(figi, as_of_date)`` into ``target``.
 
+    ``conn`` is the sym DB (securities/fact_returns/calendar); ``fx_conn`` is the fx DB (rate legs).
     Returns ``{window_code: {'pr': …, 'tr': …}}``. A window whose base date or FX leg can't
     resolve yields ``None`` for that window. If the security is already in ``target``, the local
     returns pass through unchanged.
@@ -107,7 +118,7 @@ def returns_in_currency(
 
     def _fx(d: date) -> Decimal | None:
         if d not in fx_at:
-            fx_at[d] = convert(conn, _ONE, local, target, d)
+            fx_at[d] = convert(fx_conn, _ONE, local, target, d)
         return fx_at[d]
 
     for wid, pr, tr in rows:
