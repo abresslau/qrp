@@ -255,3 +255,91 @@ commodities_daily = ScheduleDefinition(
     execution_timezone="America/New_York",
     default_status=DefaultScheduleStatus.STOPPED,
 )
+
+
+# ---- one `eod` job to run the whole end-of-day, split into two sequenced stages ----------
+# eod_data (all the raw pulls) THEN eod_calculations (the derived returns), wired data -> calc so the
+# calc stage runs ONLY after the data — including equity prices — is in (fact_returns derive from
+# prices). One trigger; the two stages show in the run graph. Per-asset jobs remain for granular runs.
+
+
+@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
+def eod_data(context, config: EodConfig) -> str:
+    """STAGE 1 — pull every asset class's raw EOD data: sym prices/identity/classify/index-levels/FX
+    (the `sym eod` sequence MINUS recompute/validate, which are the calc stage), then rates (BoE UK +
+    world curves) and commodities. Returns the resolved as_of_date so stage 2 runs for the same day.
+
+    The sym `fill` step is CRITICAL: if equity prices fail to pull, this op fails and the downstream
+    calculations are skipped (returns derive from prices). rates/commodities are independent of equity
+    returns — a failure there is logged but does NOT block the calc stage (attempt-all)."""
+    root = str(repo_root())
+    as_of = config.as_of_date.strip()
+    if not as_of:
+        scheduled = getattr(context, "run", None)
+        tick = (scheduled.tags.get("dagster/scheduled_execution_time") if scheduled else None)
+        as_of = (tick or "")[:10] or date.today().isoformat()
+    # 1. sym DATA steps only (recompute + validate are stage 2). fill is the critical equity-price pull.
+    sym = subprocess.run(
+        [sys.executable, "-m", "sym.cli", "eod", "--as_of_date", as_of,
+         "--steps", "monitor,fill,map,classify,indices,fx"],
+        cwd=root, capture_output=True, text=True, timeout=7200,
+    )
+    context.log.info((sym.stdout or "")[-4000:])
+    if sym.returncode != 0:
+        context.log.error(f"sym eod data steps FAILED:\n{(sym.stderr or '')[-2000:]}")
+        raise RuntimeError(f"`sym eod` data steps exited {sym.returncode} (critical: fill)")
+    # 2. rates + commodities — attempt-all (logged, non-blocking; they don't gate equity returns).
+    win_start = (date.fromisoformat(as_of) - timedelta(days=12)).isoformat()
+    for label, cmd in (
+        ("rates_uk", ["rates.cli", "curve", "load"]),
+        ("rates_world", ["rates.cli", "curve", "load-world", "--start_date", win_start,
+                         "--end_date", as_of]),
+        ("commodities", ["commodities.cli", "price", "load", "--start_date", win_start,
+                         "--end_date", as_of]),
+    ):
+        p = subprocess.run([sys.executable, "-m", *cmd], cwd=root,
+                           capture_output=True, text=True, timeout=5400)
+        context.log.info(f"{label}: {(p.stdout or '')[-1500:]}")
+        if p.returncode != 0:
+            context.log.error(f"{label} FAILED (logged, non-blocking):\n{(p.stderr or '')[-1500:]}")
+    return as_of
+
+
+@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
+def eod_calculations(context, as_of_date: str) -> None:
+    """STAGE 2 — runs once eod_data succeeds (equity prices are in). Materialises fact_returns (PR+TR)
+    via the sym `recompute` step, then the cross-layer `validate` gate, for the SAME as_of_date the
+    data stage pulled. recompute is critical — its failure turns the run red and triggers the retry."""
+    root = str(repo_root())
+    proc = subprocess.run(
+        [sys.executable, "-m", "sym.cli", "eod", "--as_of_date", as_of_date,
+         "--steps", "recompute,validate"],
+        cwd=root, capture_output=True, text=True, timeout=7200,
+    )
+    context.log.info((proc.stdout or "")[-4000:])
+    if proc.returncode != 0:
+        context.log.error(f"sym eod recompute/validate FAILED:\n{(proc.stderr or '')[-2000:]}")
+        raise RuntimeError(f"`sym eod` calc steps exited {proc.returncode} (critical: recompute)")
+
+
+@job(
+    name="eod",
+    description="Full end-of-day in one trigger, in two sequenced stages: eod_data (sym prices / "
+    "identity / classify / index levels / FX + rates UK/world + commodities) THEN eod_calculations "
+    "(fact_returns PR+TR + validate), which runs only after the data — incl. equity prices — is in. "
+    "Per-asset jobs (sym_eod / rates_uk_boe / rates_world / commodities) remain for granular runs.",
+)
+def eod_job():
+    eod_calculations(eod_data())
+
+
+# Weekdays 18:30 America/New_York — after the US cash close, by which point EU/UK/Asia EOD series are
+# also out. Timezone ALWAYS explicit (the hard requirement). STOPPED until enabled in the UI; this is
+# the single schedule to enable for the whole nightly refresh (leave the per-asset ones stopped).
+eod_daily = ScheduleDefinition(
+    name="eod_daily",
+    job=eod_job,
+    cron_schedule="30 18 * * 1-5",
+    execution_timezone="America/New_York",
+    default_status=DefaultScheduleStatus.STOPPED,
+)
