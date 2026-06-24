@@ -578,15 +578,17 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
         print("--all and --universe are mutually exclusive", file=sys.stderr)
         return 1
     from fx.db import connect as fx_connect
+    from universe.db import connect as u_connect
 
     load_dotenv()
     try:
-        with connect() as conn, fx_connect() as fx_conn:
+        with connect() as conn, fx_connect() as fx_conn, u_connect() as u_conn:
             conn.autocommit = True  # durable per-figi upserts (set before any query)
             fx_conn.autocommit = True
+            # resolved member roster comes from the universe DB; filtered to sym's master.
             figis = (
-                all_resolved_member_figis(conn) if args.all
-                else resolved_member_figis(conn, args.universe)
+                all_resolved_member_figis(conn, u_conn) if args.all
+                else resolved_member_figis(conn, u_conn, args.universe)
             )
             if args.limit:
                 figis = figis[: args.limit]
@@ -718,12 +720,13 @@ def _cmd_indices(args: argparse.Namespace) -> int:
     from sym.indices.links import link_universe_indices
     from sym.indices.returns import recompute_index_returns
     from sym.returns.loader import DEFAULT_LOOKBACK
+    from universe.db import connect as u_connect
 
     load_dotenv()
     end_date = date.today()
     start_date = end_date - DEFAULT_LOOKBACK
     try:
-        with connect() as conn:
+        with connect() as conn, u_connect() as u_conn:
             conn.autocommit = True
             if args.attach_figis:  # standalone: just (re)attach canonical FIGIs
                 attached, missing = attach_index_figis(conn)
@@ -731,7 +734,7 @@ def _cmd_indices(args: argparse.Namespace) -> int:
                 return 0
             summary = load_index_levels(conn, YahooIndexLevelSource())
             rets = recompute_index_returns(conn, start_date=start_date, end_date=end_date)
-            links = link_universe_indices(conn)
+            links = link_universe_indices(conn, u_conn)
             attached, _ = attach_index_figis(conn)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
@@ -751,6 +754,7 @@ def _cmd_universe_index(args: argparse.Namespace) -> int:
 
     from sym.db import connect
     from sym.indices.links import universe_with_index
+    from universe.db import connect as u_connect
     from universe.registry import UniverseError
 
     as_of_date = date.today()
@@ -761,8 +765,8 @@ def _cmd_universe_index(args: argparse.Namespace) -> int:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
-        with connect() as conn:
-            snap = universe_with_index(conn, args.universe_id, as_of_date)
+        with connect() as conn, u_connect() as u_conn:
+            snap = universe_with_index(conn, u_conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1

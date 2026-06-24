@@ -66,7 +66,7 @@ def test_live_heatmap_recolors_with_freshness_and_collapses_share_classes(monkey
         "BRK-B": RawQuote(220.0, 200.0, "USD", _EPOCH - 600),
     })
     conn = _Conn(_ROWS)
-    out = DbSymGateway(conn).live_heatmap("u1", now=_EPOCH + 10)
+    out = DbSymGateway(conn, universe_conn=conn).live_heatmap("u1", now=_EPOCH + 10)
 
     assert out["window"] == "LIVE"
     assert out["shown"] == 3 and out["merged_share_classes"] == 1  # BRK.A/BRK.B -> one issuer
@@ -87,7 +87,7 @@ def test_live_heatmap_recolors_with_freshness_and_collapses_share_classes(monkey
 def test_live_heatmap_writes_nothing(monkeypatch):
     _batch(monkeypatch, {"AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH)})
     conn = _Conn(_ROWS)
-    DbSymGateway(conn).live_heatmap("u1", now=_EPOCH)
+    DbSymGateway(conn, universe_conn=conn).live_heatmap("u1", now=_EPOCH)
     assert all(
         "INSERT" not in s.upper() and "UPDATE" not in s.upper() and "DELETE" not in s.upper()
         for s in conn.seen
@@ -97,14 +97,14 @@ def test_live_heatmap_writes_nothing(monkeypatch):
 def test_live_heatmap_unknown_universe_raises_lookup(monkeypatch):
     conn = _Conn([], uname=None)
     with pytest.raises(LookupError):
-        DbSymGateway(conn).live_heatmap("nope", now=_EPOCH)
+        DbSymGateway(conn, universe_conn=conn).live_heatmap("nope", now=_EPOCH)
 
 
 def test_live_heatmap_over_cap_raises_value_error(monkeypatch):
     monkeypatch.setattr(gw_mod, "LIVE_HEATMAP_MAX", 1)  # 3 issuers > 1
     _batch(monkeypatch, {})
     with pytest.raises(ValueError):
-        DbSymGateway(_Conn(_ROWS)).live_heatmap("u1", now=_EPOCH)
+        DbSymGateway(_CR := _Conn(_ROWS), universe_conn=_CR).live_heatmap("u1", now=_EPOCH)
 
 
 def test_live_heatmap_whole_source_unreachable_propagates(monkeypatch):
@@ -113,7 +113,7 @@ def test_live_heatmap_whole_source_unreachable_propagates(monkeypatch):
 
     monkeypatch.setattr(quotes, "fetch_quotes_batch", boom)
     with pytest.raises(QuoteSourceUnreachable):
-        DbSymGateway(_Conn(_ROWS)).live_heatmap("u1", now=_EPOCH)
+        DbSymGateway(_CR := _Conn(_ROWS), universe_conn=_CR).live_heatmap("u1", now=_EPOCH)
 
 
 # --- route mapping ---------------------------------------------------------------

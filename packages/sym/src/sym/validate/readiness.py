@@ -31,25 +31,37 @@ def _missing_reason(has_prices: bool, has_calendar: bool) -> str:
 
 
 def check_universe_readiness(
-    conn: psycopg.Connection, threshold: float = DEFAULT_THRESHOLD
+    conn: psycopg.Connection, u_conn: psycopg.Connection, threshold: float = DEFAULT_THRESHOLD
 ) -> CheckResult:
-    """Per universe, gate the % of current members that join ``fact_returns``."""
-    universes = [r[0] for r in conn.execute("SELECT universe_id FROM universe").fetchall()]
+    """Per universe, gate the % of current members that join ``fact_returns`` (cross-DB).
+
+    ``u_conn`` is the universe DB (the current-member roster); ``conn`` is sym (fact_returns/prices/
+    calendar). Members not in the securities master are excluded (parity with the old INNER JOIN).
+    """
+    universes = [r[0] for r in u_conn.execute("SELECT universe_id FROM universe").fetchall()]
     failures: list[str] = []
     warnings: list[str] = []
     for uid in universes:
+        roster = [
+            r[0]
+            for r in u_conn.execute(
+                "SELECT composite_figi FROM universe_membership "
+                "WHERE universe_id = %s AND valid_to IS NULL",
+                (uid,),
+            ).fetchall()
+        ]
         rows = conn.execute(
             """
-            SELECT um.composite_figi,
-                   EXISTS (SELECT 1 FROM fact_returns f WHERE f.composite_figi = um.composite_figi),
-                   EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = um.composite_figi),
+            SELECT s.composite_figi,
+                   EXISTS (SELECT 1 FROM fact_returns f WHERE f.composite_figi = s.composite_figi),
+                   EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi),
                    EXISTS (SELECT 1 FROM trading_calendar_version v
                             WHERE v.is_current AND v.mic = s.mic)
-              FROM universe_membership um JOIN securities s USING (composite_figi)
-             WHERE um.universe_id = %s AND um.valid_to IS NULL
+              FROM securities s
+             WHERE s.composite_figi = ANY(%s)
             """,
-            (uid,),
-        ).fetchall()
+            (roster,),
+        ).fetchall() if roster else []
         total = len(rows)
         if total == 0:
             # An empty universe is not "100% ready" — flag it rather than pass silently.

@@ -162,9 +162,15 @@ def _fx_grid(
 
 
 class DbSymGateway:
-    def __init__(self, conn: psycopg.Connection, fx_conn: psycopg.Connection | None = None) -> None:
+    def __init__(
+        self,
+        conn: psycopg.Connection,
+        fx_conn: psycopg.Connection | None = None,
+        universe_conn: psycopg.Connection | None = None,
+    ) -> None:
         self._conn = conn          # the sym database
         self._fx_conn = fx_conn    # the fx database (FX lives in its own DB now); see _fx()
+        self._universe_conn = universe_conn  # the universe database (membership); see _universe()
 
     def _fx(self) -> tuple[psycopg.Connection, bool]:
         """The fx-DB connection for the FX-matrix reads: the injected one (lifecycle owned by the
@@ -176,6 +182,16 @@ class DbSymGateway:
 
         return fx_connect(), True
 
+    def _universe(self) -> tuple[psycopg.Connection, bool]:
+        """The universe-DB connection for membership reads (the injected one, else freshly opened).
+
+        Returns ``(conn, should_close)`` — membership lives in the universe package's own database."""
+        if self._universe_conn is not None:
+            return self._universe_conn, False
+        from universe.db import connect as u_connect
+
+        return u_connect(), True
+
     def healthy(self) -> bool:
         try:
             self._conn.execute("SELECT 1")
@@ -185,16 +201,21 @@ class DbSymGateway:
 
 
     def universes(self) -> list[UniverseRef]:
-        rows = self._conn.execute(
-            """
-            SELECT u.universe_id, u.name,
-                   count(*) FILTER (WHERE r.resolution_status = 'resolved') AS resolved
-              FROM universe u
-              LEFT JOIN universe_member_resolution r USING (universe_id)
-             GROUP BY u.universe_id, u.name
-             ORDER BY resolved DESC, u.universe_id
-            """
-        ).fetchall()
+        u, close = self._universe()  # universe registry + resolution live in the universe DB
+        try:
+            rows = u.execute(
+                """
+                SELECT u.universe_id, u.name,
+                       count(*) FILTER (WHERE r.resolution_status = 'resolved') AS resolved
+                  FROM universe u
+                  LEFT JOIN universe_member_resolution r USING (universe_id)
+                 GROUP BY u.universe_id, u.name
+                 ORDER BY resolved DESC, u.universe_id
+                """
+            ).fetchall()
+        finally:
+            if close:
+                u.close()
         return [UniverseRef(uid, name, resolved) for uid, name, resolved in rows]
 
     def universe_coverage(self) -> list[dict]:
@@ -210,38 +231,81 @@ class DbSymGateway:
         if latest is None:
             return []
         one_win = _scalar(c, "SELECT min(window_id) FROM return_window")
-        rows = c.execute(
-            """
-            WITH members AS (
-                SELECT universe_id, composite_figi FROM universe_member_resolution
-                 WHERE resolution_status = 'resolved'
-            ),
-            px AS (SELECT composite_figi, max(session_date) d FROM prices_raw
-                    WHERE session_date >= %(latest)s - 14 GROUP BY composite_figi),
-            rt AS (SELECT composite_figi, max(as_of_date) d FROM fact_returns
-                    WHERE window_id = %(w)s AND as_of_date >= %(latest)s - 14 GROUP BY composite_figi),
-            fn AS (SELECT composite_figi, max(as_of_date) d FROM fundamentals
-                    WHERE as_of_date >= %(latest)s - 180 GROUP BY composite_figi)
-            SELECT m.universe_id, u.name,
-                   count(*) AS members,
-                   count(*) FILTER (WHERE s.status = 'active') AS active,
-                   count(*) FILTER (WHERE s.status = 'active' AND px.d >= %(latest)s - 7) AS px_cov,
-                   max(px.d) FILTER (WHERE s.status = 'active') AS px_latest,
-                   count(*) FILTER (WHERE s.status = 'active' AND rt.d >= %(latest)s - 7) AS rt_cov,
-                   max(rt.d) FILTER (WHERE s.status = 'active') AS rt_latest,
-                   count(*) FILTER (WHERE s.status = 'active' AND fn.d IS NOT NULL) AS fn_cov,
-                   max(fn.d) FILTER (WHERE s.status = 'active') AS fn_latest
-              FROM members m
-              JOIN universe u ON u.universe_id = m.universe_id
-              JOIN securities s ON s.composite_figi = m.composite_figi
-              LEFT JOIN px ON px.composite_figi = m.composite_figi
-              LEFT JOIN rt ON rt.composite_figi = m.composite_figi
-              LEFT JOIN fn ON fn.composite_figi = m.composite_figi
-             GROUP BY m.universe_id, u.name
-             ORDER BY members DESC, m.universe_id
-            """,
-            {"latest": latest, "w": one_win},
-        ).fetchall()
+        # 1. resolved-member roster + universe names from the universe DB.
+        u, uclose = self._universe()
+        try:
+            members = u.execute(
+                """
+                SELECT m.universe_id, u.name, m.composite_figi
+                  FROM universe_member_resolution m
+                  JOIN universe u ON u.universe_id = m.universe_id
+                 WHERE m.resolution_status = 'resolved' AND m.composite_figi IS NOT NULL
+                """
+            ).fetchall()
+        finally:
+            if uclose:
+                u.close()
+        figis = list({figi for _u, _n, figi in members})
+        # 2. per-figi sym facts (status + recency of prices/returns/fundamentals), filtered by the
+        #    roster list — index-bounded per-figi max() over a recent window (no full-table scan).
+        facts: dict[str, tuple] = {}
+        if figis:
+            for figi, status, pxd, rtd, fnd in c.execute(
+                """
+                WITH px AS (SELECT composite_figi, max(session_date) d FROM prices_raw
+                             WHERE session_date >= %(latest)s - 14 AND composite_figi = ANY(%(f)s)
+                             GROUP BY composite_figi),
+                rt AS (SELECT composite_figi, max(as_of_date) d FROM fact_returns
+                        WHERE window_id = %(w)s AND as_of_date >= %(latest)s - 14
+                          AND composite_figi = ANY(%(f)s) GROUP BY composite_figi),
+                fn AS (SELECT composite_figi, max(as_of_date) d FROM fundamentals
+                        WHERE as_of_date >= %(latest)s - 180 AND composite_figi = ANY(%(f)s)
+                        GROUP BY composite_figi)
+                SELECT s.composite_figi, s.status, px.d, rt.d, fn.d
+                  FROM securities s
+                  LEFT JOIN px USING (composite_figi)
+                  LEFT JOIN rt USING (composite_figi)
+                  LEFT JOIN fn USING (composite_figi)
+                 WHERE s.composite_figi = ANY(%(f)s)
+                """,
+                {"latest": latest, "w": one_win, "f": figis},
+            ).fetchall():
+                facts[figi] = (status, pxd, rtd, fnd)
+        # 3. aggregate per universe in Python (member not in securities → excluded, INNER-JOIN parity).
+        from collections import defaultdict
+
+        agg: dict[str, dict] = defaultdict(
+            lambda: {"name": None, "members": 0, "active": 0, "px_cov": 0, "px_latest": None,
+                     "rt_cov": 0, "rt_latest": None, "fn_cov": 0, "fn_latest": None}
+        )
+        recent = latest - timedelta(days=7)
+        for uid, name, figi in members:
+            f = facts.get(figi)
+            if f is None:
+                continue  # not in the securities master (INNER JOIN securities parity)
+            status, pxd, rtd, fnd = f
+            a = agg[uid]
+            a["name"] = name
+            a["members"] += 1
+            if status == "active":
+                a["active"] += 1
+                if pxd is not None and pxd >= recent:
+                    a["px_cov"] += 1
+                if pxd is not None and (a["px_latest"] is None or pxd > a["px_latest"]):
+                    a["px_latest"] = pxd
+                if rtd is not None and rtd >= recent:
+                    a["rt_cov"] += 1
+                if rtd is not None and (a["rt_latest"] is None or rtd > a["rt_latest"]):
+                    a["rt_latest"] = rtd
+                if fnd is not None:
+                    a["fn_cov"] += 1
+                if fnd is not None and (a["fn_latest"] is None or fnd > a["fn_latest"]):
+                    a["fn_latest"] = fnd
+        rows = [
+            (uid, a["name"], a["members"], a["active"], a["px_cov"], a["px_latest"],
+             a["rt_cov"], a["rt_latest"], a["fn_cov"], a["fn_latest"])
+            for uid, a in sorted(agg.items(), key=lambda kv: (-kv[1]["members"], kv[0]))
+        ]
 
         def _layer(cov: int, total: int, latest_d) -> dict:
             # `total` is the ACTIVE member count — delisted names are not expected to have
@@ -304,11 +368,27 @@ class DbSymGateway:
         grouped by GICS sector. Constituents missing market cap are excluded but counted;
         missing return -> null (neutral); missing sector -> 'Unclassified'. All live reads."""
         c = self._conn
-        uname = _scalar(
-            c, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,)
-        )
-        if uname is None:
-            raise LookupError(f"universe {universe_id!r} not found")
+        # universe name + the resolved-member roster come from the universe DB (roster-fetch);
+        # the rest (securities/prices/returns/fundamentals/gics/symbology) is sym, filtered by it.
+        u, uclose = self._universe()
+        try:
+            uname = _scalar(
+                u, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,)
+            )
+            if uname is None:
+                raise LookupError(f"universe {universe_id!r} not found")
+            roster = [
+                r[0]
+                for r in u.execute(
+                    "SELECT composite_figi FROM universe_member_resolution "
+                    "WHERE universe_id = %s AND resolution_status = 'resolved' "
+                    "AND composite_figi IS NOT NULL",
+                    (universe_id,),
+                ).fetchall()
+            ]
+        finally:
+            if uclose:
+                u.close()
         wrow = c.execute(
             "SELECT window_id, code FROM return_window WHERE code = %s", (window_code,)
         ).fetchone()
@@ -320,7 +400,7 @@ class DbSymGateway:
 
         rows = c.execute(
             """
-            SELECT r.composite_figi AS figi,
+            SELECT s.composite_figi AS figi,
                    coalesce(tk.symbol_value, s.composite_figi) AS ticker,
                    coalesce(sn.name, s.composite_figi) AS name,
                    coalesce(g.sector_name, 'Unclassified') AS sector,
@@ -331,46 +411,45 @@ class DbSymGateway:
                    px.close AS price,
                    fr.pr AS ret,
                    isin.symbol_value AS isin
-              FROM universe_member_resolution r
-              JOIN securities s ON s.composite_figi = r.composite_figi
+              FROM securities s
               LEFT JOIN LATERAL (
                   SELECT market_cap_usd, market_cap_lcy, currency_code FROM fundamentals f2
-                   WHERE f2.composite_figi = r.composite_figi AND f2.market_cap_usd IS NOT NULL
+                   WHERE f2.composite_figi = s.composite_figi AND f2.market_cap_usd IS NOT NULL
                    ORDER BY as_of_date DESC LIMIT 1
               ) f ON TRUE
               LEFT JOIN LATERAL (
                   SELECT close FROM prices_raw p2
-                   WHERE p2.composite_figi = r.composite_figi
+                   WHERE p2.composite_figi = s.composite_figi
                    ORDER BY session_date DESC LIMIT 1
               ) px ON TRUE
               LEFT JOIN LATERAL (
                   SELECT pr FROM fact_returns x
-                   WHERE x.composite_figi = r.composite_figi AND x.window_id = %s
+                   WHERE x.composite_figi = s.composite_figi AND x.window_id = %s
                    ORDER BY as_of_date DESC LIMIT 1
               ) fr ON TRUE
               LEFT JOIN LATERAL (
                   SELECT sector_name, industry_name FROM gics_scd g2
-                   WHERE g2.composite_figi = r.composite_figi
+                   WHERE g2.composite_figi = s.composite_figi
                    ORDER BY (g2.valid_to IS NULL) DESC, g2.valid_from DESC LIMIT 1
               ) g ON TRUE
               LEFT JOIN LATERAL (
                   SELECT name FROM security_names z
-                   WHERE z.composite_figi = r.composite_figi
+                   WHERE z.composite_figi = s.composite_figi
                    ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
               ) sn ON TRUE
               LEFT JOIN LATERAL (
                   SELECT symbol_value FROM security_symbology y
-                   WHERE y.composite_figi = r.composite_figi AND y.symbol_type = 'ticker'
+                   WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
                    ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
               ) tk ON TRUE
               LEFT JOIN LATERAL (
                   SELECT symbol_value FROM security_symbology yi
-                   WHERE yi.composite_figi = r.composite_figi AND yi.symbol_type = 'isin'
+                   WHERE yi.composite_figi = s.composite_figi AND yi.symbol_type = 'isin'
                    ORDER BY (yi.valid_to IS NULL) DESC, yi.valid_from DESC LIMIT 1
               ) isin ON TRUE
-             WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
+             WHERE s.composite_figi = ANY(%s)
             """,
-            (window_id, universe_id),
+            (window_id, roster),
         ).fetchall()
 
         # Collapse share classes to one tile per issuer (ISIN CUSIP-issuer prefix, chars 3-8;
@@ -422,13 +501,27 @@ class DbSymGateway:
         Raises LookupError (404), ValueError (422 over-cap), QuoteSourceUnreachable (503 when the
         provider is wholly unreachable). Uncovered issuers render neutral (``ret`` = None)."""
         c = self._conn
-        uname = _scalar(c, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,))
-        if uname is None:
-            raise LookupError(f"universe {universe_id!r} not found")
+        u, uclose = self._universe()
+        try:
+            uname = _scalar(u, "SELECT name FROM universe WHERE universe_id = %s", (universe_id,))
+            if uname is None:
+                raise LookupError(f"universe {universe_id!r} not found")
+            roster = [
+                r[0]
+                for r in u.execute(
+                    "SELECT composite_figi FROM universe_member_resolution "
+                    "WHERE universe_id = %s AND resolution_status = 'resolved' "
+                    "AND composite_figi IS NOT NULL",
+                    (universe_id,),
+                ).fetchall()
+            ]
+        finally:
+            if uclose:
+                u.close()
 
         rows = c.execute(
             """
-            SELECT r.composite_figi AS figi,
+            SELECT s.composite_figi AS figi,
                    coalesce(tk.symbol_value, s.composite_figi) AS ticker,
                    s.mic AS mic,
                    coalesce(sn.name, s.composite_figi) AS name,
@@ -438,36 +531,35 @@ class DbSymGateway:
                    f.market_cap_lcy,
                    f.currency_code,
                    isin.symbol_value AS isin
-              FROM universe_member_resolution r
-              JOIN securities s ON s.composite_figi = r.composite_figi
+              FROM securities s
               LEFT JOIN LATERAL (
                   SELECT market_cap_usd, market_cap_lcy, currency_code FROM fundamentals f2
-                   WHERE f2.composite_figi = r.composite_figi AND f2.market_cap_usd IS NOT NULL
+                   WHERE f2.composite_figi = s.composite_figi AND f2.market_cap_usd IS NOT NULL
                    ORDER BY as_of_date DESC LIMIT 1
               ) f ON TRUE
               LEFT JOIN LATERAL (
                   SELECT sector_name, industry_name FROM gics_scd g2
-                   WHERE g2.composite_figi = r.composite_figi
+                   WHERE g2.composite_figi = s.composite_figi
                    ORDER BY (g2.valid_to IS NULL) DESC, g2.valid_from DESC LIMIT 1
               ) g ON TRUE
               LEFT JOIN LATERAL (
                   SELECT name FROM security_names z
-                   WHERE z.composite_figi = r.composite_figi
+                   WHERE z.composite_figi = s.composite_figi
                    ORDER BY (z.valid_to IS NULL) DESC, z.valid_from DESC LIMIT 1
               ) sn ON TRUE
               LEFT JOIN LATERAL (
                   SELECT symbol_value FROM security_symbology y
-                   WHERE y.composite_figi = r.composite_figi AND y.symbol_type = 'ticker'
+                   WHERE y.composite_figi = s.composite_figi AND y.symbol_type = 'ticker'
                    ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
               ) tk ON TRUE
               LEFT JOIN LATERAL (
                   SELECT symbol_value FROM security_symbology yi
-                   WHERE yi.composite_figi = r.composite_figi AND yi.symbol_type = 'isin'
+                   WHERE yi.composite_figi = s.composite_figi AND yi.symbol_type = 'isin'
                    ORDER BY (yi.valid_to IS NULL) DESC, yi.valid_from DESC LIMIT 1
               ) isin ON TRUE
-             WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
+             WHERE s.composite_figi = ANY(%s)
             """,
-            (universe_id,),
+            (roster,),
         ).fetchall()
 
         # Same issuer-collapse as the EOD heatmap (one tile per issuer, largest-cap class), but
@@ -586,12 +678,24 @@ class DbSymGateway:
             like = f"%{esc}%"
             params += [like, like, like]
         if universe:
-            conds.append(
-                "EXISTS (SELECT 1 FROM universe_member_resolution r "
-                "WHERE r.universe_id = %s AND r.composite_figi = s.composite_figi "
-                "AND r.resolution_status = 'resolved')"
-            )
-            params.append(universe)
+            # The universe's resolved-member roster lives in the universe DB — fetch it (small
+            # composite_figi list) and filter sym's securities by it (roster-fetch, no cross-DB join).
+            u, uclose = self._universe()
+            try:
+                roster = [
+                    r[0]
+                    for r in u.execute(
+                        "SELECT composite_figi FROM universe_member_resolution "
+                        "WHERE universe_id = %s AND resolution_status = 'resolved' "
+                        "AND composite_figi IS NOT NULL",
+                        (universe,),
+                    ).fetchall()
+                ]
+            finally:
+                if uclose:
+                    u.close()
+            conds.append("s.composite_figi = ANY(%s)")
+            params.append(roster)
         # Gap drill-down (only within a universe): members NOT covered in a layer — the inverse
         # of the coverage "covered" test, using the SAME cutoffs so it matches the pill count.
         if gap and universe:
@@ -917,10 +1021,15 @@ class DbSymGateway:
              ORDER BY pg.detected_at DESC LIMIT 30
             """
         ).fetchall()
-        props = c.execute(
-            "SELECT proposal_id, universe_id, raw_identifier, change, status, created_at "
-            "FROM membership_proposal ORDER BY created_at DESC LIMIT 200"
-        ).fetchall()
+        u, uclose = self._universe()  # membership proposals live in the universe DB
+        try:
+            props = u.execute(
+                "SELECT proposal_id, universe_id, raw_identifier, change, status, created_at "
+                "FROM membership_proposal ORDER BY created_at DESC LIMIT 200"
+            ).fetchall()
+        finally:
+            if uclose:
+                u.close()
         return {
             "review_queue": [
                 {

@@ -171,29 +171,43 @@ class EodMonitorGateway:
 
     def _equity_universe_breakdown(self, conn, expected: date | None) -> list[dict]:
         """Per-universe price freshness: the latest session each universe is broadly priced
-        (>= COVERAGE_FRACTION of its CURRENT members), so a single lagging universe is visible."""
-        rows = conn.execute(
-            f"""
-            WITH mem AS (
-                SELECT universe_id, composite_figi FROM universe_membership WHERE valid_to IS NULL
-            ),
-            sz AS (SELECT universe_id, count(*) AS total FROM mem GROUP BY universe_id),
-            cov AS (
-                SELECT m.universe_id, p.session_date, count(DISTINCT p.composite_figi) AS n
-                  FROM mem m JOIN prices_raw p USING (composite_figi)
-                 WHERE p.session_date >= (SELECT max(session_date) FROM prices_raw)
-                                          - {COVERAGE_WINDOW_DAYS}
-                 GROUP BY m.universe_id, p.session_date
-            )
-            SELECT s.universe_id, s.total,
-                   max(c.session_date) FILTER (WHERE c.n >= {COVERAGE_FRACTION} * s.total) AS covered
-              FROM sz s LEFT JOIN cov c USING (universe_id)
-             GROUP BY s.universe_id, s.total
-             ORDER BY s.universe_id
-            """
-        ).fetchall()
-        return [self._subgroup(uid, _as_date(cov), expected, f"{total} names")
-                for uid, total, cov in rows]
+        (>= COVERAGE_FRACTION of its CURRENT members), so a single lagging universe is visible.
+
+        Cross-DB roster-fetch: the current-member roster comes from the universe DB; the per-session
+        priced counts come from sym's prices_raw filtered by the roster (no cross-DB join)."""
+        from collections import defaultdict
+
+        from universe.db import connect as u_connect
+
+        with u_connect() as u:
+            roster = u.execute(
+                "SELECT universe_id, composite_figi FROM universe_membership WHERE valid_to IS NULL"
+            ).fetchall()
+        total_by_u: dict[str, int] = defaultdict(int)
+        figi_universes: dict[str, list[str]] = defaultdict(list)
+        for uid, figi in roster:
+            total_by_u[uid] += 1
+            figi_universes[figi].append(uid)
+        figis = list(figi_universes)
+        latest = self._scalar(conn, "SELECT max(session_date) FROM prices_raw")
+        cov: dict[str, dict[date, set]] = defaultdict(lambda: defaultdict(set))
+        if figis and latest is not None:
+            for figi, sd in conn.execute(
+                "SELECT composite_figi, session_date FROM prices_raw "
+                "WHERE composite_figi = ANY(%s) AND session_date >= %s - %s",
+                (figis, latest, COVERAGE_WINDOW_DAYS),
+            ).fetchall():
+                for uid in figi_universes[figi]:
+                    cov[uid][sd].add(figi)
+        out: list[dict] = []
+        for uid in sorted(total_by_u):
+            total = total_by_u[uid]
+            covered = None
+            for sd, figset in cov.get(uid, {}).items():
+                if len(figset) >= COVERAGE_FRACTION * total and (covered is None or sd > covered):
+                    covered = sd
+            out.append(self._subgroup(uid, covered, expected, f"{total} names"))
+        return out
 
     def _index_breakdown(self, conn, expected: date | None) -> list[dict]:
         """Per-index latest level date (one row per index instrument by name)."""
@@ -205,17 +219,22 @@ class EodMonitorGateway:
 
     def _universe_breakdown(self, conn) -> list[dict]:
         """Per-universe membership: current member count + last membership-event date. Informational
-        (event-log; ``days_behind`` is left null — a universe with no recent change is not 'stale')."""
-        rows = conn.execute(
-            """
-            SELECT u.universe_id,
-                   (SELECT count(*) FROM universe_membership m
-                     WHERE m.universe_id = u.universe_id AND m.valid_to IS NULL) AS members,
-                   (SELECT max(recorded_at) FROM membership_event e
-                     WHERE e.universe_id = u.universe_id) AS last_event
-              FROM universe u ORDER BY u.universe_id
-            """
-        ).fetchall()
+        (event-log; ``days_behind`` is left null — a universe with no recent change is not 'stale').
+
+        Membership lives in the universe DB now — read it there (``conn`` is ignored)."""
+        from universe.db import connect as u_connect
+
+        with u_connect() as u:
+            rows = u.execute(
+                """
+                SELECT u.universe_id,
+                       (SELECT count(*) FROM universe_membership m
+                         WHERE m.universe_id = u.universe_id AND m.valid_to IS NULL) AS members,
+                       (SELECT max(recorded_at) FROM membership_event e
+                         WHERE e.universe_id = u.universe_id) AS last_event
+                  FROM universe u ORDER BY u.universe_id
+                """
+            ).fetchall()
         out = []
         for uid, members, last_event in rows:
             d = _as_date(last_event)
@@ -322,7 +341,10 @@ class EodMonitorGateway:
     def _summary(self, latest_session: date | None) -> dict:
         c = self._sym
         securities = self._scalar(c, "SELECT count(*) FROM securities")
-        universes = self._scalar(c, "SELECT count(*) FROM universe")
+        from universe.db import connect as u_connect
+
+        with u_connect() as u:  # the universe registry lives in the universe DB now
+            universes = self._scalar(u, "SELECT count(*) FROM universe")
         priced = self._scalar(
             c,
             "SELECT count(*) FROM securities s WHERE EXISTS "

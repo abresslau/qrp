@@ -29,6 +29,7 @@ MACRO = "macro"
 ALTDATA = "altdata"
 COMMODITIES = "commodities"
 FX = "fx"
+UNIVERSE = "universe"
 
 
 @dataclass(frozen=True)
@@ -119,7 +120,7 @@ BUCKETS: tuple[Bucket, ...] = (
     ),
     Bucket(
         "universe", "Universe membership", "universe",
-        (Dataset(SYM, "membership_event", "recorded_at", "sym.membership_event"),),
+        (Dataset(UNIVERSE, "universe.membership_event", "recorded_at", "universe.membership_event"),),
         cadence="slow",
         note="event-log; only changes on a constituent move",
     ),
