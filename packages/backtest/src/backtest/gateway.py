@@ -36,6 +36,52 @@ class DbBacktestGateway:
             res["portfolio_id"] = pid
         return res
 
+    def sweep(self, base_spec: dict, grid: dict, n_splits: int = 16,
+              alt_conn=None, macro_conn=None) -> dict:
+        """Run a parameter-grid sweep (Story 1B) and persist its overfitting verdict."""
+        from backtest.sweep import run_sweep
+
+        return run_sweep(self._sym, self._conn, base_spec=base_spec, grid=grid,
+                         n_splits=n_splits, alt_conn=alt_conn, macro_conn=macro_conn)
+
+    def sweeps(self, limit: int = 25) -> list[dict]:
+        try:
+            rows = self._conn.execute(
+                """
+                SELECT sweep_id, created_at, base_spec, grid, n_configs, best_run_id, summary
+                  FROM backtest.sweep ORDER BY created_at DESC LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        except psycopg.errors.UndefinedTable:
+            return []  # sweep schema not deployed yet — no sweeps to list, not an error
+        return [self._sweep_row(r) for r in rows]
+
+    def get_sweep(self, sweep_id: int) -> dict | None:
+        try:
+            r = self._conn.execute(
+                """
+                SELECT sweep_id, created_at, base_spec, grid, n_configs, best_run_id, summary
+                  FROM backtest.sweep WHERE sweep_id = %s
+                """,
+                (sweep_id,),
+            ).fetchone()
+        except psycopg.errors.UndefinedTable:
+            return None
+        return self._sweep_row(r) if r else None
+
+    def _sweep_row(self, r: tuple) -> dict:
+        (sid, created, base_spec, grid, n_configs, best_run_id, summary) = r
+        return {
+            "sweep_id": sid,
+            "created_at": created.isoformat() if created else None,
+            "base_spec": base_spec,
+            "grid": grid,
+            "n_configs": n_configs,
+            "best_run_id": best_run_id,
+            "summary": summary,
+        }
+
     def runs(self, limit: int = 25) -> list[dict]:
         rows = self._conn.execute(
             """

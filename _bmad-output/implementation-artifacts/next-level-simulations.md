@@ -1,6 +1,6 @@
 # Next-Level Simulations — backtest & optimiser credibility roadmap
 
-**Status:** research complete; **Tier-1 (3 items) IMPLEMENTED & tested overnight**; Tier-2/3 ready-for-prioritisation.
+**Status:** research complete; **Tier-1 COMPLETE** — 1A/1B-step1/1C shipped 2026-06-23 (defaults confirmed 2026-06-24); the remaining Tier-1 (1B steps 2–4: Deflated Sharpe + PBO/CSCV + MinBTL + `backtest.sweep` infra) IMPLEMENTED + code-reviewed (3 adversarial layers) 2026-06-24 — see "Tier-1 remainder" below. Tier-2/3 ready-for-prioritisation.
 **Author:** overnight session 2026-06-23 (Andre asleep; directive: "deep research on backtesting, optimisation — start doing simulations soon").
 **Inputs:** deep-research workflow `wbg8u51ui` (107 agents, 25 sources, 24/25 claims survived adversarial verification) + current-state code read of `backtest/engine.py`, `optimiser/engine.py`, `signals/compute.py`.
 
@@ -20,7 +20,30 @@
 
 **Numerical-correctness note (1C):** the optimal-intensity estimators (π, ρ, γ) were derived from first principles for the constant-correlation target (ρ via the ϑ-covariance expansion, holding r̄ fixed — the standard Ledoit-Wolf approximation), not transcribed. Even if δ were imperfect, Σ̂=δF+(1−δ)S is still a valid PD matrix between sample and target — robust by construction. Tests pin the load-bearing invariants: δ∈[0,1], diagonal=sample variance, **PD even when n>t (sample is singular)**, and δ grows as t shrinks. A cross-check against scikit-learn `LedoitWolf` / PyPortfolioOpt on real data is a good daytime confidence step before relying on the exact δ.
 
-> **Remaining Tier-1 (not yet built):** Deflated Sharpe, PBO via CSCV, MinBTL guardrail + the `backtest.sweep` infra they need (1B-steps-2..4). These need a design decision on how to count effective trials N — see open questions.
+### Tier-1 remainder — Deflated Sharpe + PBO/CSCV + MinBTL + sweep infra (✅ shipped + reviewed 2026-06-24)
+
+Built `backtest/stats.py` (pure-Python, no numpy/scipy): `norm_cdf`/`norm_ppf` (erf + Acklam probit),
+`probabilistic_sharpe` (PSR), `expected_max_sharpe` (False-Strategy-Theorem E[max SR]),
+`deflated_sharpe` (DSR), `pbo` (CSCV, S=16 blocks, C(S,S/2) splits, OOS-rank logit), and
+`min_backtest_length_years`. New `backtest/sweep.py` (`run_sweep`) runs the grid, aligns configs on
+their common trading days, computes the DSR/PBO/MinBTL verdict, and persists a `backtest.sweep`
+parent row (`sweep.sql` migration) linking each grid point's `backtest.run` via `run.sweep_id`. N =
+full grid size (conservative; cluster-based effective-N is a ledgered refinement). Engine gained
+`return_daily` (the headline net-when-costed daily series feeding PBO/DSR). Wired through gateway
+(`sweep`/`sweeps`/`get_sweep`) + router (`POST /api/backtest/sweep`, `GET /api/backtest/sweeps[/{id}]`).
+
+**Code review (3 adversarial layers, 2026-06-24):** Acceptance Auditor — all 6 spec items MET
+(formulas faithful: per-period SR, Euler-Mascheroni, N from the sweep, S=16/0.05 threshold,
+annualised MinBTL, conservative-N labelled). 2 patches applied: (BP1) `run_sweep` wraps each config
+run in attempt-all so one unexpected exception can't orphan the already-committed runs; (BP2) PBO uses
+tie-aware average rank (a plain `sorted().index()` forced tied configs to stable-sort-worst →
+spurious PBO≈1.0; no-op for distinct series). 6 deferred (deferred-work.md), 6 dismissed (incl. a
+false-positive MinBTL "unit" flag — 252 trading days ≈ 1 calendar year). 39 backtest tests green,
+ruff clean. CAVEAT: the `/backtest` page surfacing of these stats is a follow-up (backend + API only);
+schema deploy via the house Docker-sqitch method pending.
+
+> **Open design input still carried:** how to count effective trials N when cutoffs/cadences are
+> correlated (today: conservative full-grid N, labelled) — see open questions.
 
 ---
 
