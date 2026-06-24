@@ -1,6 +1,6 @@
 # Story: Extract `universe` into its own peer package WITH its own database
 
-Status: ready-for-dev
+Status: in-progress  <!-- P1 (scaffold + universe DB) DONE + committed 72a8032; P2-P4 remain — see Dev Agent Record -->>
 
 <!-- Created via bmad-create-story 2026-06-24 (Andre: "feels like universe should be a separate
 package" → "do it" → "change also to separate database"). FINAL DECISION: approach **B** — a full
@@ -182,6 +182,72 @@ first. Independent; no hard ordering dependency, but they share the cross-cuttin
   `universe_load`/`equity`/`fundamental` bucket builders.
 - UPDATE (wiring): root `pyproject.toml`, `services/api/pyproject.toml`, `tools/deploy_all.py`
   (+universe DB), `lineage` if the CLI path changes.
+
+## Dev Agent Record
+
+### Phase status (2026-06-24)
+- [x] **P1 — Scaffold + universe DB (DONE, committed `72a8032` on `feat/universe-package`)**: `packages/
+  universe/` (pyproject, db.py→`universe` DB, cli stub); Sqitch `universe_schema` migration recreating
+  the 7 moved tables in schema `universe` (universe, membership_event, universe_member_resolution,
+  universe_membership [GiST no-overlap + btree_gist], membership_proposal, universe_monitor_log,
+  universe_accuracy_check) + `universe.set_updated_at`; registered in deploy_all + root workspace; DB
+  created+deployed+verified. **Additive — nothing wired in yet, sym unchanged, zero behavior change.**
+- [ ] **P2 — Invert the circular dep + move the membership domain** (the big phase; see design below).
+- [ ] **P3 — Migrate data (7 tables sym→universe) + rewire consumers cross-DB (roster-fetch).**
+- [ ] **P4 — Drop the 7 tables from sym (drop universe_benchmark's universe_id FK → soft ref) + verify.**
+
+### Refined design from the coupling map (Explore, 2026-06-24) — READ BEFORE P2
+The map CONFIRMS approach B and sharpens the module split. The inversion is deeper than "inject one
+resolver": universe modules read **4 sym core tables** (securities, security_symbology, exchange,
+trading_calendar), call the **sym ingestion pipeline** (`sym.ingest.pipeline.run_load`), and use the
+**`SeedSecurity`** identity type. The split that keeps `universe` sym-import-free:
+
+**MOVE to `packages/universe/src/universe/` (pure membership domain):** `registry`, `events`,
+`projection`, `query`, `gating`, `membership_diff`, `store`, `snapshot`, `review`, `monitor`, `refresh`,
+`accuracy`, the providers (`index_source`, `b3`, `etf_holdings`, `fmp`, `wikipedia`, `criteria`,
+`index_provider`, `custom_list`), and the universe-side of `resolution.py` (`resolve_universe_members`
+orchestration + `MemberResolution`/`ResolveFn` types + `_parse_token`). Rewrite intra-package imports
+`sym.universe.*`→`universe.*`; schema-qualify all SQL to `universe.*`.
+
+**STAY in sym (the resolver IMPL + price-load bridge + consumers — this is what sym injects/owns):**
+- `ingest.py` (`run_universe_load`): calls `sym.ingest.pipeline.run_load` + `write_security` +
+  `backfill_equity_instruments` — the universe-DRIVEN price load into sym's prices_raw. The story
+  explicitly keeps this in sym. It fetches the member roster from the universe DB (roster-fetch).
+- The resolver factories `make_local_resolve_fn` / `make_openfigi_resolve_fn` (read securities/
+  security_symbology, call `plan_resolutions`/`read_exch_codes`) → become a **sym-side adapter**
+  implementing `universe.Resolver`. `fundamentals.py` stays in sym (sym data; `recompute_market_cap_usd`
+  already cross-DB to fx; `resolved_member_figis`/`all_resolved_member_figis` query
+  universe_member_resolution → repoint to the universe DB via roster-fetch).
+
+**The `Resolver` protocol (universe owns it; sym injects an impl):**
+```
+class Resolver(Protocol):
+    def resolve_member_tokens(raw_identifiers: Sequence[str]) -> dict[str, MemberResolution]: ...
+    def read_exchange_codes() -> dict[str, str]: ...            # MIC -> OpenFIGI exch_code
+    def ensure_security_for_figi(seed, composite_figi, share_class_figi) -> bool: ...  # write_security
+    def load_seed_universe(path: str | None) -> Iterable[Seed]: ...  # custom_list provider seed
+```
+`monitor.run_monitor(conn, universe_id, resolver, ...)`, `refresh.refresh_universe(conn, universe_id,
+resolver, ...)`, `accuracy.*`, and `custom_list` take the injected `resolver`. **`SeedSecurity`**: keep
+the canonical type in `sym.identity.universe`; universe defines its OWN minimal `Seed` shape (ticker/
+mic/isin) for the protocol so it doesn't import sym — the sym adapter maps `Seed`↔`SeedSecurity`.
+**`trading_calendar`** read in `monitor` → inject a `calendar_lookup` callable (or fetch the small
+session list before the run). All universe→sym table reads become injected functions or roster-fetches.
+
+**Cross-DB consumers (P3, roster-fetch — small composite_figi lists, NO cross-DB joins):**
+`backtest/engine.py:_members`, `signals/compute.py:_members` (+ the `sym:universe_membership` asset-spec
+input → `universe:universe_membership`), `sym/cli.py` universe subcommands (add/list/refresh/members/
+monitor/coverage/review/confirm/accuracy/reverse/index — open a universe conn; `coverage`/`index` are
+cross-DB: roster from universe, prices/instrument from sym), `eod.py` monitor step (open universe conn +
+inject sym resolver), `sym/validate/*` universe checks (cross-DB), `services/api/modules/sym` explorer +
+`modules/data_monitor` universe bucket (read the universe DB; bucket already supports per-package DBs via
+`package_dsn`), `lineage` universe bucket/asset (package=`universe`). `universe_benchmark` STAYS in sym;
+`sym/indices/links.py` + `api/sym_contract.py` keep reading it; its `universe_id` FK→ soft reference (P4).
+
+**Invariants (carry over):** `universe_reload_no_gaps` (end-caps incl leavers now from the universe DB),
+identity bridge whole in sym, SCD/projection + `feedback_scd_same_day_inplace`, no cross-DB FKs, Docker
+sqitch, schedules keep explicit tz. Seed-in-migration gotcha from fx: if universe needs reference seed
+rows, seed them IN a migration (a fresh deploy_all must build a functional DB).
 
 ## Verification
 - universe import-guard (no `sym` import); `deploy_all --status` clean incl. the new `universe` DB.
