@@ -27,6 +27,7 @@ members = [
     "packages/rates",
     "packages/commodities",
     "packages/fx",
+    "packages/universe",
 ]
 
 [dependency-groups]
