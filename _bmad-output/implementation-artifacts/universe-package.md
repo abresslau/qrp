@@ -192,9 +192,24 @@ first. Independent; no hard ordering dependency, but they share the cross-cuttin
   universe_membership [GiST no-overlap + btree_gist], membership_proposal, universe_monitor_log,
   universe_accuracy_check) + `universe.set_updated_at`; registered in deploy_all + root workspace; DB
   created+deployed+verified. **Additive — nothing wired in yet, sym unchanged, zero behavior change.**
-- [ ] **P2 — Invert the circular dep + move the membership domain** (the big phase; see design below).
-- [ ] **P3 — Migrate data (7 tables sym→universe) + rewire consumers cross-DB (roster-fetch).**
-- [ ] **P4 — Drop the 7 tables from sym (drop universe_benchmark's universe_id FK → soft ref) + verify.**
+- [x] **P2 — Invert the circular dep + move the membership domain (DONE, committed `184cfb0`)**:
+  13 modules + 8 providers moved to `packages/universe`; `Resolver` protocol (universe owns it) +
+  `SymResolver` adapter (sym); monitor/refresh/accuracy/gating take the injected resolver; universe
+  imports nothing from sym (guard clean); `universe.db` pins `search_path=universe`.
+- [x] **P3 — Migrate data + rewire the CORE consumers (DONE, committed `184cfb0`)**: 7 tables copied
+  sym→universe (counts verified; fixed 2 column drifts first_seen_date/as_of_date); rewired sym cli
+  universe subcommands, eod monitor step, ingest price-load bridge (roster-fetch), backtest/signals
+  `_members`. Topology contract updated (universe relations → peer reads). Suites green: universe 153,
+  sym 641, backtest 39, signals 14, lineage+api 215; ruff clean.
+- [ ] **P4 — Cut over the READ-ONLY consumers + drop from sym (REMAINING)**: rewire to the universe DB
+  — `validate/{completeness,projection,readiness,plans}` (the EOD gate; completeness/readiness are
+  cross-DB roster-fetch + write `universe_member_completeness` in sym), `api modules/sym/gateway`
+  (~8 universe reads: explorer/coverage/members/proposals → inject a universe conn like fx `_fx()`),
+  `api modules/data_monitor` (universe bucket + breakdown), `indices/links.py` (members + benchmark),
+  `fundamentals.resolved_member_figis`. THEN a sym migration dropping the 7 tables (universe_benchmark
+  stays; drop its universe_id FK → soft ref) + no-op the stale verify scripts + remove from
+  SYM_READ_SURFACE grants. Until P4, those consumers read sym's still-present tables (system works;
+  AC#3 not yet met).
 
 ### Refined design from the coupling map (Explore, 2026-06-24) — READ BEFORE P2
 The map CONFIRMS approach B and sharpens the module split. The inversion is deeper than "inject one
