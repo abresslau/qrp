@@ -132,18 +132,20 @@ class DbRatesGateway:
         base = {"country": country, "curve_set": curve_set, "basis": basis, "rate_type": rate_type,
                 "vintage": vintage}
         if anchored is None:
-            return {**base, "as_of_date": None, "points": []}
+            return {**base, "as_of_date": None, "source": None, "points": []}
         value_col = "first_value" if vintage == "first" else "value"
         rows = self._conn.execute(
             f"""
-            SELECT tenor, {value_col} FROM rates.curve_point
+            SELECT tenor, {value_col}, source FROM rates.curve_point
              WHERE country=%s AND curve_set=%s AND basis=%s AND rate_type=%s AND as_of_date=%s
              ORDER BY tenor
             """,
             (country, curve_set, basis, rate_type, anchored),
         ).fetchall()
-        return {**base, "as_of_date": anchored.isoformat(),
-                "points": [{"tenor": float(t), "value": float(v)} for t, v in rows]}
+        # provenance: all nodes of one series/day share a source; surface it for the UI.
+        source = rows[0][2] if rows else None
+        return {**base, "as_of_date": anchored.isoformat(), "source": source,
+                "points": [{"tenor": float(t), "value": float(v)} for t, v, _ in rows]}
 
     # ---- cross-country comparison ------------------------------------------------------------
 
@@ -166,7 +168,8 @@ class DbRatesGateway:
             out.append({
                 "country": c, "currency": cur[0] if cur else None,
                 "curve_set": cs, "basis": b, "rate_type": rt,
-                "as_of_date": curve["as_of_date"], "points": curve["points"],
+                "as_of_date": curve["as_of_date"], "source": curve["source"],
+                "points": curve["points"],
             })
         return out
 

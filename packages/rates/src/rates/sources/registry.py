@@ -14,6 +14,7 @@ from .base import CurveSource
 from .boc import BocCurveSource
 from .bundesbank import BundesbankCurveSource
 from .ecb import EcbLongTermRateSource, EcbYieldCurveSource
+from .fed_gsw import FedGswCurveSource
 from .hkma import HkmaCurveSource
 from .mof_jp import MofJgbCurveSource
 from .norgesbank import NorgesBankCurveSource
@@ -25,24 +26,26 @@ from .tesouro import TesouroCurveSource
 from .ustreasury import UsTreasuryCurveSource
 
 
-def build_registry() -> dict[str, CurveSource]:
-    """Fresh source instances keyed by ISO-3166 alpha-2 (insertion order = load order)."""
+def build_registry() -> dict[str, list[CurveSource]]:
+    """Fresh source instances keyed by ISO-3166 alpha-2 (insertion order = load order). A country
+    may have MORE THAN ONE source — the US carries both the official Treasury CMT par curve and the
+    Fed GSW fitted nominal/real/inflation curves, each tagged with its own ``source`` provenance."""
     return {
-        "DE": BundesbankCurveSource(),     # most important euro member first
-        "EU": EcbYieldCurveSource(),       # euro-area aggregate (full Svensson spot curve)
-        "FR": EcbLongTermRateSource("FR"),
-        "IT": EcbLongTermRateSource("IT"),
-        "ES": EcbLongTermRateSource("ES"),
-        "US": UsTreasuryCurveSource(),
-        "JP": MofJgbCurveSource(),
-        "CH": SnbCurveSource(),
-        "CA": BocCurveSource(),
-        "AU": RbaCurveSource(),
-        "NZ": RbnzCurveSource(),
-        "SE": RiksbankCurveSource(),
-        "NO": NorgesBankCurveSource(),
-        "HK": HkmaCurveSource(),
-        "BR": TesouroCurveSource(),
+        "DE": [BundesbankCurveSource()],   # most important euro member first
+        "EU": [EcbYieldCurveSource()],     # euro-area aggregate (full Svensson spot curve)
+        "FR": [EcbLongTermRateSource("FR")],
+        "IT": [EcbLongTermRateSource("IT")],
+        "ES": [EcbLongTermRateSource("ES")],
+        "US": [UsTreasuryCurveSource(), FedGswCurveSource()],  # CMT par + Fed GSW fitted curves
+        "JP": [MofJgbCurveSource()],
+        "CH": [SnbCurveSource()],
+        "CA": [BocCurveSource()],
+        "AU": [RbaCurveSource()],
+        "NZ": [RbnzCurveSource()],
+        "SE": [RiksbankCurveSource()],
+        "NO": [NorgesBankCurveSource()],
+        "HK": [HkmaCurveSource()],
+        "BR": [TesouroCurveSource()],
     }
 
 

@@ -91,28 +91,31 @@ def _cmd_curve_load_world(args: argparse.Namespace) -> int:
 
     ok = 0
     failed: list[str] = []
-    print(f"rates curve load-world ({len(registry)} countries; "
+    total_sources = sum(len(v) for v in registry.values())
+    print(f"rates curve load-world ({len(registry)} countries, {total_sources} sources; "
           f"start={start_date or 'full-history'} end={end_date}):")
-    for code, source in registry.items():
-        try:
-            # archive backfill semantics: these APIs return full history, never gate as a tail.
-            # Wider band than the daily tail (20pp): a one-time backfill of monthly/sparse official
-            # series must not reject real moves — only gross corruption (decimal shifts) is caught.
-            summary = fill_curve(
-                conn, source, end_date=end_date, start_date=start_date, tail=False, band_pp=20.0
-            )
-            print(f"  [ ok ] {code:3} {source.SOURCE:12} "
-                  f"[{summary.start_date}..{summary.end_date}] days={summary.days} "
-                  f"inserted={summary.inserted} restated={summary.restated} "
-                  f"skipped={summary.skipped_existing} flagged={summary.flagged}")
-            ok += 1
-        except Exception as exc:  # noqa: BLE001 — attempt-all: never let one source block the rest
-            failed.append(code)
-            print(f"  [FAIL] {code:3} {source.SOURCE:12} {type(exc).__name__}: {exc}",
-                  file=sys.stderr)
+    # attempt-all is per (country, source): one source failing never blocks the country's others.
+    for code, sources in registry.items():
+        for source in sources:
+            try:
+                # archive backfill semantics: these APIs return full history, never gate as a tail.
+                # Wider band than the daily tail (20pp): a one-time backfill of monthly/sparse
+                # official series must not reject real moves — only gross corruption (decimals).
+                summary = fill_curve(
+                    conn, source, end_date=end_date, start_date=start_date, tail=False, band_pp=20.0
+                )
+                print(f"  [ ok ] {code:3} {source.SOURCE:12} "
+                      f"[{summary.start_date}..{summary.end_date}] days={summary.days} "
+                      f"inserted={summary.inserted} restated={summary.restated} "
+                      f"skipped={summary.skipped_existing} flagged={summary.flagged}")
+                ok += 1
+            except Exception as exc:  # noqa: BLE001 — attempt-all: one source never blocks the rest
+                failed.append(f"{code}/{source.SOURCE}")
+                print(f"  [FAIL] {code:3} {source.SOURCE:12} {type(exc).__name__}: {exc}",
+                      file=sys.stderr)
     conn.close()
     tail = f"; failed: {', '.join(failed)}" if failed else ""
-    print(f"done: {ok}/{len(registry)} loaded{tail}")
+    print(f"done: {ok}/{total_sources} loaded{tail}")
     return 2 if failed and ok == 0 else 0
 
 

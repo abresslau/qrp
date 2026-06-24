@@ -17,6 +17,7 @@ type Curve = {
   rate_type: string;
   vintage: string;
   as_of_date: string | null;
+  source?: string | null;
   points: CurvePoint[];
 };
 type Series = {
@@ -41,6 +42,7 @@ type CompareCurve = {
   basis: string;
   rate_type: string;
   as_of_date: string | null;
+  source?: string | null;
   points: CurvePoint[];
 };
 type SparkPoint = { as_of_date: string; value: number };
@@ -70,11 +72,38 @@ const CCOLOR: Record<string, string> = {
 const cLabel = (c: string) => CNAME[c] ?? c;
 const cColor = (c: string) => CCOLOR[c] ?? "#64748b";
 
+// Human label for the data provenance tag stored on each curve (rates.curve_point.source).
+const SOURCE_LABEL: Record<string, string> = {
+  boe: "Bank of England",
+  fed_gsw: "Federal Reserve (GSW fitted curve)",
+  ustreasury: "US Treasury (CMT)",
+  bundesbank: "Deutsche Bundesbank",
+  ecb: "European Central Bank",
+  mof_jp: "Japan MoF",
+  snb: "Swiss National Bank",
+  boc: "Bank of Canada",
+  rba: "Reserve Bank of Australia",
+  rbnz: "Reserve Bank of New Zealand",
+  riksbank: "Sveriges Riksbank",
+  norgesbank: "Norges Bank",
+  hkma: "Hong Kong Monetary Authority",
+  tesouro: "Tesouro Nacional",
+};
+const sourceLabel = (s: string | null | undefined): string | null =>
+  s ? (SOURCE_LABEL[s] ?? s) : null;
+
 // Preferred ordering when a country publishes several series — its richest nominal curve wins.
+// Fitted spot curves (BoE GLC, Fed GSW) rank above raw par/market-yield sets.
 const CS_RANK = (c: string) => {
-  const i = ["glc", "govt", "ois", "irs"].indexOf(c);
+  const i = ["glc", "gsw", "govt", "govt_all", "ois", "irs"].indexOf(c);
   return i < 0 ? 9 : i;
 };
+// Friendly curve-set labels (the raw token is the chip's tooltip): acronyms upper-cased, the ECB
+// all-bonds universe spelled out. Falls back to the upper-cased token.
+const CSET_LABEL: Record<string, string> = {
+  glc: "GLC", gsw: "GSW", ois: "OIS", irs: "IRS", govt: "Govt", govt_all: "All bonds",
+};
+const csetLabel = (c: string) => CSET_LABEL[c] ?? c.toUpperCase();
 const RT_RANK = (c: string) => {
   const i = ["spot", "par", "yield", "forward"].indexOf(c);
   return i < 0 ? 9 : i;
@@ -128,15 +157,21 @@ const PAD_B = 30;
 type CurveLine = { points: CurvePoint[]; stroke: string; width: number; label: string; opacity?: number };
 type Hover = { tenor: number; px: number; py: number; flip: boolean };
 
-// linear interpolation of a curve's value at tenor t (for benchmark node markers); null outside range
+// Interpolate a curve's value at tenor t (for benchmark node markers / hover / tooltip); null outside
+// range. Interpolation is linear in √tenor — NOT in tenor — because the curve is rendered with a
+// √-scaled x axis (see sx() below), so each segment is a straight screen line in √tenor space.
+// Interpolating in plain tenor here would place markers off the drawn line at every off-node tenor.
 function valueAtTenor(points: CurvePoint[], t: number): number | null {
   const pts = [...points].sort((a, b) => a.tenor - b.tenor);
   if (pts.length === 0 || t < pts[0].tenor || t > pts[pts.length - 1].tenor) return null;
+  const s = (x: number) => Math.sqrt(Math.max(x, 0));
   for (let i = 1; i < pts.length; i++) {
     if (pts[i].tenor >= t) {
       const a = pts[i - 1];
       const b = pts[i];
-      return b.tenor === a.tenor ? a.value : a.value + ((b.value - a.value) * (t - a.tenor)) / (b.tenor - a.tenor);
+      const sa = s(a.tenor);
+      const sb = s(b.tenor);
+      return sb === sa ? a.value : a.value + ((b.value - a.value) * (s(t) - sa)) / (sb - sa);
     }
   }
   return pts[pts.length - 1].value;
@@ -466,7 +501,17 @@ function HistoryChart({ hist }: { hist: SpreadHistory }) {
   );
 }
 
-function Seg<T extends string>({ value, options, onChange }: { value: T; options: readonly T[]; onChange: (v: T) => void }) {
+function Seg<T extends string>({
+  value,
+  options,
+  onChange,
+  label,
+}: {
+  value: T;
+  options: readonly T[];
+  onChange: (v: T) => void;
+  label?: (v: T) => string;
+}) {
   return (
     <div className="inline-flex overflow-hidden rounded-md border border-border text-xs">
       {options.map((o) => (
@@ -474,9 +519,10 @@ function Seg<T extends string>({ value, options, onChange }: { value: T; options
           key={o}
           type="button"
           onClick={() => onChange(o)}
-          className={`px-2.5 py-1 capitalize ${value === o ? "bg-fg/10 font-medium text-fg" : "text-muted hover:bg-fg/5"}`}
+          title={o}
+          className={`px-2.5 py-1 ${label ? "" : "capitalize"} ${value === o ? "bg-fg/10 font-medium text-fg" : "text-muted hover:bg-fg/5"}`}
         >
-          {o}
+          {label ? label(o) : o}
         </button>
       ))}
     </div>
@@ -497,8 +543,9 @@ export default function RatesPage() {
   const [compareCurves, setCompareCurves] = useState<Record<string, Curve>>({});
   const cmpAbort = useRef<AbortController | null>(null);
 
-  // cross-country comparison: overlay several countries' latest primary curves on one tenor axis
-  const [xcCountries, setXcCountries] = useState<Set<string>>(new Set(["GB"]));
+  // cross-country comparison: overlay other countries' headline curves on the SAME chart as the
+  // primary country's selected series (no separate chart). Starts empty — opt-in via the chips.
+  const [xcCountries, setXcCountries] = useState<Set<string>>(new Set());
   const [xcCurves, setXcCurves] = useState<CompareCurve[]>([]);
   const xcAbort = useRef<AbortController | null>(null);
 
@@ -813,31 +860,22 @@ export default function RatesPage() {
     const overlays = COMPARE_OFFSETS.filter((o) => compare.has(o.key) && compareCurves[o.key]).map(
       (o): CurveLine => ({ points: compareCurves[o.key].points, stroke: o.color, width: 1.3, label: o.key }),
     );
+    // cross-country overlays: each other country's headline curve, its own colour. Single-point
+    // countries (FR/IT/ES publish only a 10y) can't draw a line but render as a labelled marker.
+    const countryOverlays: CurveLine[] = xcCurves
+      .filter((c) => c.country !== country && c.points.length >= 1)
+      .map((c) => ({ points: c.points, stroke: cColor(c.country), width: 1.6, label: cLabel(c.country) }));
     return [
       ...overlays,
+      ...countryOverlays,
       { points: curve?.points ?? [], stroke: "currentColor", width: 1.8, label: "Latest" },
     ];
-  }, [playing, movie, frameIdx, curve, compare, compareCurves, movieDomains]);
+  }, [movie, frameIdx, curve, compare, compareCurves, movieDomains, xcCurves, country]);
 
-  // cross-country compare: one line per selected country, its own colour, on the shared tenor axis.
-  // keep single-point countries (FR/IT/ES publish only a 10y) — they can't draw a line but the
-  // chart renders them as a labelled node marker, so toggling them on isn't a dead click.
-  const xcLines: CurveLine[] = useMemo(
-    () =>
-      xcCurves
-        .filter((c) => c.points.length >= 1)
-        .map((c) => ({
-          points: c.points,
-          stroke: cColor(c.country),
-          width: 1.8,
-          label: cLabel(c.country),
-        })),
-    [xcCurves],
-  );
   // countries the user picked that have no full curve to draw (single tenor only) — surfaced as a note.
   const xcPointOnly = useMemo(
-    () => xcCurves.filter((c) => c.points.length === 1).map((c) => cLabel(c.country)),
-    [xcCurves],
+    () => xcCurves.filter((c) => c.country !== country && c.points.length === 1).map((c) => cLabel(c.country)),
+    [xcCurves, country],
   );
   const toggleXc = (code: string) =>
     setXcCountries((prev) => {
@@ -879,7 +917,7 @@ export default function RatesPage() {
       <section className="relative mb-5 rounded-xl border border-border bg-surface p-4">
         <div className="mb-3 flex flex-wrap items-center gap-3">
           {curveSetOptions.length > 1 ? (
-            <Seg value={curveSet} options={curveSetOptions} onChange={setCurveSet} />
+            <Seg value={curveSet} options={curveSetOptions} onChange={setCurveSet} label={csetLabel} />
           ) : null}
           {basisOptions.length > 1 ? (
             <Seg value={basis} options={basisOptions} onChange={setBasis} />
@@ -924,7 +962,7 @@ export default function RatesPage() {
             ))}
           </div>
           <div className="ml-auto flex items-center gap-1.5">
-            <span className="mr-0.5 text-xs text-muted">vs</span>
+            <span className="mr-0.5 text-xs text-muted">vs date</span>
             {COMPARE_OFFSETS.map((o) => {
               const on = compare.has(o.key);
               return (
@@ -943,6 +981,30 @@ export default function RatesPage() {
               );
             })}
           </div>
+        </div>
+        {/* cross-country overlays — each compared country's headline curve drawn on this same chart */}
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="mr-0.5 text-xs text-muted">vs country</span>
+          {(countries.length ? countries.map((c) => c.country) : [])
+            .filter((code) => code !== country)
+            .map((code) => {
+              const on = xcCountries.has(code);
+              return (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => toggleXc(code)}
+                  className={`rounded-md border px-2 py-0.5 text-xs tabular-nums transition ${
+                    on ? "font-medium" : "border-border text-muted hover:text-fg"
+                  }`}
+                  style={on ? { borderColor: cColor(code), color: cColor(code) } : undefined}
+                  aria-pressed={on}
+                >
+                  {code}
+                </button>
+              );
+            })}
+          {playing ? <span className="text-xs text-muted/60">(hidden during timelapse)</span> : null}
         </div>
         {curveErr ? (
           <p className="text-sm text-rose-500">Could not load curve: {curveErr}</p>
@@ -978,10 +1040,34 @@ export default function RatesPage() {
               {compareCurves[o.key]?.as_of_date ? ` · ${compareCurves[o.key].as_of_date}` : " · …"}
             </span>
           ))}
+          {xcCurves
+            .filter((c) => c.country !== country && xcCountries.has(c.country))
+            .map((c) => (
+              <span key={c.country} className="flex items-center gap-1.5 text-muted">
+                <span className="inline-block h-0.5 w-4" style={{ backgroundColor: cColor(c.country) }} />
+                {cLabel(c.country)}
+                {c.as_of_date ? ` · ${c.as_of_date}` : ""}
+              </span>
+            ))}
         </div>
         <div className="mt-1 text-right text-xs text-muted">
-          {cLabel(country)} · {curveSet.toUpperCase()} {basis} {rateType} · % per annum
+          {cLabel(country)} · {csetLabel(curveSet)} {basis} {rateType} · % per annum
+          {sourceLabel(curve?.source) ? ` · source: ${sourceLabel(curve?.source)}` : ""}
         </div>
+        {xcCountries.size > 0 ? (
+          <p className="mt-1 text-xs text-muted">
+            Country overlays show each country&apos;s headline nominal government curve as published
+            (spot/par/yield differ by source) — a standardized level comparison, not a like-for-like
+            methodology match.
+            {xcPointOnly.length > 0 ? (
+              <>
+                {" "}
+                {xcPointOnly.join(", ")} publish{xcPointOnly.length === 1 ? "es" : ""} only a 10y
+                point (ECB) — shown as a marker, not a curve.
+              </>
+            ) : null}
+          </p>
+        ) : null}
       </section>
 
       <section>
@@ -1042,65 +1128,6 @@ export default function RatesPage() {
             <HistoryChart hist={hist} />
           </div>
         ) : null}
-      </section>
-
-      <section className="mt-6">
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted">
-          Compare across countries
-        </h2>
-        <div className="rounded-xl border border-border bg-surface p-4">
-          <div className="mb-3 flex flex-wrap items-center gap-1.5">
-            {(countries.length ? countries.map((c) => c.country) : [country]).map((code) => {
-              const on = xcCountries.has(code);
-              return (
-                <button
-                  key={code}
-                  type="button"
-                  onClick={() => toggleXc(code)}
-                  className={`rounded-md border px-2 py-0.5 text-xs tabular-nums transition ${
-                    on ? "font-medium" : "border-border text-muted hover:text-fg"
-                  }`}
-                  style={on ? { borderColor: cColor(code), color: cColor(code) } : undefined}
-                  aria-pressed={on}
-                >
-                  {code}
-                </button>
-              );
-            })}
-          </div>
-          {xcLines.length >= 1 ? (
-            <CurveChart lines={xcLines} />
-          ) : (
-            <p className="text-sm text-muted">Select one or more countries to overlay their curves.</p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-            {xcCurves.map((c) => (
-              <span key={c.country} className="flex items-center gap-1.5 text-muted">
-                <span
-                  className="inline-block h-0.5 w-4"
-                  style={{ backgroundColor: cColor(c.country) }}
-                />
-                {cLabel(c.country)}
-                <span className="text-muted/70">
-                  · {c.rate_type}
-                  {c.as_of_date ? ` · ${c.as_of_date}` : ""}
-                </span>
-              </span>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            Each line is the country&apos;s headline nominal government curve as published
-            (spot/par/yield differ by source) — a standardized level comparison, not a like-for-like
-            methodology match.
-            {xcPointOnly.length > 0 ? (
-              <>
-                {" "}
-                {xcPointOnly.join(", ")} publish{xcPointOnly.length === 1 ? "es" : ""} only a 10y
-                point (ECB) — shown as a marker, not a curve.
-              </>
-            ) : null}
-          </p>
-        </div>
       </section>
 
       <p className="mt-4 text-xs text-muted">
