@@ -118,6 +118,42 @@ class BacktestRunResult(BaseModel):
     error: str | None = None
 
 
+class SweepRequest(BaseModel):
+    """A parameter-grid sweep (Story 1B): fixed base params + a grid of varied run-kwargs.
+
+    ``grid`` keys are run parameters (e.g. ``top_pct``, ``rebalance``, ``cost_bps``, ``factor``);
+    the cartesian product is the trial set whose size N feeds the Deflated Sharpe / MinBTL.
+    """
+
+    factor: str = "mom_12_1"
+    universe: str = "sp500"
+    weighting: str = "equal"
+    rebalance: str = "monthly"
+    cost_bps: float = Field(default=10.0, ge=0, le=1000, allow_inf_nan=False)
+    start_date: date | None = None
+    end_date: date | None = None
+    grid: dict[str, list] = Field(..., description="{run_param: [values, ...]}")
+    n_splits: int = Field(default=16, ge=4, le=20)
+
+
+class SweepResult(BaseModel):
+    ok: bool
+    sweep_id: int | None = None
+    n_configs: int | None = None
+    summary: dict | None = None
+    error: str | None = None
+
+
+class SweepSummary(BaseModel):
+    sweep_id: int
+    created_at: str | None
+    base_spec: dict | None
+    grid: dict | None
+    n_configs: int
+    best_run_id: int | None = None
+    summary: dict | None = None
+
+
 @router.post("/run", response_model=BacktestRunResult)
 def run_backtest_ep(
     body: BacktestRunRequest = Body(...), gw: DbBacktestGateway = Depends(_gateway)
@@ -177,6 +213,77 @@ def run_backtest_ep(
         return {"ok": False, "run_id": None, "portfolio_id": None, "error": res["error"]}
     return {"ok": True, "run_id": res["run_id"], "portfolio_id": res.get("portfolio_id"),
             "error": None}
+
+
+@router.post("/sweep", response_model=SweepResult)
+def run_sweep_ep(
+    body: SweepRequest = Body(...), gw: DbBacktestGateway = Depends(_gateway)
+) -> dict:
+    from signals.compute import required_modules
+
+    grid = {("universe_id" if k == "universe" else k): v for k, v in body.grid.items()}
+    if not grid:
+        raise HTTPException(status_code=422, detail="grid must vary at least one parameter")
+    base_spec = {
+        "factor": body.factor, "universe_id": body.universe, "weighting": body.weighting,
+        "rebalance": body.rebalance, "cost_bps": body.cost_bps,
+        "start_date": body.start_date, "end_date": body.end_date,
+    }
+    # a grid key overrides the fixed base value for that parameter
+    for k in grid:
+        base_spec.pop(k, None)
+
+    # every factor the sweep might touch (fixed + any varied in the grid) determines which
+    # input-module connections to open — same AR-R2 pattern as /run.
+    factors = {body.factor, *(str(f) for f in grid.get("factor", []))}
+    module_kwarg = {"altdata": "alt_conn", "macro": "macro_conn"}
+    needed: set[str] = set()
+    for f in factors:
+        try:
+            needed |= required_modules(f)
+        except ValueError as exc:  # unknown factor
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    unsupported = needed - set(module_kwarg)
+    if unsupported:
+        raise HTTPException(
+            status_code=422,
+            detail=f"factor(s) require unsupported module(s): {sorted(unsupported)}")
+
+    extra_conns: list = []
+    module_conns: dict = {}
+    try:
+        for module in sorted(needed):
+            try:
+                c = connect(module)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"input module {module!r} unavailable: {type(exc).__name__}",
+                ) from exc
+            extra_conns.append(c)
+            module_conns[module_kwarg[module]] = c
+        res = gw.sweep(base_spec, grid, n_splits=body.n_splits, **module_conns)
+    finally:
+        for c in extra_conns:
+            c.close()
+    if "error" in res:
+        return {"ok": False, "sweep_id": None, "n_configs": None, "summary": None,
+                "error": res["error"]}
+    return {"ok": True, "sweep_id": res.get("sweep_id"), "n_configs": res.get("n_configs"),
+            "summary": res.get("summary"), "error": None}
+
+
+@router.get("/sweeps", response_model=list[SweepSummary])
+def list_sweeps(gw: DbBacktestGateway = Depends(_gateway)) -> list[dict]:
+    return gw.sweeps()
+
+
+@router.get("/sweeps/{sweep_id}", response_model=SweepSummary)
+def get_sweep(sweep_id: int, gw: DbBacktestGateway = Depends(_gateway)) -> dict:
+    s = gw.get_sweep(sweep_id)
+    if s is None:
+        raise HTTPException(status_code=404, detail="sweep not found")
+    return s
 
 
 @router.get("/runs", response_model=list[RunSummary])

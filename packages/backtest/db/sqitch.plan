@@ -4,3 +4,4 @@
 
 backtest 2026-06-08T16:30:00Z Andre <ab@gladstone-management.com> # backtest schema: walk-forward run config + equity-curve points, own database
 strategy_spec [backtest] 2026-06-11T21:00:00Z Andre <ab@gladstone-management.com> # FR-18: full strategy spec JSONB on run (reproducibility)
+sweep [strategy_spec] 2026-06-24T08:00:00Z Andre <ab@gladstone-management.com> # 1B: parameter-grid sweep + DSR/PBO/MinBTL overfitting stats

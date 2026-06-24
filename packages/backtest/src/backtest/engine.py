@@ -193,6 +193,7 @@ def run_backtest(
     start_date: date | None = None,
     end_date: date | None = None,
     cost_bps: float = 10.0,
+    return_daily: bool = False,
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
 ) -> dict:
@@ -412,9 +413,14 @@ def run_backtest(
         for d in rebals
         if weights_at[d]
     }
-    return {"run_id": int(run_id), "factor": factor, "universe_id": universe_id,
-            "spec": spec, "n_days": len(common), "n_rebalances": len(rebals),
-            "summary": summary, "weight_vectors": weight_vectors}
+    out = {"run_id": int(run_id), "factor": factor, "universe_id": universe_id,
+           "spec": spec, "n_days": len(common), "n_rebalances": len(rebals),
+           "summary": summary, "weight_vectors": weight_vectors}
+    if return_daily:
+        # the headline daily return series (net when costed) aligned to `common` — the raw
+        # series a sweep needs for Deflated Sharpe / PBO (the sampled curve is too lossy).
+        out["daily"] = [[d.isoformat(), headline[i]] for i, d in enumerate(common)]
+    return out
 
 
 if __name__ == "__main__":
