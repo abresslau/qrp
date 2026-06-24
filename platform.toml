@@ -12,7 +12,7 @@ theme = "dark"
 # boards over existing sym/portfolios data) — it has no backend router, so nothing is mounted for it.
 [[modules]]
 key = "monitor"
-name = "monitor"
+name = "Monitor"
 description = "Market boards — world equity indices, heat map, portfolio live"
 enabled = true
 
@@ -26,66 +26,66 @@ enabled = true
 
 [[modules]]
 key = "sym"
-name = "sym"
+name = "Sym"
 description = "Security master · prices · returns · FX · fundamentals"
 enabled = true
 
 [[modules]]
 key = "macro"
-name = "macro"
+name = "Macro"
 description = "Macroeconomic / central-bank data"
 enabled = true
 
 [[modules]]
 key = "rates"
-name = "rates"
+name = "Rates"
 description = "Fixed-income yield curves (Bank of England UK curves)"
 enabled = true
 
 [[modules]]
 key = "commodities"
-name = "commodities"
+name = "Commodities"
 description = "Daily commodity prices — energy, metals, agriculture, softs, livestock"
 enabled = true
 
 [[modules]]
 key = "altdata"
-name = "alt data"
+name = "Alt Data"
 description = "Alternative data"
 enabled = true
 
 [[modules]]
 key = "signals"
-name = "signals"
+name = "Signals"
 description = "Derived signals & factors"
 enabled = true
 
 [[modules]]
 key = "backtest"
-name = "backtest"
+name = "Backtest"
 description = "Backtesting"
 enabled = true
 
 [[modules]]
 key = "optimiser"
-name = "optimiser"
+name = "Optimiser"
 description = "Optimisation"
 enabled = true
 
 [[modules]]
 key = "portfolios"
-name = "portfolios"
+name = "Portfolios"
 description = "Clients & portfolios"
 enabled = true
 
 [[modules]]
 key = "analytics"
-name = "analytics"
+name = "Analytics"
 description = "Portfolio analytics"
 enabled = true
 
 [[modules]]
 key = "lineage"
-name = "lineage"
+name = "Lineage"
 description = "Data lineage & catalog (Dagster) — what feeds what, across packages"
 enabled = true
