@@ -64,7 +64,8 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
     checks: list[tuple[str, object]] = [
         ("completeness",                                                        # V1 (cross-DB)
          lambda: _with_universe(lambda u: evaluate_completeness(conn, u, universe_id))),
-        ("referential_integrity", lambda: check_referential_integrity(conn)),  # V2
+        ("referential_integrity",                                              # V2 (cross-DB seams)
+         lambda: _with_universe(lambda u: check_referential_integrity(conn, u))),
         ("equity_instrument_bridge",                                            # B7 — 1:1 bridge
          lambda: check_equity_instrument_bridge(conn)),
         ("identity_completeness", lambda: check_identity_completeness(conn)),  # V3
