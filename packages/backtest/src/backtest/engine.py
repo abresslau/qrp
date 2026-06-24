@@ -196,15 +196,22 @@ def run_backtest(
     return_daily: bool = False,
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
+    universe_conn: psycopg.Connection | None = None,
 ) -> dict:
     """Run the spec'd strategy. The full spec persists on the run (FR-18 reproducibility).
 
     Selection: ``top_pct`` XOR ``top_n`` — both given is an ERROR (no silent
     preference); neither given falls back to the documented top-quintile default.
     ``alt_conn``/``macro_conn`` are required only when the chosen factor's declared
-    inputs need them (signals.required_modules).
+    inputs need them (signals.required_modules). ``universe_conn`` reads point-in-time
+    membership from the universe package's own DB (defaults to opening one).
     """
     conn = sym_conn  # all sym reads below
+    if universe_conn is None:
+        from universe.db import connect as _u_connect
+
+        universe_conn = _u_connect()
+    u_conn = universe_conn  # membership reads (its own DB)
     bt_conn.autocommit = True
     try:
         direction = factor_direction(factor)
@@ -221,7 +228,7 @@ def run_backtest(
     if top_pct is None and top_n is None:
         top_pct = DEFAULT_TOP_PCT  # the documented top-quintile default
 
-    members = _members(conn, universe_id)  # all-ever: calendar + data range only
+    members = _members(u_conn, universe_id)  # all-ever: calendar + data range only
     if not members:
         return {"error": f"unknown or empty universe {universe_id!r}"}
     rng = conn.execute(
@@ -251,7 +258,7 @@ def run_backtest(
     members_at: dict[date, list[str]] = {}
     dropped_no_mcap = 0
     for d in all_rebals:
-        mem = _members(conn, universe_id, d)  # point-in-time roster — no survivorship bias
+        mem = _members(u_conn, universe_id, d)  # point-in-time roster — no survivorship bias
         if not mem:
             continue
         try:

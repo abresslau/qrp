@@ -31,8 +31,16 @@ def _load_env() -> None:
 
 
 def connect(dbname: str | None = None) -> psycopg.Connection:
-    """Connect to this package's own database on the shared instance (PG* env supplies the rest)."""
+    """Connect to this package's own database on the shared instance (PG* env supplies the rest).
+
+    The ``search_path`` is pinned to the ``universe`` schema (then ``public`` for the shared
+    extensions), so the domain modules address their tables by bare name (``universe_membership``,
+    ``membership_event``, …) and resolve to ``universe.*`` — the membership SQL moved out of sym
+    verbatim. External readers (data-monitor, backtest, signals) schema-qualify instead.
+    """
     _load_env()
     name = dbname or os.environ.get(f"{_OWN.upper()}_DB_NAME", _OWN)
     target = os.environ.get(f"{name.upper()}_DATABASE_URL") or f"dbname={name}"
-    return psycopg.connect(target, connect_timeout=5)
+    conn = psycopg.connect(target, connect_timeout=5)
+    conn.execute("SET search_path TO universe, public")
+    return conn

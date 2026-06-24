@@ -34,7 +34,7 @@ FACTORS = {
         "description": "Trailing 12-month price return excluding the most recent month "
         "(winsorised at 1/99 pct).",
         "direction": "high",
-        "inputs": ["sym:fact_returns:1Y", "sym:fact_returns:1M", "sym:universe_membership"],
+        "inputs": ["sym:fact_returns:1Y", "sym:fact_returns:1M", "universe:universe_membership"],
         "method": "(1+pr_1Y)/(1+pr_1M)-1 per name as of the scoring date; winsorised 1/99; "
         "direction high (recent-year winners ex the last month favoured).",
     },
@@ -43,7 +43,7 @@ FACTORS = {
         "description": "Annualised standard deviation of daily price returns (low-vol factor; "
         "winsorised at 1/99 pct).",
         "direction": "low",
-        "inputs": ["sym:fact_returns:1D", "sym:universe_membership"],
+        "inputs": ["sym:fact_returns:1D", "universe:universe_membership"],
         "method": "stddev of daily pr over the 365 days up to the scoring date x sqrt(252), "
         ">=60 obs; winsorised 1/99; direction low (the low-vol factor).",
     },
@@ -51,7 +51,7 @@ FACTORS = {
         "name": "Size",
         "description": "Market capitalisation (USD); the size factor favours smaller names.",
         "direction": "low",
-        "inputs": ["sym:fundamentals:market_cap_usd", "sym:universe_membership"],
+        "inputs": ["sym:fundamentals:market_cap_usd", "universe:universe_membership"],
         "method": "latest market_cap_usd on or before the scoring date; winsorised 1/99; "
         "direction low (smaller names favoured).",
     },
@@ -60,7 +60,7 @@ FACTORS = {
         "description": "7d/30d average Wikipedia pageviews — rising public attention "
         "(altdata-derived; curated-name coverage, sparse by honesty).",
         "direction": "high",
-        "inputs": ["altdata:wikipedia:pageviews", "sym:universe_membership"],
+        "inputs": ["altdata:wikipedia:pageviews", "universe:universe_membership"],
         "method": "mean daily pageviews over (as_of-7d, as_of] / mean over (as_of-30d, as_of]; "
         ">=5 and >=15 obs respectively, else absent; winsorised 1/99; direction high "
         "(rising attention favoured). Coverage limited to altdata's curated wiki map.",
@@ -70,7 +70,7 @@ FACTORS = {
         "description": "Absolute 1Y beta of daily returns to daily %-changes in US total "
         "public debt outstanding (macro UST:DEBT; low |beta| = insensitive/defensive).",
         "direction": "low",
-        "inputs": ["sym:fact_returns:1D", "macro:UST:DEBT", "sym:universe_membership"],
+        "inputs": ["sym:fact_returns:1D", "macro:UST:DEBT", "universe:universe_membership"],
         "method": "ABSOLUTE OLS beta |cov/var| of daily pr vs UST:DEBT daily %-change, matched "
         "on date over (as_of-365d, as_of], >=60 matched days, else absent; winsorised 1/99. "
         "Direction low favours genuinely insensitive names (|beta| near zero) — reading that "
@@ -91,7 +91,9 @@ def required_modules(factor_key: str) -> frozenset[str]:
     if factor_key not in FACTORS:
         raise ValueError(f"unknown factor {factor_key!r} (one of {sorted(FACTORS)})")
     modules = {ref.split(":", 1)[0] for ref in FACTORS[factor_key]["inputs"]}
-    return frozenset(modules - {"sym"})
+    # sym + universe are always-opened core reads (fact_returns/fundamentals + the member
+    # roster), not optional module connections the caller must gate on.
+    return frozenset(modules - {"sym", "universe"})
 
 
 def factor_direction(factor_key: str) -> str:
@@ -344,21 +346,27 @@ def compute_universe(
     as_of_date: date | None = None,
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
+    universe_conn: psycopg.Connection | None = None,
 ) -> dict:
     """Compute all factors for a universe as-of a date; write scores to the signals DB.
 
     Each input module is read over its OWN read-only connection (sym, altdata, macro —
     AR-R2 app-side assembly). A factor whose module connection was not supplied is
     SKIPPED and named on ``skipped`` with the reason — never silently zero-scored.
+    ``universe_conn`` reads point-in-time membership from the universe package's own DB.
     """
     sig_conn.autocommit = True
     _ensure_catalog(sig_conn)
+    if universe_conn is None:
+        from universe.db import connect as _u_connect
+
+        universe_conn = _u_connect()
     if as_of_date is None:
         as_of_date = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
         if as_of_date is None:
             return {"universe_id": universe_id, "as_of_date": None, "members": 0,
                     "scored": {}, "skipped": {}, "error": "no fact_returns data to score against"}
-    members = _members(sym_conn, universe_id, as_of_date)
+    members = _members(universe_conn, universe_id, as_of_date)
     counts = {
         "mom_12_1": _store(sig_conn, universe_id, as_of_date, "mom_12_1", "high",
                            _raw_momentum(sym_conn, members, as_of_date)),

@@ -14,8 +14,8 @@ from datetime import date
 
 import psycopg
 
-from sym.universe.projection import _membership_events, project_membership
-from sym.universe.registry import LEAVE
+from universe.projection import _membership_events, project_membership
+from universe.registry import LEAVE
 from sym.validate.results import CheckResult
 
 Intervals = dict[str, set[tuple[date, date | None]]]

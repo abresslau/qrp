@@ -9,11 +9,13 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "portfolios",   # save-as-portfolio writes a paper portfolio via the portfolios package
     "signals",      # the factor-definition seam (raw_factor) — Q9.4 signals→backtest
+    "universe",     # point-in-time universe membership (own DB) — _members roster-fetch
 ]
 
 [tool.uv.sources]
 portfolios = { workspace = true }
 signals = { workspace = true }
+universe = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

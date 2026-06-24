@@ -19,7 +19,7 @@ from datetime import date
 import psycopg
 
 from sym.identity.instrument import SRC_YAHOO, sym_id_for
-from sym.universe.query import members
+from universe.query import members
 
 # universe_id -> [(yahoo_symbol, role, is_primary)]. The yahoo symbol resolves to
 # the index instrument's sym_id (loaded by `sym indices`).

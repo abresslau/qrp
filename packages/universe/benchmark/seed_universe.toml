@@ -1,0 +1,485 @@
+# sym seed universe — the MVP security set (Story 1.5)
+#
+# This single committed file is, by design, three things at once:
+#   1. the MVP universe that identity resolution + price ingestion run against,
+#   2. the corporate-action fixture set the returns engine is tested with, and
+#   3. the SM-6 returns-accuracy benchmark set (PR/TR validated per-window
+#      against an independent published series).
+#
+# Names are chosen ADVERSARIALLY, not for market-cap coverage: each one stresses
+# a specific way returns math, identity resolution, or survivorship can go wrong.
+# A green run here is therefore strong evidence the engine handles the hard cases,
+# not just the liquid mega-caps. Keep the adversarial intent when editing — every
+# entry should still earn its place by exercising a named failure mode.
+#
+# Schema per entry ([[security]]):
+#   name      (str, required)  human-readable label
+#   category  (str, required)  the failure mode this name exercises (see sections)
+#   ticker    (str, optional)  exchange ticker; pair with `mic`
+#   mic       (str, optional)  ISO-10383 MIC of the listing the ticker trades on
+#   isin      (str, optional)  ISO-6166 identifier (exchange-independent)
+#   note      (str, optional)  why THIS name is adversarial / what to watch
+#
+# Rule: every entry MUST yield at least one valid resolution input — i.e. either
+# (ticker AND mic) or an isin. The loader enforces this; see src/sym/identity/universe.py.
+# All MICs used here are present in migrations/deploy/seed_reference_data.sql.
+
+# ---------------------------------------------------------------------------
+# baseline — liquid, well-behaved US large-caps. The CONTROL GROUP: if returns
+# are wrong on these, the bug is in the core path, not in corporate-action edge
+# handling. Also gives clean TR/PR series to anchor SM-6 tolerances against.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Microsoft Corp"
+category = "baseline"
+ticker = "MSFT"
+mic = "XNAS"
+isin = "US5949181045"
+note = "Clean dividend payer, no splits in the modern window — control for the happy path."
+
+[[security]]
+name = "Coca-Cola Co"
+category = "baseline"
+ticker = "KO"
+mic = "XNYS"
+isin = "US1912161007"
+note = "Dividend aristocrat; long uninterrupted quarterly dividend stream stresses TR compounding."
+
+[[security]]
+name = "Visa Inc Class A"
+category = "baseline"
+ticker = "V"
+mic = "XNYS"
+isin = "US92826C8394"
+note = "Multi-class issuer where only Class A trades publicly — sanity check that share-class logic does not over-trigger."
+
+[[security]]
+name = "Procter & Gamble Co"
+category = "baseline"
+ticker = "PG"
+mic = "XNYS"
+isin = "US7427181091"
+note = "Dividend aristocrat, decades of uninterrupted raises — long clean TR series to calibrate SM-6 tolerance."
+
+# ---------------------------------------------------------------------------
+# forward_split — n-for-1 splits. The classic PR/TR trap: unadjusted price drops
+# discontinuously on the split date, so a naive return shows a fake ~-75%/-95%.
+# Correct factor derivation must neutralize the split entirely (price-return ~0
+# across a pure split). Several here have MULTIPLE splits in the window.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Apple Inc"
+category = "forward_split"
+ticker = "AAPL"
+mic = "XNAS"
+isin = "US0378331005"
+note = "4:1 (2020) on top of earlier 7:1 (2014) — multiple forward splits; the canonical adjustment fixture."
+
+[[security]]
+name = "Tesla Inc"
+category = "forward_split"
+ticker = "TSLA"
+mic = "XNAS"
+isin = "US88160R1014"
+note = "5:1 (2020) then 3:1 (2022) — two splits close together stress cumulative-factor chaining."
+
+[[security]]
+name = "NVIDIA Corp"
+category = "forward_split"
+ticker = "NVDA"
+mic = "XNAS"
+isin = "US67066G1040"
+note = "4:1 (2021) and 10:1 (2024) — large ratios; magnifies any off-by-one in factor application."
+
+[[security]]
+name = "Amazon.com Inc"
+category = "forward_split"
+ticker = "AMZN"
+mic = "XNAS"
+isin = "US0231351067"
+note = "20:1 (2022) — extreme ratio; a single missed split here is a ~95% phantom move."
+
+[[security]]
+name = "Broadcom Inc"
+category = "forward_split"
+ticker = "AVGO"
+mic = "XNAS"
+isin = "US11135F1012"
+note = "10:1 (2024) plus a steadily-rising dividend — recent split combined with TR compounding."
+
+# ---------------------------------------------------------------------------
+# reverse_split — 1-for-n splits. Mirror image of forward: unadjusted price JUMPS
+# up on the date, so a naive return shows a fake large positive. Often correlated
+# with distress, so they co-occur with delistings and gaps — doubly adversarial.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "General Electric Co"
+category = "reverse_split"
+ticker = "GE"
+mic = "XNYS"
+isin = "US3696043013"
+note = "1-for-8 reverse split (2021) AND parent of GE HealthCare/GE Vernova spin-offs — combined reverse-split + spin-off stress."
+
+[[security]]
+name = "Citigroup Inc"
+category = "reverse_split"
+ticker = "C"
+mic = "XNYS"
+isin = "US1729674242"
+note = "1-for-10 reverse split (2011) post-crisis — large reverse ratio with a dividend cut around it."
+
+[[security]]
+name = "Sirius XM Holdings Inc"
+category = "reverse_split"
+ticker = "SIRI"
+mic = "XNAS"
+isin = "US82968B1035"
+note = "1-for-10 reverse split (2024) tied to the Liberty Media split-off restructuring — recent, reverse + structural change."
+
+[[security]]
+name = "American International Group Inc"
+category = "reverse_split"
+ticker = "AIG"
+mic = "XNYS"
+isin = "US0268747849"
+note = "1-for-20 reverse split (2009) at the depth of the crisis — extreme reverse ratio plus a near-total prior drawdown."
+
+# ---------------------------------------------------------------------------
+# special_dividend — large one-off cash distributions. The TR trap: special divs
+# are frequently MIS-CLASSIFIED by vendors (as ordinary, or dropped entirely),
+# and a missed special dividend understates total return. EXDATE_C timing of the
+# special is the thing under test.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Costco Wholesale Corp"
+category = "special_dividend"
+ticker = "COST"
+mic = "XNAS"
+isin = "US22160K1051"
+note = "Repeated large specials ($7/$10/$15) on top of the regular dividend — must capture both streams without double counting."
+
+[[security]]
+name = "The Buckle Inc"
+category = "special_dividend"
+ticker = "BKE"
+mic = "XNYS"
+isin = "US1184401072"
+note = "Habitual large year-end specials, often exceeding the regular dividend — vendor classification of these is unreliable."
+
+[[security]]
+name = "EOG Resources Inc"
+category = "special_dividend"
+ticker = "EOG"
+mic = "XNYS"
+isin = "US26875P1012"
+note = "Recurring variable specials tied to oil prices — irregular, large, and easy for a vendor to mislabel as ordinary."
+
+# ---------------------------------------------------------------------------
+# stock_dividend — distributions paid in SHARES, not cash (and scrip/elective
+# dividends). Adversarial because they behave like a tiny split for price but,
+# unlike a split, vendors disagree on whether to treat them as a return event.
+# Wrong handling silently biases TR.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Tootsie Roll Industries Inc"
+category = "stock_dividend"
+ticker = "TR"
+mic = "XNYS"
+isin = "US8910201068"
+note = "Textbook recurring 3% annual STOCK dividend — the canonical share-distribution (not cash) fixture."
+
+[[security]]
+name = "Banco Santander SA (ADR)"
+category = "stock_dividend"
+ticker = "SAN"
+mic = "XNYS"
+isin = "US05964H1059"
+note = "Scrip dividend ('Santander Dividendo Eleccion') — elective cash-or-shares; also a multi-currency ADR. Stresses scrip handling."
+
+# ---------------------------------------------------------------------------
+# spin_off — parent distributes shares of a new entity to holders. The hardest
+# TR case: the parent's price drops by the value of the spun-off stub on ex-date,
+# which is NOT a loss to the holder. Requires the spin-off factor; otherwise the
+# parent shows a phantom drop and the new child has no history before day one.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Johnson & Johnson"
+category = "spin_off"
+ticker = "JNJ"
+mic = "XNYS"
+isin = "US4781601046"
+note = "Spun off Kenvue (2023) via split-off/exchange — large value distribution; parent ex-date drop must not read as a loss."
+
+[[security]]
+name = "3M Co"
+category = "spin_off"
+ticker = "MMM"
+mic = "XNYS"
+isin = "US88579Y1010"
+note = "Spun off Solventum (2024) — recent, clean parent-side spin-off for factor validation."
+
+[[security]]
+name = "Abbott Laboratories"
+category = "spin_off"
+ticker = "ABT"
+mic = "XNYS"
+isin = "US0028241000"
+note = "Spun off AbbVie (2013) — the spun child became larger than many parents; a big stub value to neutralize."
+
+[[security]]
+name = "AT&T Inc"
+category = "spin_off"
+ticker = "T"
+mic = "XNYS"
+isin = "US00206R1023"
+note = "WarnerMedia spin-off/merger into Warner Bros Discovery (2022), coinciding with a dividend cut — spin-off + distribution-policy change together."
+
+[[security]]
+name = "Pfizer Inc"
+category = "spin_off"
+ticker = "PFE"
+mic = "XNYS"
+isin = "US7170811035"
+note = "Spun Upjohn into the Viatris merger (2020) and earlier Zoetis — multiple historical spin-offs to chain."
+
+# ---------------------------------------------------------------------------
+# multi_currency — non-USD primary listings. Adversarial because price, dividend
+# and corporate-action amounts are in the LOCAL currency; sym stores local-only
+# (no FX), so returns must compute correctly in the listing currency and never
+# silently mix currencies. Also exercises non-US trading calendars.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Toyota Motor Corp"
+category = "multi_currency"
+ticker = "7203"
+mic = "XTKS"
+isin = "JP3633400001"
+note = "JPY; numeric local ticker (not alphabetic) — stresses symbol parsing and the Tokyo calendar."
+
+[[security]]
+name = "Nestle SA"
+category = "multi_currency"
+ticker = "NESN"
+mic = "XSWX"
+isin = "CH0038863350"
+note = "CHF; Swiss calendar and dividend timing differ from US — currency + calendar isolation test."
+
+[[security]]
+name = "SAP SE"
+category = "multi_currency"
+ticker = "SAP"
+mic = "XETR"
+isin = "DE0007164600"
+note = "EUR on XETRA; also US-listed — anchor for the ADR/ordinary cross-check below."
+
+[[security]]
+name = "HSBC Holdings plc"
+category = "multi_currency"
+ticker = "HSBA"
+mic = "XLON"
+isin = "GB0005405286"
+note = "GBP, and LSE quotes some lines in PENCE not pounds — a notorious 100x scale trap for ingestion."
+
+[[security]]
+name = "BHP Group Ltd"
+category = "multi_currency"
+ticker = "BHP"
+mic = "XASX"
+isin = "AU000000BHP4"
+note = "AUD; recent DLC unification (2022) collapsed the dual structure — structural-change + currency."
+
+[[security]]
+name = "Samsung Electronics Co Ltd"
+category = "multi_currency"
+ticker = "005930"
+mic = "XKRX"
+isin = "KR7005930003"
+note = "KRW; 50:1 split (2018); numeric ticker; Korea calendar — split + currency + parsing combined."
+
+[[security]]
+name = "Taiwan Semiconductor Manufacturing Co Ltd"
+category = "multi_currency"
+ticker = "2330"
+mic = "XTAI"
+isin = "TW0002330008"
+note = "TWD ordinary; pairs with the TSM ADR below to test ADR-vs-ordinary ratio handling."
+
+[[security]]
+name = "LVMH Moet Hennessy Louis Vuitton SE"
+category = "multi_currency"
+ticker = "MC"
+mic = "XPAR"
+isin = "FR0000121014"
+note = "EUR; very high nominal share price — float-precision check for return computation."
+
+[[security]]
+name = "Tencent Holdings Ltd"
+category = "multi_currency"
+ticker = "0700"
+mic = "XHKG"
+isin = "KYG875721634"
+note = "HKD; Cayman-domiciled ISIN (KYG...) on a HK listing — domicile != listing-currency, an identity-resolution trap."
+
+[[security]]
+name = "Reliance Industries Ltd"
+category = "multi_currency"
+ticker = "RELIANCE"
+mic = "XNSE"
+isin = "INE002A01018"
+note = "INR; bonus issues (stock-dividend-like) and India-specific ISIN prefix — currency + share-distribution + calendar."
+
+[[security]]
+name = "Iberdrola SA"
+category = "multi_currency"
+ticker = "IBE"
+mic = "XMAD"
+isin = "ES0144580Y14"
+note = "EUR on Madrid; long-running scrip-dividend programme — currency + elective share distribution on a non-US calendar."
+
+# ---------------------------------------------------------------------------
+# adr — US-listed American Depositary Receipts over a foreign ordinary. The trap:
+# an ADR represents a RATIO of ordinary shares (e.g. 1 ADR = 5 ordinaries), so
+# price, dividends and the SAME corporate action appear scaled vs the home line.
+# Several pair with their ordinary above — the engine must keep them as distinct
+# securities with distinct (correct) returns, not conflate them.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Taiwan Semiconductor Manufacturing (ADR)"
+category = "adr"
+ticker = "TSM"
+mic = "XNYS"
+isin = "US8740391003"
+note = "ADR over 2330 ordinary (above); different ratio, currency (USD) and ex-dates — must not equal the ordinary's returns."
+
+[[security]]
+name = "Alibaba Group Holding Ltd (ADR)"
+category = "adr"
+ticker = "BABA"
+mic = "XNYS"
+isin = "US01609W1027"
+note = "ADR with a 1:8 ratio to the HK ordinary; dual-listed identity — high ambiguity risk in FIGI resolution."
+
+[[security]]
+name = "Novartis AG (ADR)"
+category = "adr"
+ticker = "NVS"
+mic = "XNYS"
+isin = "US66987V1098"
+note = "ADR that itself spun off Sandoz (2023) — ADR + spin-off compounded."
+
+[[security]]
+name = "ASML Holding NV"
+category = "adr"
+ticker = "ASML"
+mic = "XNAS"
+isin = "USN070592100"
+note = "US line (CUSIP-bearing) alongside the Amsterdam ordinary — tests that the US listing resolves distinctly from XAMS."
+
+[[security]]
+name = "Vale SA (ADR)"
+category = "adr"
+ticker = "VALE"
+mic = "XNYS"
+isin = "US91912E1055"
+note = "Brazilian ADR with highly variable / interest-on-capital distributions — irregular TR stream."
+
+[[security]]
+name = "Petroleo Brasileiro SA - Petrobras (ADR)"
+category = "adr"
+ticker = "PBR"
+mic = "XNYS"
+isin = "US71654V4086"
+note = "ADR; lumpy state-influenced dividends and multiple share classes (PBR/PBR.A) — distribution irregularity + class ambiguity."
+
+[[security]]
+name = "Toyota Motor Corp (ADR)"
+category = "adr"
+ticker = "TM"
+mic = "XNYS"
+isin = "US8923313071"
+note = "ADR over the 7203 ordinary (above) at a 1:10 ratio — the cleanest ADR-vs-ordinary ratio fixture in the set."
+
+# ---------------------------------------------------------------------------
+# share_class — multiple listed classes of the SAME issuer. FR-1/FR-2 core test:
+# each class must get a DISTINCT CompositeFIGI (a split/dividend hits one class,
+# not the cluster), while ShareClassFIGI groups them. A shared CompositeFIGI
+# across classes is a `share_class_conflict` for the review queue (Story 1.6).
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Alphabet Inc Class A"
+category = "share_class"
+ticker = "GOOGL"
+mic = "XNAS"
+isin = "US02079K3059"
+note = "Voting class; pairs with GOOG (Class C). 20:1 split (2022) hit both — split + share-class together."
+
+[[security]]
+name = "Alphabet Inc Class C"
+category = "share_class"
+ticker = "GOOG"
+mic = "XNAS"
+isin = "US02079K1079"
+note = "Non-voting class of the same issuer as GOOGL — must resolve to a DISTINCT CompositeFIGI, shared ShareClassFIGI."
+
+[[security]]
+name = "Berkshire Hathaway Inc Class A"
+category = "share_class"
+ticker = "BRK.A"
+mic = "XNYS"
+isin = "US0846701086"
+note = "Never-split, extreme nominal price (>$600k) — precision stress AND the A/B class-distinction fixture."
+
+[[security]]
+name = "Berkshire Hathaway Inc Class B"
+category = "share_class"
+ticker = "BRK.B"
+mic = "XNYS"
+isin = "US0846707026"
+note = "1500:1 economic ratio to BRK.A; 50:1 split (2010). Distinct CompositeFIGI from BRK.A; dotted ticker parsing."
+
+# ---------------------------------------------------------------------------
+# delisting — names that left public markets (bankruptcy, buyout, take-private).
+# THE survivorship test (FR-4 / Story 1.7): these MUST remain in the master with
+# full history and MUST appear in returns up to the delist date. If they silently
+# vanish, the warehouse has survivorship bias — the exact failure sym exists to
+# avoid. Resolution may also legitimately route some to the review queue.
+# ---------------------------------------------------------------------------
+[[security]]
+name = "Twitter Inc"
+category = "delisting"
+ticker = "TWTR"
+mic = "XNYS"
+isin = "US90184L1029"
+note = "Taken private by Musk (Oct 2022) at $54.20 — clean buyout delisting; history must survive and terminate at the delist date."
+
+[[security]]
+name = "Activision Blizzard Inc"
+category = "delisting"
+ticker = "ATVI"
+mic = "XNAS"
+isin = "US00507V1098"
+note = "Acquired by Microsoft (Oct 2023) — recent M&A delisting; returns must run through to the close date."
+
+[[security]]
+name = "Lehman Brothers Holdings Inc"
+category = "delisting"
+ticker = "LEHMQ"
+mic = "XNYS"
+isin = "US5249081002"
+note = "2008 bankruptcy — value went to ~0; the canonical distress delisting. Must not be dropped (would flatter historical returns)."
+
+[[security]]
+name = "Enron Corp"
+category = "delisting"
+ticker = "ENE"
+mic = "XNYS"
+isin = "US2935611097"
+note = "2001 fraud collapse and delisting — an old, fully-terminated history; tests that resolution tolerates a name OpenFIGI may no longer match (-> review queue)."
+
+[[security]]
+name = "Credit Suisse Group AG"
+category = "delisting"
+ticker = "CSGN"
+mic = "XSWX"
+isin = "CH0012138530"
+note = "Emergency UBS takeover (2023) delisted the Swiss line — a non-US, multi-currency delisting; survivorship must hold across borders."

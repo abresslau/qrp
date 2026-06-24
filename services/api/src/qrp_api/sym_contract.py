@@ -27,7 +27,7 @@ SYM_READ_SURFACE = {
     "securities",
     "security_symbology",
     "security_names",
-    "universe_membership",
+    # universe_membership moved to the `universe` peer package + its own DB (no longer a sym read).
     "fundamentals",
     "return_window",
     "instrument",
@@ -44,11 +44,15 @@ SYM_READ_SURFACE = {
 # granted SELECT on these.
 SYM_INTERNAL_RELATIONS = {
     "prices_review", "trading_calendar",
-    "trading_calendar_version", "universe", "membership_event", "membership_proposal",
-    "universe_member_completeness", "universe_accuracy_check", "fx_rate",
+    "trading_calendar_version",
+    # The universe membership tables moved to the `universe` peer package + its own database
+    # (universe, membership_event, membership_proposal, universe_member_resolution,
+    # universe_monitor_log, universe_accuracy_check). universe_benchmark + the sym-side
+    # universe_member_completeness validate-output table STAY in sym.
+    "universe_member_completeness", "fx_rate",
     "fx_rate_review", "securities_review_queue", "pipeline_backfill_progress",
     "instrument_xref", "corporate_actions", "currency", "index_levels", "price_gaps",
-    "universe_benchmark", "universe_member_resolution", "universe_monitor_log",
+    "universe_benchmark",
     "v_fx", "v_fx_daily", "v_prices_adjusted", "validation_run_log",
     "fact_index_extremes",  # 52-week index extremes (Story 3.2-ext) — not yet consumed by any API reader
 }

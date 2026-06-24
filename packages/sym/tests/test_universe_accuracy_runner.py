@@ -11,12 +11,14 @@ import contextlib
 from datetime import date
 
 import pytest
+import universe.db
+from universe import accuracy as accuracy_mod
+from universe.accuracy import run_configured_accuracy_check
+from universe.registry import JOIN, MembershipChange, UniverseError
 
 import sym.db
 from sym.cli import main
-from sym.universe import accuracy as accuracy_mod
-from sym.universe.accuracy import run_configured_accuracy_check
-from sym.universe.registry import JOIN, MembershipChange, UniverseError
+from sym.universe.resolver import SymResolver
 
 D = date(2026, 6, 10)
 
@@ -111,13 +113,13 @@ IBOV_CFG = {"index": "ibov", "accuracy_reference": "wikipedia"}
 def test_unconfigured_reference_refuses():
     conn = _Conn(config={"index": "ibov"})
     with pytest.raises(UniverseError, match="accuracy_reference"):
-        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+        run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
 
 
 def test_reference_same_as_primary_refuses():
     conn = _Conn(config={"index": "ibov", "accuracy_reference": "b3"}, source_pref=("b3",))
     with pytest.raises(UniverseError, match="independent"):
-        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+        run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
 
 
 def test_reference_in_fallback_pref_refuses():
@@ -126,7 +128,7 @@ def test_reference_in_fallback_pref_refuses():
     conn = _Conn(config={"index": "ibov", "accuracy_reference": "wikipedia"},
                  source_pref=("b3", "wikipedia"))
     with pytest.raises(UniverseError, match="independent"):
-        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+        run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
 
 
 def test_reference_fetch_failure_is_universe_error(monkeypatch):
@@ -137,7 +139,7 @@ def test_reference_fetch_failure_is_universe_error(monkeypatch):
     conn = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF"])
     monkeypatch.setattr(accuracy_mod, "get_index_source", lambda a, **cfg: _Boom())
     with pytest.raises(UniverseError, match="fetch failed"):
-        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+        run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
 
 
 def test_autocommit_set_before_first_query(monkeypatch):
@@ -151,14 +153,14 @@ def test_autocommit_set_before_first_query(monkeypatch):
     toks = ["ticker:A@BVMF"]
     conn = _Strict(config=IBOV_CFG, maintained=toks)
     _patch_source(monkeypatch, toks)
-    run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
 
 
 def test_matching_sets_pass_and_audit_row_written(monkeypatch):
     toks = ["ticker:PETR4@BVMF", "ticker:VALE3@BVMF"]
     conn = _Conn(config=IBOV_CFG, maintained=toks)
     _patch_source(monkeypatch, toks)
-    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    result = run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert result.alarm is False and result.divergence == 0.0
     assert result.reference_source == "wikipedia"
     assert len(conn.checks) == 1  # audit row persisted
@@ -169,7 +171,7 @@ def test_divergence_alarms(monkeypatch):
                  maintained=["ticker:A@BVMF", "ticker:B@BVMF", "ticker:C@BVMF",
                              "ticker:D@BVMF"])
     _patch_source(monkeypatch, ["ticker:A@BVMF"])
-    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    result = run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert result.alarm is True and result.divergence == 0.75
 
 
@@ -177,7 +179,7 @@ def test_etf_reference_gets_proxy_tolerance(monkeypatch):
     cfg = {"index": "ibov", "accuracy_reference": "etf_holdings"}
     conn = _Conn(config=cfg, maintained=["ticker:A@BVMF"])
     _patch_source(monkeypatch, ["ticker:A@BVMF"])
-    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    result = run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert result.threshold == pytest.approx(
         accuracy_mod.DEFAULT_THRESHOLD + accuracy_mod.DEFAULT_PROXY_TOLERANCE
     )
@@ -194,7 +196,7 @@ def test_cross_scheme_compares_on_figis(monkeypatch):
         symbology={"BRPETRACNPR6": "BBG000000PET", "BRVALEACNOR0": "BBG000000VAL"},
     )
     _patch_source(monkeypatch, ["isin:BRPETRACNPR6", "isin:BRVALEACNOR0"])
-    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    result = run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert result.divergence == 0.0 and result.alarm is False
 
 
@@ -208,7 +210,7 @@ def test_cross_scheme_unresolvable_reference_token_stays_divergent(monkeypatch):
         symbology={"BRPETRACNPR6": "BBG000000PET"},
     )
     _patch_source(monkeypatch, ["isin:BRPETRACNPR6", "isin:XXUNKNOWN0000"])
-    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    result = run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert result.divergence > 0.0
 
 
@@ -218,7 +220,7 @@ def test_library_threshold_validated(monkeypatch):
     conn = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF"])
     _patch_source(monkeypatch, ["ticker:A@BVMF"])
     with pytest.raises(UniverseError, match="threshold"):
-        run_configured_accuracy_check(conn, "ibov", as_of_date=D, threshold=42)
+        run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D, threshold=42)
 
 
 def test_audit_row_records_comparison_basis(monkeypatch):
@@ -231,12 +233,12 @@ def test_audit_row_records_comparison_basis(monkeypatch):
         symbology={"SAP": "BBG000000SAP"},
     )
     _patch_source(monkeypatch, ["ticker:SAP@XNYS"])
-    run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert "figi" in str(conn.checks[0])
 
     conn2 = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF"])
     _patch_source(monkeypatch, ["ticker:A@BVMF"])
-    run_configured_accuracy_check(conn2, "ibov", as_of_date=D)
+    run_configured_accuracy_check(conn2, "ibov", SymResolver(conn2), as_of_date=D)
     assert "raw" in str(conn2.checks[0])
 
 
@@ -251,7 +253,7 @@ def test_same_scheme_zero_overlap_falls_back_to_figis(monkeypatch):
         symbology={"SAP": "BBG000000SAP"},
     )
     _patch_source(monkeypatch, ["ticker:SAP@XNYS"])
-    result = run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+    result = run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
     assert result.divergence == 0.0 and result.alarm is False
 
 
@@ -266,7 +268,7 @@ def test_empty_reference_refuses(monkeypatch):
 
     monkeypatch.setattr(accuracy_mod, "get_index_source", lambda a, **cfg: _Empty())
     with pytest.raises(UniverseError, match="no members"):
-        run_configured_accuracy_check(conn, "ibov", as_of_date=D)
+        run_configured_accuracy_check(conn, "ibov", SymResolver(conn), as_of_date=D)
 
 
 # --- CLI wiring ---------------------------------------------------------------
@@ -275,6 +277,7 @@ def test_empty_reference_refuses(monkeypatch):
 def test_cli_accuracy_exit_codes(monkeypatch, capsys):
     conn = _Conn(config=IBOV_CFG, maintained=["ticker:A@BVMF", "ticker:B@BVMF"])
     monkeypatch.setattr(sym.db, "connect", lambda: conn)
+    monkeypatch.setattr(universe.db, "connect", lambda: conn)
     _patch_source(monkeypatch, ["ticker:A@BVMF", "ticker:B@BVMF"])
     assert main(["universe", "accuracy", "ibov"]) == 0
     assert "ok" in capsys.readouterr().out
@@ -287,6 +290,7 @@ def test_cli_accuracy_exit_codes(monkeypatch, capsys):
 def test_cli_accuracy_unconfigured_is_error(monkeypatch, capsys):
     conn = _Conn(config={"index": "ibov"})
     monkeypatch.setattr(sym.db, "connect", lambda: conn)
+    monkeypatch.setattr(universe.db, "connect", lambda: conn)
     assert main(["universe", "accuracy", "ibov"]) == 1
     assert "accuracy_reference" in capsys.readouterr().err
 
@@ -295,6 +299,7 @@ def test_cli_accuracy_threshold_flag(monkeypatch, capsys):
     conn = _Conn(config=IBOV_CFG,
                  maintained=["ticker:A@BVMF", "ticker:B@BVMF", "ticker:C@BVMF"])
     monkeypatch.setattr(sym.db, "connect", lambda: conn)
+    monkeypatch.setattr(universe.db, "connect", lambda: conn)
     _patch_source(monkeypatch, ["ticker:A@BVMF", "ticker:B@BVMF"])  # div = 1/3
     assert main(["universe", "accuracy", "ibov", "--threshold", "0.5"]) == 0
     capsys.readouterr()
@@ -304,6 +309,7 @@ def test_cli_accuracy_threshold_flag(monkeypatch, capsys):
 def test_cli_reverse_appends_and_rebuilds(monkeypatch, capsys):
     conn = _Conn()
     monkeypatch.setattr(sym.db, "connect", lambda: conn)
+    monkeypatch.setattr(universe.db, "connect", lambda: conn)
     rc = main(["universe", "reverse", "ibov", "ticker:B@BVMF", "leave", "2026-06-10"])
     assert rc == 0
     assert ("ticker:B@BVMF", "correct") in conn.events
@@ -313,6 +319,7 @@ def test_cli_reverse_appends_and_rebuilds(monkeypatch, capsys):
 
 def test_cli_reverse_bad_date_is_error(monkeypatch, capsys):
     monkeypatch.setattr(sym.db, "connect", lambda: _Conn())
+    monkeypatch.setattr(universe.db, "connect", lambda: _Conn())
     rc = main(["universe", "reverse", "ibov", "ticker:B@BVMF", "leave", "not-a-date"])
     assert rc == 1
     assert "effective_date" in capsys.readouterr().err
@@ -324,6 +331,7 @@ def test_cli_reverse_refuses_never_recorded_change(monkeypatch, capsys):
     conn = _Conn()
     conn.event_exists = False
     monkeypatch.setattr(sym.db, "connect", lambda: conn)
+    monkeypatch.setattr(universe.db, "connect", lambda: conn)
     rc = main(["universe", "reverse", "ibov", "ticker:B@BVMF", "leave", "2026-06-10"])
     assert rc == 1
     assert conn.events == [] and conn.rebuilt == 0

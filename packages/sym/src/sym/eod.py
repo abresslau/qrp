@@ -151,19 +151,24 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
     def run(key: str) -> str:
         if key == "monitor":
-            from sym.universe.monitor import run_monitor
+            from sym.universe.resolver import SymResolver
+            from universe.db import connect as u_connect
+            from universe.monitor import run_monitor
 
-            uids = [
-                r[0]
-                for r in conn.execute(
-                    "SELECT universe_id FROM universe WHERE kind = 'index' ORDER BY universe_id"
-                ).fetchall()
-            ]
-            joiners = leavers = 0
-            for uid in uids:
-                s = run_monitor(conn, uid)
-                joiners += s.joiners
-                leavers += s.leavers
+            # Membership lives in the universe DB now; sym (`conn`) supplies the identity resolver.
+            with u_connect() as u_conn:
+                resolver = SymResolver(conn)
+                uids = [
+                    r[0]
+                    for r in u_conn.execute(
+                        "SELECT universe_id FROM universe WHERE kind = 'index' ORDER BY universe_id"
+                    ).fetchall()
+                ]
+                joiners = leavers = 0
+                for uid in uids:
+                    s = run_monitor(u_conn, uid, resolver)
+                    joiners += s.joiners
+                    leavers += s.leavers
             return f"{len(uids)} index universes; joiners={joiners} leavers={leavers}"
         if key == "fill":
             from sym.ingest.pipeline import FILL, run_load

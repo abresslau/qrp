@@ -9,10 +9,12 @@ dependencies = [
     "dagster-postgres>=0.25",
     "sqlglot>=25",
     "sym",
+    "universe",
 ]
 
 [tool.uv.sources]
 sym = { workspace = true }
+universe = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -11,11 +11,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import pytest
+from universe.registry import RESOLVED, UNRESOLVED, InvalidMemberIdentifierError
 
 from sym.identity.figi import FigiRecord
 from sym.identity.universe import ResolutionInput
-from sym.universe.registry import RESOLVED, UNRESOLVED, InvalidMemberIdentifierError
-from sym.universe.resolution import (
+from sym.universe.resolver import (
     _seed_from_identifier,
     resolve_identifiers,
 )

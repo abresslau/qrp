@@ -122,31 +122,31 @@ def _engine_conns():
 
 def test_engine_rejects_unknown_factor_weighting_rebalance():
     sym, bt = _engine_conns()
-    assert "unknown factor" in run_backtest(sym, bt, factor="nope")["error"]
+    assert "unknown factor" in run_backtest(sym, bt, universe_conn=sym, factor="nope")["error"]
     sym, bt = _engine_conns()
-    assert "unknown weighting" in run_backtest(sym, bt, weighting="solid-gold")["error"]
+    assert "unknown weighting" in run_backtest(sym, bt, universe_conn=sym, weighting="solid-gold")["error"]
     sym, bt = _engine_conns()
-    assert "unknown rebalance" in run_backtest(sym, bt, rebalance="hourly")["error"]
+    assert "unknown rebalance" in run_backtest(sym, bt, universe_conn=sym, rebalance="hourly")["error"]
 
 
 def test_engine_rejects_both_selections_no_silent_preference():
     sym, bt = _engine_conns()
-    out = run_backtest(sym, bt, top_pct=0.1, top_n=5)
+    out = run_backtest(sym, bt, universe_conn=sym, top_pct=0.1, top_n=5)
     assert "not both" in out["error"]
 
 
 def test_engine_rejects_nonpositive_top_n():
     # a negative slice would silently select all-but-N; zero selects nothing
     sym, bt = _engine_conns()
-    assert "top_n must be >= 1" in run_backtest(sym, bt, top_n=0)["error"]
+    assert "top_n must be >= 1" in run_backtest(sym, bt, universe_conn=sym, top_n=0)["error"]
     sym, bt = _engine_conns()
-    assert "top_n must be >= 1" in run_backtest(sym, bt, top_n=-5)["error"]
+    assert "top_n must be >= 1" in run_backtest(sym, bt, universe_conn=sym, top_n=-5)["error"]
 
 
 def test_engine_names_an_unknown_universe():
     sym = _RoutedConn([("universe_membership", _Cur(rows=[]))])
     bt = _RoutedConn()
-    out = run_backtest(sym, bt, universe_id="typo500", top_pct=0.2)
+    out = run_backtest(sym, bt, universe_conn=sym, universe_id="typo500", top_pct=0.2)
     assert "unknown or empty universe" in out["error"]
     assert "typo500" in out["error"]
 
@@ -176,7 +176,7 @@ def test_engine_delegates_to_the_seam_with_the_rebalance_params():
     monkey = _pytest.MonkeyPatch()
     monkey.setattr(engine_mod, "raw_factor", fake_raw_factor)
     try:
-        out = run_backtest(sym, bt, factor="mom_12_1", top_pct=0.2, alt_conn=alt_sentinel)
+        out = run_backtest(sym, bt, universe_conn=sym, factor="mom_12_1", top_pct=0.2, alt_conn=alt_sentinel)
     finally:
         monkey.undo()
     assert "lacks broad coverage" in out["error"]  # empty raws -> honest refusal
@@ -229,7 +229,7 @@ def test_run_persists_the_full_spec_to_sql():
         ("SELECT as_of_date, composite_figi, pr", _Cur(rows=ret_rows)),
     ])
     bt = _BtConn()
-    out = run_backtest(sym, bt, factor="mom_12_1", top_n=5, weighting="equal",
+    out = run_backtest(sym, bt, universe_conn=sym, factor="mom_12_1", top_n=5, weighting="equal",
                        rebalance="quarterly")
     assert out.get("run_id") == 77, out.get("error")
     insert = next(p for sql, p in bt.calls
@@ -287,7 +287,7 @@ def _working_run(**kw):
                                       for i, (f,) in enumerate(roster[:30])])),
         ("SELECT as_of_date, composite_figi, pr", _Cur(rows=ret_rows)),
     ])
-    return run_backtest(sym, _BtRunConn(), factor="mom_12_1", top_n=5, weighting="equal",
+    return run_backtest(sym, _BtRunConn(), universe_conn=sym, factor="mom_12_1", top_n=5, weighting="equal",
                         rebalance="quarterly", **kw)
 
 
@@ -344,7 +344,7 @@ def test_engine_signals_factor_without_module_conn_is_an_attributed_error():
         ])),
     ])
     bt = _RoutedConn()
-    out = run_backtest(sym, bt, factor="fiscal_sens")
+    out = run_backtest(sym, bt, universe_conn=sym, factor="fiscal_sens")
     assert "requires module connection" in out["error"]
     assert "macro" in out["error"]
 

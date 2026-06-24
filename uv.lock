@@ -150,6 +150,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "signals" },
+    { name = "universe" },
 ]
 
 [package.dev-dependencies]
@@ -165,6 +166,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "signals", editable = "packages/signals" },
+    { name = "universe", editable = "packages/universe" },
 ]
 
 [package.metadata.requires-dev]
@@ -935,6 +937,7 @@ dependencies = [
     { name = "dagster-webserver" },
     { name = "sqlglot" },
     { name = "sym" },
+    { name = "universe" },
 ]
 
 [package.metadata]
@@ -944,6 +947,7 @@ requires-dist = [
     { name = "dagster-webserver", specifier = ">=1.9" },
     { name = "sqlglot", specifier = ">=25" },
     { name = "sym", editable = "packages/sym" },
+    { name = "universe", editable = "packages/universe" },
 ]
 
 [[package]]
@@ -1820,6 +1824,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "rates" },
     { name = "signals" },
+    { name = "universe" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1844,6 +1849,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "rates", editable = "packages/rates" },
     { name = "signals", editable = "packages/signals" },
+    { name = "universe", editable = "packages/universe" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
@@ -2038,6 +2044,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
+    { name = "universe" },
 ]
 
 [package.dev-dependencies]
@@ -2051,6 +2058,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "universe", editable = "packages/universe" },
 ]
 
 [package.metadata.requires-dev]
@@ -2153,6 +2161,7 @@ dependencies = [
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "requests" },
+    { name = "universe" },
     { name = "yfinance" },
 ]
 
@@ -2171,6 +2180,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "requests", specifier = ">=2.34.2" },
+    { name = "universe", editable = "packages/universe" },
     { name = "yfinance", specifier = ">=1.4.1" },
 ]
 
