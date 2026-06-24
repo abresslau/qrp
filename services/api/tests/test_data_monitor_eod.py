@@ -194,6 +194,44 @@ def test_commodities_is_a_bucket_but_not_a_generated_dagster_job():
     assert len(BUCKET_JOBS) == len(bucket_keys()) - 1
 
 
+# --- calculations: partial-aware recency (cheap two-day check, no coverage scan) --------
+
+
+class _CalcConn:
+    """fact_returns: latest day (06-23) has `n_latest` names; the prior day (06-22) has `n_prev`."""
+
+    def __init__(self, n_latest: int, n_prev: int):
+        self._n_latest, self._n_prev, self.seen = n_latest, n_prev, []
+
+    def execute(self, sql, params=None):
+        self.seen.append(sql)
+        s = sql.strip()
+        if s.startswith("SELECT max(") and "< %s" in s:
+            return _Cur(one=(date(2026, 6, 22),))   # prev day
+        if s.startswith("SELECT max("):
+            return _Cur(one=(date(2026, 6, 23),))   # latest day
+        if "count(DISTINCT composite_figi)" in s:
+            return _Cur(one=(self._n_latest if params[0] == date(2026, 6, 23) else self._n_prev,))
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
+def test_calc_partial_day_falls_back_to_prior_complete_day():
+    ds = _bucket("calculations").datasets[0]
+    conn = _CalcConn(n_latest=297, n_prev=2170)  # Europe-only partial vs the full prior day
+    actual, note = EodMonitorGateway(conn)._calc_coverage(conn, ds)
+    assert actual == date(2026, 6, 22)  # honest: NOT the 06-23 partial slice
+    assert "partial" in note
+    # and it must NOT run a full-table coverage scan (the count(DISTINCT) perf trap)
+    assert not any("WITH per_day" in s or "GROUP BY" in s for s in conn.seen)
+
+
+def test_calc_full_day_is_reported_as_current():
+    ds = _bucket("calculations").datasets[0]
+    conn = _CalcConn(n_latest=2168, n_prev=2170)  # latest is broadly complete (>= 90% of prior)
+    actual, _ = EodMonitorGateway(conn)._calc_coverage(conn, ds)
+    assert actual == date(2026, 6, 23)  # current — no false-stale on a complete recompute
+
+
 # --- best-effort Dagster run lookup -----------------------------------------------------
 
 
