@@ -238,9 +238,99 @@ def test_run_persists_the_full_spec_to_sql():
 
     spec = _json.loads(insert[-1])  # the last param is the spec jsonb
     assert spec == {"factor": "mom_12_1", "universe": "sp500", "top_pct": None, "top_n": 5,
-                    "weighting": "equal", "rebalance": "quarterly",
+                    "weighting": "equal", "rebalance": "quarterly", "cost_bps": 10.0,
                     "start_date": spec["start_date"], "end_date": spec["end_date"]}
     assert spec["start_date"] is not None  # resolved dates persist, not the request's nulls
+
+
+# ---- transaction costs / turnover / significance (1A + 1B) -------------------------------
+
+
+class _BtRunConn(_RoutedConn):
+    """A backtest conn that yields a run_id and supports transaction()/cursor() (no DB)."""
+
+    def __init__(self):
+        super().__init__([("INSERT INTO backtest.run", _Cur(one=(77,)))])
+
+    def transaction(self):
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+    def cursor(self):
+        outer = self
+
+        class _Cu:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def executemany(self, sql, rows):
+                outer.calls.append((sql, tuple(rows)))
+
+        return _Cu()
+
+
+def _working_run(**kw):
+    """A successful quarterly momentum run over a flat-return synthetic market (same top-5 held
+    every rebalance, so turnover is the initial buy-in only — easy to reason about)."""
+    roster = [(f"FIGI_{i:08d}",) for i in range(50)]
+    days = [(date.fromordinal(date(2026, 1, 1).toordinal() + i),) for i in range(200)]
+    ret_rows = [(d, f, 0.001) for (d,) in days for (f,) in roster[:25]]
+    sym = _RoutedConn([
+        ("universe_membership", _Cur(rows=roster)),
+        ("min(as_of_date), max(as_of_date)", _Cur(one=(date(2025, 1, 1), date(2026, 6, 5)))),
+        ("DISTINCT as_of_date", _Cur(rows=days)),
+        ("fact_returns a", _Cur(rows=[(f, 0.10 - i * 0.001)
+                                      for i, (f,) in enumerate(roster[:30])])),
+        ("SELECT as_of_date, composite_figi, pr", _Cur(rows=ret_rows)),
+    ])
+    return run_backtest(sym, _BtRunConn(), factor="mom_12_1", top_n=5, weighting="equal",
+                        rebalance="quarterly", **kw)
+
+
+def test_turnover_reported_and_costed_net_by_default():
+    out = _working_run()  # default cost_bps = 10
+    assert out.get("run_id") == 77, out.get("error")
+    s = out["summary"]
+    # initial buy-in of an equal-weight 5-name book is one-way turnover 0.5; held flat after
+    assert s["turnover_total"] == pytest.approx(0.5)
+    assert s["turnover_ann"] is not None and s["turnover_ann"] > 0
+    # default is NET of 10 bps: cost drag present, gross block exposed alongside
+    assert s["cost_bps"] == 10.0
+    assert s["cost_drag_total"] == pytest.approx(0.5 * 10.0 / 1e4)
+    assert s["strategy_gross"] is not None
+    assert s["strategy"]["total_return"] < s["strategy_gross"]["total_return"]
+
+
+def test_explicit_zero_cost_is_gross():
+    s = _working_run(cost_bps=0.0)["summary"]
+    assert s["cost_bps"] == 0.0
+    assert s["cost_drag_total"] == 0.0
+    assert s["strategy_gross"] is None  # no separate gross block when the run IS gross
+
+
+def test_costs_reduce_net_return_and_expose_gross():
+    gross = _working_run(cost_bps=0.0)["summary"]["strategy"]["total_return"]
+    out = _working_run(cost_bps=50.0)  # 0.5% per unit one-way turnover
+    s = out["summary"]
+    assert s["cost_bps"] == 50.0
+    # 0.5 one-way turnover × 0.5% ≈ 25 bps one-time drag
+    assert s["cost_drag_total"] == pytest.approx(0.5 * 50.0 / 1e4)
+    assert s["strategy_gross"]["total_return"] == pytest.approx(gross)  # gross preserved
+    assert s["strategy"]["total_return"] < gross  # headline is now NET
+    assert out["spec"]["cost_bps"] == 50.0
+
+
+def test_spread_tstat_and_hurdle_present():
+    s = _working_run()["summary"]
+    assert s["spread_tstat_hurdle"] == 3.0
+    assert "spread_tstat" in s
+    # strategy (top-5 momentum) vs equal-weight baseline on an all-equal-return market: the
+    # excess series is ~flat, so it must NOT clear the t>3 bar (no fabricated significance)
+    assert s["spread_significant"] is False
 
 
 def test_engine_signals_factor_without_module_conn_is_an_attributed_error():

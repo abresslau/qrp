@@ -39,6 +39,7 @@ _W_1D = 1
 ANN = 252
 
 METHODS = ("min_variance", "max_sharpe")
+COV_METHODS = ("shrinkage", "sample")  # default = Ledoit-Wolf const-correlation shrinkage
 
 
 def _select_names(conn, universe_id: str, n: int) -> list[str]:
@@ -123,6 +124,78 @@ def _mean_cov(matrix: list[list[float]]) -> tuple[list[float], list[list[float]]
             c = s / (t - 1)
             cov[i][j] = cov[j][i] = c
     return mean, cov
+
+
+def _const_corr_shrinkage(matrix: list[list[float]]) -> tuple[list[list[float]], float]:
+    """Ledoit-Wolf (2004) shrinkage of the sample covariance toward a constant-correlation
+    target, with the closed-form optimal intensity — NO tuning parameter.
+
+    Why (research-backed, deep-research 2026-06-23): the plain sample covariance carries
+    estimation error of exactly the kind a mean-variance optimiser latches onto ("error
+    maximisation", Michaud 1989); worst when n is large vs t and it can be singular. The
+    shrunk estimate ``Σ̂ = δF + (1−δ)S`` is ALWAYS positive-definite (F is PD, S is PSD) and
+    out-of-sample-better. Ref: Ledoit & Wolf, "Honey, I Shrunk the Sample Covariance Matrix",
+    JPM 2004 (SSRN 433840).
+
+    Target F: constant-correlation — ``f_ii = s_ii``, ``f_ij = r̄·√(s_ii·s_jj)`` with r̄ the
+    average pairwise sample correlation. Optimal intensity ``δ = max(0, min(1, κ/t))`` with
+    ``κ = (π − ρ)/γ``: π = Σ asymptotic variances of S's entries, ρ = Σ asymptotic covariances
+    between F and S (derived from first principles for the const-corr target, holding r̄ fixed),
+    γ = ‖F − S‖²_F. Estimators use the 1/t MLE covariance on demeaned data (the convention the
+    LW asymptotics require); returns ``(cov, δ)``. O(n²·t) pure-Python — fine for the n≲60 the
+    optimiser selects; a numpy/factor-model path is the ledgered upgrade for larger n.
+    """
+    n = len(matrix)
+    t = len(matrix[0])
+    means = [sum(r) / t for r in matrix]
+    x = [[matrix[i][k] - means[i] for k in range(t)] for i in range(n)]  # demeaned
+    s = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i, n):
+            v = sum(x[i][k] * x[j][k] for k in range(t)) / t  # 1/t MLE cov
+            s[i][j] = s[j][i] = v
+    var = [s[i][i] for i in range(n)]
+    sd = [math.sqrt(v) if v > 0 else 0.0 for v in var]
+    # average pairwise correlation r̄
+    num, cnt = 0.0, 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if sd[i] > 0 and sd[j] > 0:
+                num += s[i][j] / (sd[i] * sd[j])
+                cnt += 1
+    rbar = (num / cnt) if cnt else 0.0
+    f = [[0.0] * n for _ in range(n)]  # constant-correlation target
+    for i in range(n):
+        f[i][i] = var[i]
+        for j in range(i + 1, n):
+            f[i][j] = f[j][i] = rbar * sd[i] * sd[j]
+    # π: Σ asymptotic variances of the sample-cov entries. π_ij = (1/t)Σ(x_i·x_j)² − s_ij²
+    pi_diag = 0.0
+    pi = 0.0
+    for i in range(n):
+        for j in range(i, n):
+            m = sum((x[i][k] * x[j][k]) ** 2 for k in range(t)) / t - s[i][j] ** 2
+            pi += m if i == j else 2 * m  # symmetric: count off-diagonals twice
+            if i == j:
+                pi_diag += m
+    # ρ: diagonal entries match F exactly (f_ii=s_ii) → their asy-cov IS their asy-var (π_ii).
+    # Off-diagonals (holding r̄ fixed): ½·r̄·[√(σjj/σii)·ϑ_ii,ij + √(σii/σjj)·ϑ_jj,ij] per pair,
+    # ϑ_ii,ij = (1/t)Σ x_i³x_j − σ_ii·s_ij. Summing the first term over ALL ordered i≠j pairs
+    # equals the symmetric per-pair sum (the (j,i) pass supplies the second term).
+    rho = pi_diag
+    for i in range(n):
+        for j in range(n):
+            if i == j or sd[i] <= 0 or sd[j] <= 0:
+                continue
+            t1 = sum((x[i][k] ** 3) * x[j][k] for k in range(t)) / t
+            rho += rbar * 0.5 * math.sqrt(var[j] / var[i]) * (t1 - var[i] * s[i][j])
+    gamma = sum((f[i][j] - s[i][j]) ** 2 for i in range(n) for j in range(n))
+    if gamma <= 0:  # sample already matches the const-corr target — nothing to shrink
+        delta = 0.0
+    else:
+        delta = max(0.0, min(1.0, ((pi - rho) / gamma) / t))
+    cov = [[delta * f[i][j] + (1 - delta) * s[i][j] for j in range(n)] for i in range(n)]
+    return cov, delta
 
 
 def _matvec(m, v):
@@ -234,6 +307,7 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
           max_weight: float | None = None,
           signal_tilt: dict | None = None,
           holdout_days: int = 0,
+          cov_method: str = "shrinkage",
           portfolios_gw=None,
           alt_conn=None, macro_conn=None) -> dict:
     """Solve the spec'd allocation; persist solution + weights + the full spec.
@@ -248,6 +322,8 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
     opt_conn.autocommit = True
     if method not in METHODS:
         return {"error": f"unknown method {method!r} (one of {METHODS})"}
+    if cov_method not in COV_METHODS:
+        return {"error": f"unknown cov_method {cov_method!r} (one of {COV_METHODS})"}
     if max_weight is not None and max_weight * n < 1.0:
         return {"error": f"infeasible max_weight {max_weight} for n={n} (cap*n must be >= 1)"}
     tilt_factor = (signal_tilt or {}).get("factor")
@@ -285,7 +361,13 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
         matrix = [row[: len(dates)] for row in matrix]
     cov_end = dates[-1]
 
-    mean, cov = _mean_cov(matrix)
+    mean, sample_cov = _mean_cov(matrix)
+    # Risk model: Ledoit-Wolf const-correlation shrinkage by default (the sample covariance
+    # error-maximises a mean-variance solver); `sample` stays available for comparison.
+    if cov_method == "shrinkage":
+        cov, shrink_delta = _const_corr_shrinkage(matrix)
+    else:
+        cov, shrink_delta = sample_cov, None
     t = len(matrix[0])
 
     tilt_vec: list[float] | None = None
@@ -346,7 +428,7 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
     # (latest-mcap selection + alignment) and lives on optimiser.weight rows.
     spec = {
         "universe": universe_id, "method": method, "n": n, "lookback": lookback,
-        "max_weight": max_weight,
+        "max_weight": max_weight, "cov_method": cov_method,
         "signal_tilt": ({"factor": tilt_factor, "strength": tilt_strength}
                         if tilt_factor else None),
         "holdout_days": holdout_days,
@@ -356,7 +438,8 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
     tickers = _tickers(conn, figis)
     summary = {"n_dates": t, "max_weight": max(w), "n_nonzero": sum(1 for x in w if x > 1e-4),
                "weights_sum": sum(w), "holdout": holdout,
-               "chosen_lam": chosen_lam, "tilt_coverage": tilt_coverage}
+               "chosen_lam": chosen_lam, "tilt_coverage": tilt_coverage,
+               "cov_method": cov_method, "shrink_delta": shrink_delta}
     sol_id = opt_conn.execute(
         """
         INSERT INTO optimiser.solution

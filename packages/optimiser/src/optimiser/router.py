@@ -43,6 +43,7 @@ class SolveSpec(BaseModel):
     n: int
     lookback: int
     max_weight: float | None = None
+    cov_method: str | None = None  # 'shrinkage' | 'sample' (NULL on pre-1C solutions)
     signal_tilt: SignalTilt | None = None
     holdout_days: int = 0
     save_portfolio: bool = False
@@ -82,6 +83,8 @@ class OptSolveRequest(BaseModel):
     lookback: int = Field(default=252, ge=60, le=1000)
     # Q7.3 constraint archetype: per-position cap (None = unconstrained long-only)
     max_weight: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    # 1C risk model: Ledoit-Wolf const-correlation shrinkage (default) vs the raw sample covariance
+    cov_method: str = "shrinkage"  # 'shrinkage' | 'sample'
     # Q9.4: optional signal tilt
     signal_tilt: SignalTilt | None = None
     # Q7.4b: score the solution out-of-sample on a trailing holdout via backtest
@@ -106,6 +109,9 @@ def solve_ep(body: OptSolveRequest = Body(...), gw: DbOptimiserGateway = Depends
     if body.method not in ("min_variance", "max_sharpe"):
         raise HTTPException(status_code=422,
                             detail=f"unknown method {body.method!r}")
+    if body.cov_method not in ("shrinkage", "sample"):
+        raise HTTPException(status_code=422,
+                            detail=f"unknown cov_method {body.cov_method!r}")
     if body.max_weight is not None and body.max_weight * body.n < 1.0:
         raise HTTPException(
             status_code=422,
@@ -152,7 +158,7 @@ def solve_ep(body: OptSolveRequest = Body(...), gw: DbOptimiserGateway = Depends
     try:
         res = gw.solve(
             body.universe, body.method, body.n, body.lookback,
-            max_weight=body.max_weight,
+            max_weight=body.max_weight, cov_method=body.cov_method,
             signal_tilt=body.signal_tilt.model_dump() if body.signal_tilt else None,
             holdout_days=body.holdout_days, portfolios_gw=pgw, **module_conns,
         )

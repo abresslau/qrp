@@ -37,13 +37,23 @@ class Stats(BaseModel):
 
 
 class Summary(BaseModel):
-    strategy: Stats
+    strategy: Stats  # net of costs when cost_bps > 0, else gross
     baseline: Stats
     excess_total: float | None = None
     first_rebalance: str | None = None
     first_holding_n: int | None = None
     # cap-weighting honesty: names dropped for missing market cap (never zero-weighted)
     dropped_no_mcap: int | None = None
+    # turnover + transaction-cost honesty (1A): turnover always reported; cost applied iff costed
+    turnover_ann: float | None = None
+    turnover_total: float | None = None
+    cost_bps: float | None = None
+    cost_drag_total: float | None = None
+    strategy_gross: Stats | None = None  # populated only when costs are modelled
+    # statistical-significance guardrail (1B; Harvey-Liu-Zhu hurdle is t>3.0, not 2.0)
+    spread_tstat: float | None = None
+    spread_tstat_hurdle: float | None = None
+    spread_significant: bool | None = None
 
 
 class StrategySpec(BaseModel):
@@ -55,6 +65,7 @@ class StrategySpec(BaseModel):
     top_n: int | None = None
     weighting: str = "equal"
     rebalance: str = "monthly"
+    cost_bps: float | None = None  # round-trip cost per unit one-way turnover (NULL on pre-1A runs)
     start_date: str | None = None
     end_date: str | None = None
 
@@ -92,6 +103,9 @@ class BacktestRunRequest(BaseModel):
     top_n: int | None = Field(default=None, gt=0)
     weighting: str = "equal"  # equal | cap
     rebalance: str = "monthly"  # monthly | quarterly
+    # 1A transaction costs: bps charged on one-way turnover (0 = gross). Default 10 (liquid
+    # large-cap one-way) so runs are NET by default; raise for a less-liquid book, 0 for gross.
+    cost_bps: float = Field(default=10.0, ge=0, le=1000, allow_inf_nan=False)
     start_date: date | None = None  # FR-18: optional explicit range (default: ~5y of data)
     end_date: date | None = None
     save_portfolio: bool = False  # Q6.4: also materialise the run as a paper Portfolio
@@ -153,7 +167,7 @@ def run_backtest_ep(
         res = gw.run(body.factor, body.universe, top_pct, portfolios_gw=pgw,
                      start_date=body.start_date, end_date=body.end_date,
                      top_n=body.top_n, weighting=body.weighting, rebalance=body.rebalance,
-                     **module_conns)
+                     cost_bps=body.cost_bps, **module_conns)
     finally:
         if pconn is not None:
             pconn.close()

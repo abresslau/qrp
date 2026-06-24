@@ -20,11 +20,11 @@ class DbBacktestGateway:
     def run(self, factor: str, universe_id: str, top_pct: float | None, portfolios_gw=None,
             start_date: date | None = None, end_date: date | None = None,
             top_n: int | None = None, weighting: str = "equal", rebalance: str = "monthly",
-            alt_conn=None, macro_conn=None) -> dict:
+            cost_bps: float = 10.0, alt_conn=None, macro_conn=None) -> dict:
         res = run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
                            top_pct=top_pct, top_n=top_n, weighting=weighting,
                            rebalance=rebalance, start_date=start_date, end_date=end_date,
-                           alt_conn=alt_conn, macro_conn=macro_conn)
+                           cost_bps=cost_bps, alt_conn=alt_conn, macro_conn=macro_conn)
         # Q6.4: optionally materialise the run as a paper Portfolio (persisted via the
         # portfolios package's own writer — module ownership respected, no cross-DB write here).
         if portfolios_gw is not None and res.get("run_id") and res.get("weight_vectors"):

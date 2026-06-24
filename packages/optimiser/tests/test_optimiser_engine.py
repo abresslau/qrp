@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import date
 
 import pytest
 
 from optimiser.engine import (
+    _const_corr_shrinkage,
     _pgd,
     _project_capped_simplex,
     _project_simplex,
@@ -85,6 +87,90 @@ def test_pgd_respects_the_cap_at_the_solution():
     w_cap = _pgd(cov, mean, lam=1e6, cap=0.5)
     assert max(w_cap) <= 0.5 + 1e-9
     assert sum(w_cap) == pytest.approx(1.0)
+
+
+# ---- Ledoit-Wolf constant-correlation covariance shrinkage --------------------------------
+
+
+def _lcg_series(n, t, seed=1):
+    """Deterministic series: a shared market factor + per-name idiosyncratic noise, so the
+    return matrix has genuine (non-trivial) cross-correlations to shrink."""
+    state = seed & 0x7FFFFFFF
+
+    def rnd():
+        nonlocal state
+        state = (1103515245 * state + 12345) & 0x7FFFFFFF
+        return state / 0x7FFFFFFF - 0.5
+
+    mkt = [rnd() * 0.02 for _ in range(t)]
+    return [[(0.5 + 0.2 * i) * mkt[k] + rnd() * 0.01 for k in range(t)] for i in range(n)]
+
+
+def _is_pd(m) -> bool:
+    """Pure-Python Cholesky — returns False if `m` is not positive-definite."""
+    n = len(m)
+    low = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1):
+            acc = sum(low[i][k] * low[j][k] for k in range(j))
+            if i == j:
+                d = m[i][i] - acc
+                if d <= 1e-15:
+                    return False
+                low[i][j] = math.sqrt(d)
+            else:
+                low[i][j] = (m[i][j] - acc) / low[j][j]
+    return True
+
+
+def test_shrinkage_intensity_in_unit_interval_and_diagonal_preserved():
+    mat = _lcg_series(6, 90)
+    cov, delta = _const_corr_shrinkage(mat)
+    assert 0.0 <= delta <= 1.0
+    # symmetric
+    assert all(cov[i][j] == pytest.approx(cov[j][i]) for i in range(6) for j in range(6))
+    # diagonal == 1/t sample variance (the const-corr target leaves variances untouched)
+    t = len(mat[0])
+    for i in range(6):
+        m = sum(mat[i]) / t
+        var_mle = sum((x - m) ** 2 for x in mat[i]) / t
+        assert cov[i][i] == pytest.approx(var_mle, rel=1e-9)
+
+
+def test_shrinkage_is_positive_definite_even_when_sample_is_singular():
+    # n > t: the sample covariance is rank-deficient (singular) — MVO's nightmare. The shrunk
+    # estimate must still be PD (the headline Ledoit-Wolf guarantee, and the whole point here).
+    mat = _lcg_series(8, 5)
+    cov, delta = _const_corr_shrinkage(mat)
+    assert delta > 0.0  # with t<n the optimal intensity must pull hard toward the target
+    assert _is_pd(cov)
+
+
+def test_shrinkage_grows_when_data_is_scarcer():
+    # less data (smaller t) ⇒ noisier sample ⇒ more shrinkage toward the structured target.
+    _, delta_short = _const_corr_shrinkage(_lcg_series(6, 25, seed=7))
+    _, delta_long = _const_corr_shrinkage(_lcg_series(6, 400, seed=7))
+    assert delta_short > delta_long
+
+
+def test_solve_rejects_unknown_cov_method():
+    sym, opt = _RoutedConn(), _RoutedConn()
+    assert "unknown cov_method" in solve(sym, opt, cov_method="kalman")["error"]
+
+
+def test_solve_shrinkage_is_the_default_and_is_recorded(monkeypatch):
+    figis, ret_rows = _market_fixture()
+    sym = _RoutedConn([
+        ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fact_returns", _Cur(rows=ret_rows)),
+        ("security_symbology", _Cur(rows=[])),
+    ])
+    opt = _RoutedConn([("INSERT INTO optimiser.solution", _Cur(one=(77,)))])
+    out = solve(sym, opt, n=6, lookback=200)  # no cov_method given → default
+    assert out.get("solution_id") == 77, out.get("error")
+    assert out["spec"]["cov_method"] == "shrinkage"
+    assert out["summary"]["shrink_delta"] is not None
+    assert 0.0 <= out["summary"]["shrink_delta"] <= 1.0
 
 
 # ---- signal tilt ---------------------------------------------------------------------------

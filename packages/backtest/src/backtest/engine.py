@@ -192,6 +192,7 @@ def run_backtest(
     rebalance: str = "monthly",
     start_date: date | None = None,
     end_date: date | None = None,
+    cost_bps: float = 10.0,
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
 ) -> dict:
@@ -273,6 +274,21 @@ def run_backtest(
     if len(rebals) < 2:
         return {"error": f"factor {factor!r} lacks broad coverage for {universe_id!r} in range"}
 
+    # Turnover (one-way, ½Σ|Δw| per rebalance vs the prior target) and the cost it implies.
+    # v1 charges REBALANCE-DATE turnover at a flat per-unit bps; the daily-rebalance-to-target
+    # abstraction's intra-period maintenance trades and an ADV/impact term are ledgered
+    # refinements (the deep-research finding refuted a linear-per-ADV impact rule). cost_bps
+    # defaults to 10 (liquid large-cap one-way) so a backtest is NET by default — the credible
+    # cost is construction-dependent, so pass cost_bps=0 for a gross run or a higher cost for a
+    # less-liquid book. Turnover is reported regardless so the assumption is always visible.
+    turnover_at: dict[date, float] = {}
+    prev_w: dict[str, float] = {}
+    for d in rebals:
+        w = weights_at[d]
+        names = set(w) | set(prev_w)
+        turnover_at[d] = 0.5 * sum(abs(w.get(f, 0.0) - prev_w.get(f, 0.0)) for f in names)
+        prev_w = w
+
     strat_daily: dict[date, float] = {}
     base_daily: dict[date, float] = {}
     for i, d in enumerate(rebals):
@@ -285,19 +301,51 @@ def run_backtest(
     common = sorted(set(strat_daily) & set(base_daily))
     if not common:
         return {"error": "no overlapping strategy/baseline trading days in range"}
-    s_cum, b_cum = 1.0, 1.0
-    s_curve, b_curve, s_ser, b_ser, points = [], [], [], [], []
+
+    # Map each rebalance's cost onto the first scored day on/after it (position established).
+    cost_on_date: dict[date, float] = {}
+    if cost_bps:
+        rate = cost_bps / 1e4
+        for d in rebals:
+            hit = next((cd for cd in common if cd >= d), None)
+            if hit is not None:
+                cost_on_date[hit] = cost_on_date.get(hit, 0.0) + turnover_at[d] * rate
+
+    s_cum = b_cum = s_cum_net = 1.0
+    s_curve, s_curve_net, b_curve = [], [], []
+    s_ser, s_ser_net, b_ser, points = [], [], [], []
     for d in common:
-        s_cum *= 1 + strat_daily[d]
+        gross_r = strat_daily[d]
+        net_r = gross_r - cost_on_date.get(d, 0.0)
+        s_cum *= 1 + gross_r
+        s_cum_net *= 1 + net_r
         b_cum *= 1 + base_daily[d]
-        s_ser.append(strat_daily[d])
+        s_ser.append(gross_r)
+        s_ser_net.append(net_r)
         b_ser.append(base_daily[d])
         s_curve.append(s_cum)
+        s_curve_net.append(s_cum_net)
         b_curve.append(b_cum)
-        points.append((d, s_cum, b_cum))
+        # the persisted curve is the headline: net when costs are modelled, else gross.
+        points.append((d, s_cum_net if cost_bps else s_cum, b_cum))
 
-    strat_stats = _stats(s_ser, s_curve)
+    gross_stats = _stats(s_ser, s_curve)
     base_stats = _stats(b_ser, b_curve)
+    strat_stats = _stats(s_ser_net, s_curve_net) if cost_bps else gross_stats
+
+    # Spread t-stat of the (headline) strategy-minus-baseline daily excess. The Harvey-Liu-Zhu
+    # multiple-testing hurdle for a NEWLY claimed factor is t>3.0, not the naive 2.0 — surfaced
+    # so a sweep's winner is judged against the right bar, not in-sample luck.
+    headline = s_ser_net if cost_bps else s_ser
+    excess = [headline[i] - b_ser[i] for i in range(len(common))]
+    spread_tstat: float | None = None
+    if len(excess) > 1:
+        me = st.mean(excess)
+        sde = st.pstdev(excess)
+        spread_tstat = (me / sde * math.sqrt(len(excess))) if sde > 0 else None
+
+    years = (common[-1] - common[0]).days / 365.25
+    turnover_total = sum(turnover_at.values())
     spec = {
         "factor": factor,
         "universe": universe_id,
@@ -305,6 +353,7 @@ def run_backtest(
         "top_n": top_n,
         "weighting": weighting,
         "rebalance": rebalance,
+        "cost_bps": cost_bps,
         "start_date": start_date.isoformat() if start_date else None,
         "end_date": end_date.isoformat() if end_date else None,
     }
@@ -319,6 +368,16 @@ def run_backtest(
         "first_rebalance": rebals[0].isoformat(),
         "first_holding_n": len(weights_at[rebals[0]]),
         "dropped_no_mcap": dropped_no_mcap,  # cap-weighting honesty: names dropped, never zeroed
+        # turnover + transaction-cost honesty (always reported; cost applied only when cost_bps>0)
+        "turnover_ann": (turnover_total / years) if years > 0 else None,
+        "turnover_total": turnover_total,
+        "cost_bps": cost_bps,
+        "cost_drag_total": sum(cost_on_date.values()),
+        "strategy_gross": gross_stats if cost_bps else None,  # net is the headline when costed
+        # statistical-significance guardrail (Harvey-Liu-Zhu): hurdle is t>3.0, not 2.0
+        "spread_tstat": spread_tstat,
+        "spread_tstat_hurdle": 3.0,
+        "spread_significant": (spread_tstat is not None and spread_tstat > 3.0),
     }
 
     # One transaction: never persist a run row whose curve points failed to land.
