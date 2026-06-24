@@ -47,9 +47,11 @@ Reads the same sym database as the sym CLI (`SYM_DB_*` / `SYM_DATABASE_URL`; see
 The API runs on **:8001**, the console on **:3000** (console proxies `/api/*` → :8001).
 
 ```bash
-uv sync
+uv sync --all-packages   # the root is a VIRTUAL workspace — plain `uv sync` installs only the
+                         # (empty) root + dev group and PRUNES member deps (uvicorn, dagster,
+                         # yfinance, …). --all-packages installs every workspace member's deps.
 npm install
-npm run dev          # starts BOTH: API (:8001) + console (:3000)
+npm run dev              # starts BOTH: API (:8001) + console (:3000)
 ```
 
 Or run them separately:
@@ -57,6 +59,13 @@ Or run them separately:
 ```bash
 npm run dev:api      # FastAPI on :8001  (no --reload — restart after API code changes)
 npm run dev:web      # Next console on :3000
+```
+
+Orchestration (Dagster) is a **separate** service — `npm run dev` does NOT start it:
+
+```bash
+DAGSTER_HOME=C:/Projects/qrp/.dagster_home \
+  uv run dagster dev -m lineage.definitions -h 127.0.0.1 -p 3333   # → http://127.0.0.1:3333
 ```
 
 > Note: uvicorn `--reload` is unreliable on this Windows setup — run without it and restart
