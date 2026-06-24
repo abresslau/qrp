@@ -200,3 +200,58 @@ rates_world_daily = ScheduleDefinition(
     execution_timezone="America/New_York",
     default_status=DefaultScheduleStatus.STOPPED,
 )
+
+
+@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
+def commodities_load(context) -> None:
+    """Tail-load the commodity continuous front-month series then validate (commodities owns its
+    steps; trigger-only here).
+
+    Manual: ``uv run commodities price load`` then ``uv run commodities validate``. The load tails a
+    short window (last ~12 days, idempotent equal-value rows skip) so the daily tick is a light
+    top-up, not a full re-pull. A FAIL in validate (exit 2) turns the run red and triggers the retry.
+    """
+    root = str(repo_root())
+    scheduled = getattr(context, "run", None)
+    tick = (scheduled.tags.get("dagster/scheduled_execution_time") if scheduled else None)
+    end = (tick or "")[:10] or date.today().isoformat()
+    start = (date.fromisoformat(end) - timedelta(days=12)).isoformat()
+    load = subprocess.run(
+        [sys.executable, "-m", "commodities.cli", "price", "load",
+         "--start_date", start, "--end_date", end],
+        cwd=root, capture_output=True, text=True, timeout=3600,
+    )
+    context.log.info((load.stdout or "")[-4000:])
+    if load.returncode != 0:
+        context.log.error(
+            f"commodities price load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
+        raise RuntimeError(f"`commodities price load` exited {load.returncode}")
+    val = subprocess.run(
+        [sys.executable, "-m", "commodities.cli", "validate"],
+        cwd=root, capture_output=True, text=True, timeout=600,
+    )
+    context.log.info((val.stdout or "")[-4000:])
+    if val.returncode != 0:
+        raise RuntimeError(f"`commodities validate` exited {val.returncode} (a check FAILED)")
+
+
+@job(
+    name="commodities",
+    description="Daily commodity prices (Tier-A vendor continuous front-month) — tail load + "
+    "validate across the whole universe (energy / metals / grains / softs / livestock). "
+    "Manual: `uv run commodities price load`.",
+)
+def commodities_job():
+    commodities_load()
+
+
+# Weekdays 18:30 America/New_York — after the US futures (NYMEX/COMEX/CBOT/ICE) settle and the
+# vendor continuous series refresh. Timezone ALWAYS explicit (the hard requirement). STOPPED until
+# enabled in the Dagster UI.
+commodities_daily = ScheduleDefinition(
+    name="commodities_daily",
+    job=commodities_job,
+    cron_schedule="30 18 * * 1-5",
+    execution_timezone="America/New_York",
+    default_status=DefaultScheduleStatus.STOPPED,
+)

@@ -43,6 +43,12 @@ description = "Fixed-income yield curves (Bank of England UK curves)"
 enabled = true
 
 [[modules]]
+key = "commodities"
+name = "commodities"
+description = "Daily commodity prices — energy, metals, agriculture, softs, livestock"
+enabled = true
+
+[[modules]]
 key = "altdata"
 name = "alt data"
 description = "Alternative data"

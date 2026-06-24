@@ -257,6 +257,10 @@ def create_app() -> FastAPI:
         from rates.router import router as rates_router  # standalone package (fixed-income curves)
 
         app.include_router(rates_router)
+    if "commodities" in enabled:
+        from commodities.router import router as commodities_router  # standalone package
+
+        app.include_router(commodities_router)
     if "signals" in enabled:
         from signals.router import router as signals_router
 
