@@ -20,6 +20,42 @@ function pct(v: number | null | undefined): string {
 function num(v: number | null | undefined): string {
   return v == null ? "—" : v.toFixed(2);
 }
+// 0..1 probability → unsigned percent (DSR / PBO), distinct from the signed-return `pct`.
+function prob(v: number | null | undefined): string {
+  return v == null ? "—" : `${(v * 100).toFixed(1)}%`;
+}
+
+// Sweep / overfitting verdict shapes. Local types (not Schemas) — the sweep models post-date the
+// last api-types regen, which needs a live API restart; mirrors how the rates page carries local
+// types until the generated ones catch up.
+type SweepVerdict = {
+  n_configs: number;
+  n_runnable: number;
+  n_common_days: number;
+  actual_years: number;
+  sigma_sr: number;
+  deflated_sharpe: {
+    dsr: number | null;
+    sharpe_ann: number;
+    sr_benchmark: number;
+    n_obs: number;
+    n_trials: number;
+  } | null;
+  pbo: { pbo: number | null; n_splits: number; n_combos: number } | null;
+  min_btl_years: number | null;
+  min_btl_satisfied: boolean;
+  best: { config: Record<string, unknown>; run_id: number | null; sharpe_ann: number } | null;
+  verdict_credible: boolean;
+};
+type SweepSummary = {
+  sweep_id: number;
+  created_at: string | null;
+  base_spec: Record<string, unknown> | null;
+  grid: Record<string, unknown> | null;
+  n_configs: number;
+  best_run_id: number | null;
+  summary: SweepVerdict | null;
+};
 
 function EquityCurve({ detail }: { detail: RunDetail }) {
   const { sPath, bPath, xticks, hi } = useMemo(() => {
@@ -130,6 +166,102 @@ function StatBlock({ title, s, accent }: { title: string; s: Stats; accent?: boo
   );
 }
 
+/** Overfitting verdict for a parameter sweep: Deflated Sharpe, PBO (CSCV), MinBTL — the
+ * selection-bias defence over N trials. Reads the persisted sweep summary. */
+function SweepVerdict({
+  sweep,
+  onViewRun,
+}: {
+  sweep: SweepSummary;
+  onViewRun: (runId: number) => void;
+}) {
+  const s = sweep.summary;
+  if (!s) return <p className="text-sm text-muted">This sweep has no verdict.</p>;
+  const dsr = s.deflated_sharpe?.dsr ?? null;
+  const pboV = s.pbo?.pbo ?? null;
+  const credible = s.verdict_credible;
+  const bestCfg = s.best?.config ?? {};
+  const cfgStr = Object.entries(bestCfg)
+    .map(([k, v]) => `${k === "universe_id" ? "universe" : k}=${String(v)}`)
+    .join(" · ");
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${
+            credible
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          }`}
+          title="Credible only if the best config's Deflated Sharpe > 0.95 AND PBO ≤ 0.05"
+        >
+          {credible ? "✓ survives multiple-testing" : "○ not credible (likely overfit/under-powered)"}
+        </span>
+        <span className="text-xs text-muted">
+          N = <span className="tabular-nums text-fg">{sweep.n_configs}</span> configs
+          {s.n_runnable !== sweep.n_configs ? ` (${s.n_runnable} ran)` : ""} ·{" "}
+          <span className="tabular-nums text-fg">{s.n_common_days}</span> common days
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="rounded-lg border border-border bg-bg p-3">
+          <div className="text-xs uppercase tracking-wide text-muted" title="P(true Sharpe beats the expected best-of-N luck), skew/kurtosis-corrected">
+            Deflated Sharpe
+          </div>
+          <div className="mt-1 text-lg font-medium tabular-nums text-fg">{prob(dsr)}</div>
+          <div className="text-xs text-muted">
+            {dsr == null ? "undefined" : dsr > 0.95 ? "> 0.95 ✓" : "≤ 0.95"} · best SR{" "}
+            <span className="tabular-nums">{num(s.deflated_sharpe?.sharpe_ann)}</span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-bg p-3">
+          <div className="text-xs uppercase tracking-wide text-muted" title="Probability of Backtest Overfitting (CSCV): rate the in-sample-best lands below the out-of-sample median">
+            PBO
+          </div>
+          <div className="mt-1 text-lg font-medium tabular-nums text-fg">{prob(pboV)}</div>
+          <div className="text-xs text-muted">
+            {pboV == null ? "undefined" : pboV <= 0.05 ? "≤ 0.05 ✓" : "> 0.05 reject"} ·{" "}
+            {s.pbo?.n_combos ?? 0} splits
+          </div>
+        </div>
+        <div className="rounded-lg border border-border bg-bg p-3">
+          <div className="text-xs uppercase tracking-wide text-muted" title="Minimum Backtest Length: years of history N trials demand before an in-sample Sharpe is evidence, not luck">
+            MinBTL
+          </div>
+          <div className="mt-1 text-lg font-medium tabular-nums text-fg">
+            {s.min_btl_years == null ? "—" : `${s.min_btl_years.toFixed(1)}y`}
+          </div>
+          <div className="text-xs text-muted">
+            have {s.actual_years.toFixed(1)}y ·{" "}
+            {s.min_btl_satisfied ? "enough ✓" : "too short"}
+          </div>
+        </div>
+      </div>
+      {s.best && (
+        <p className="mt-3 text-xs text-muted">
+          Best config: <span className="text-fg">{cfgStr || "(base)"}</span>
+          {s.best.run_id != null && (
+            <>
+              {" "}·{" "}
+              <button
+                type="button"
+                onClick={() => onViewRun(s.best!.run_id!)}
+                className="text-fg underline"
+              >
+                view run #{s.best.run_id}
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      <p className="mt-1 text-xs text-muted">
+        N = full grid size (conservative; correlated configs only raise the hurdle). Harvey-Liu-Zhu
+        t&gt;3 · Bailey-López de Prado DSR/PBO/MinBTL.
+      </p>
+    </div>
+  );
+}
+
 export default function BacktestPage() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [sel, setSel] = useState<number | null>(null);
@@ -145,6 +277,13 @@ export default function BacktestPage() {
   const [runError, setRunError] = useState<string | null>(null);
   const [savePortfolio, setSavePortfolio] = useState(false);
   const [savedPid, setSavedPid] = useState<number | null>(null);
+  // parameter sweep (overfitting verdict)
+  const [sweeps, setSweeps] = useState<SweepSummary[]>([]);
+  const [selSweep, setSelSweep] = useState<number | null>(null);
+  const [gridTopPct, setGridTopPct] = useState("0.1,0.2,0.3");
+  const [gridRebal, setGridRebal] = useState<Set<string>>(new Set(["monthly", "quarterly"]));
+  const [sweepBusy, setSweepBusy] = useState(false);
+  const [sweepError, setSweepError] = useState<string | null>(null);
 
   useEffect(() => {
     // the strategy's factor menu IS the signals catalog (Q9.4) — incl. cross-module factors
@@ -175,6 +314,67 @@ export default function BacktestPage() {
       .then((d: RunDetail) => setDetail(d))
       .catch(() => setDetail(null));
   }, [sel]);
+
+  const loadSweeps = useCallback(() => {
+    fetch("/api/backtest/sweeps", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d: SweepSummary[]) => {
+        setSweeps(d);
+        if (selSweep == null && d[0]) setSelSweep(d[0].sweep_id);
+      })
+      .catch(() => setSweeps([]));
+  }, [selSweep]);
+
+  useEffect(() => {
+    loadSweeps();
+  }, [loadSweeps]);
+
+  async function runSweep() {
+    setSweepError(null);
+    const topPcts = gridTopPct
+      .split(",")
+      .map((x) => Number(x.trim()))
+      .filter((x) => Number.isFinite(x) && x > 0 && x < 1);
+    const rebal = [...gridRebal];
+    if (topPcts.length === 0) {
+      setSweepError("enter at least one top_pct between 0 and 1 (e.g. 0.1,0.2,0.3)");
+      return;
+    }
+    if (rebal.length === 0) {
+      setSweepError("select at least one rebalance cadence");
+      return;
+    }
+    if (topPcts.length * rebal.length < 2) {
+      setSweepError("a sweep needs ≥ 2 configurations — vary top_pct or add a cadence");
+      return;
+    }
+    const cb = costBps.trim() === "" ? 0 : Number(costBps);
+    setSweepBusy(true);
+    try {
+      const res = await fetch("/api/backtest/sweep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          factor,
+          universe,
+          weighting,
+          cost_bps: Number.isFinite(cb) && cb >= 0 ? cb : 10,
+          grid: { top_pct: topPcts, rebalance: rebal },
+        }),
+      }).then((r) => r.json());
+      if (res.ok) {
+        await Promise.resolve(loadSweeps());
+        if (res.sweep_id != null) setSelSweep(res.sweep_id);
+      } else {
+        const msg = res.error ?? res.detail ?? res;
+        setSweepError(typeof msg === "string" ? msg : JSON.stringify(msg));
+      }
+    } catch {
+      setSweepError("sweep request failed (network or server error)");
+    } finally {
+      setSweepBusy(false);
+    }
+  }
 
   async function run() {
     setSavedPid(null);
@@ -383,6 +583,120 @@ export default function BacktestPage() {
           )}
         </div>
       </div>
+
+      <section className="mt-8">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted">
+          Overfitting sweep
+        </h2>
+        <p className="mt-1 text-sm text-muted">
+          Run the base strategy across a parameter grid and judge the whole set, not the
+          best-looking single run. The grid size N feeds the Deflated Sharpe, the Probability of
+          Backtest Overfitting (PBO via CSCV) and the Minimum Backtest Length — the defence against a
+          sweep manufacturing a spurious winner. Base factor / universe / weighting / cost come from
+          the controls above.
+        </p>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 text-sm text-muted">
+            top_pct grid
+            <input
+              value={gridTopPct}
+              onChange={(e) => setGridTopPct(e.target.value)}
+              placeholder="0.1,0.2,0.3"
+              title="Comma-separated top-quantile cutoffs to sweep, each between 0 and 1"
+              className="w-36 rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg outline-none"
+            />
+          </label>
+          {REBALANCES.map((r) => (
+            <label key={r} className="flex items-center gap-1.5 text-sm text-muted">
+              <input
+                type="checkbox"
+                checked={gridRebal.has(r)}
+                onChange={(e) =>
+                  setGridRebal((prev) => {
+                    const next = new Set(prev);
+                    if (e.target.checked) next.add(r);
+                    else next.delete(r);
+                    return next;
+                  })
+                }
+              />
+              {r}
+            </label>
+          ))}
+          <span className="text-xs text-muted">
+            N ={" "}
+            <span className="tabular-nums text-fg">
+              {gridTopPct.split(",").map((x) => Number(x.trim())).filter((x) => Number.isFinite(x) && x > 0 && x < 1).length *
+                gridRebal.size}
+            </span>{" "}
+            configs
+          </span>
+          <button
+            onClick={runSweep}
+            disabled={sweepBusy}
+            className="rounded-md border border-border bg-fg/10 px-3 py-1.5 text-sm font-medium text-fg hover:bg-fg/20 disabled:opacity-50"
+          >
+            {sweepBusy ? "Sweeping…" : "Run sweep"}
+          </button>
+        </div>
+        {sweepError && (
+          <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            ⚠ {sweepError}
+          </p>
+        )}
+
+        <div className="mt-4 grid gap-5 lg:grid-cols-[16rem_1fr]">
+          <div className="overflow-hidden rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-border">
+                {sweeps.map((sw) => (
+                  <tr
+                    key={sw.sweep_id}
+                    onClick={() => setSelSweep(sw.sweep_id)}
+                    className={`cursor-pointer ${selSweep === sw.sweep_id ? "bg-fg/10" : "hover:bg-fg/5"}`}
+                  >
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1.5 font-medium text-fg">
+                        <span
+                          className={
+                            sw.summary?.verdict_credible
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-amber-600 dark:text-amber-400"
+                          }
+                        >
+                          {sw.summary?.verdict_credible ? "✓" : "○"}
+                        </span>
+                        {String(sw.base_spec?.factor ?? "—")} · {sw.n_configs} configs
+                      </div>
+                      <div className="text-xs text-muted">
+                        DSR {prob(sw.summary?.deflated_sharpe?.dsr)} · PBO{" "}
+                        {prob(sw.summary?.pbo?.pbo)} · {sw.created_at?.slice(0, 10) ?? ""}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {sweeps.length === 0 && (
+                  <tr>
+                    <td className="px-3 py-6 text-center text-muted">No sweeps yet.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="rounded-xl border border-border bg-surface p-4">
+            {(() => {
+              const selectedSweep = sweeps.find((s) => s.sweep_id === selSweep) ?? null;
+              return selectedSweep ? (
+                <SweepVerdict sweep={selectedSweep} onViewRun={setSel} />
+              ) : (
+                <p className="text-sm text-muted">Run or select a sweep to see its verdict.</p>
+              );
+            })()}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
