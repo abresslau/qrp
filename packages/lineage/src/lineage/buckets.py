@@ -139,9 +139,10 @@ BUCKETS_BY_KEY: dict[str, Bucket] = {b.key: b for b in BUCKETS}
 
 # Dagster job name per bucket — a mnemonic ``<asset>_<verb>`` (the command the bucket runs), distinct
 # from the bucket ``key`` (the stable internal id used for dispatch + freshness special-casing). Keeps
-# the bucket jobs readable in the Dagster UI and kills the `rates` clash with `rates_uk_boe`/
-# `rates_world`. Anything not listed keeps its key as the job name (calculations; commodities is the
-# dedicated schedules.py job, not a generated bucket job).
+# the bucket jobs readable + uniform in the Dagster UI (e.g. `rates_load` over a bare `rates`).
+# `rates_load` is the single unified rates job (BoE UK + world + validate); the old split
+# `rates_uk_boe`/`rates_world` jobs were retired. Anything not listed keeps its key as the job name
+# (calculations; commodities is the dedicated schedules.py job, not a generated bucket job).
 JOB_NAMES: dict[str, str] = {
     "fx": "fx_load",
     "equity_prices": "equity_load",

@@ -100,109 +100,6 @@ sym_eod_daily = ScheduleDefinition(
 
 
 @op(retry_policy=RetryPolicy(max_retries=2, delay=300))
-def rates_curve_load(context) -> None:
-    """Load BoE UK yield curves then validate (rates owns its steps; trigger-only here).
-
-    Manual: ``uv run rates curve load`` then ``uv run rates validate``. The load tails the
-    latest BoE bundle (gating a desynced current-day publish); validate runs the reconciliation
-    + stale guards. A FAIL in validate (exit 2) turns the run red and triggers the retry.
-    """
-    root = str(repo_root())
-    load = subprocess.run(
-        [sys.executable, "-m", "rates.cli", "curve", "load"],
-        cwd=root, capture_output=True, text=True, timeout=3600,
-    )
-    context.log.info((load.stdout or "")[-4000:])
-    if load.returncode != 0:
-        context.log.error(f"rates curve load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
-        raise RuntimeError(f"`rates curve load` exited {load.returncode}")
-    val = subprocess.run(
-        [sys.executable, "-m", "rates.cli", "validate"],
-        cwd=root, capture_output=True, text=True, timeout=600,
-    )
-    context.log.info((val.stdout or "")[-4000:])
-    if val.returncode != 0:
-        raise RuntimeError(f"`rates validate` exited {val.returncode} (a curve check FAILED)")
-
-
-@job(
-    name="rates_uk_boe",
-    description="UK (Bank of England) yield curve — daily load + validate. GB ONLY (all other "
-    "countries are in `rates_world`); the BoE is a separate, richer fetch (full gilt nominal/real/"
-    "implied-inflation + OIS). For everything in one run use the `rates` bucket. "
-    "Manual: `uv run rates curve load`.",
-)
-def rates_curve_job():
-    rates_curve_load()
-
-
-# Weekdays 17:15 Europe/London — after BoE's daily yield-curve publish (London time, DST-aware).
-# Timezone is ALWAYS set explicitly (the hard requirement for every schedule). STOPPED until enabled.
-rates_curve_daily = ScheduleDefinition(
-    name="rates_uk_boe_daily",
-    job=rates_curve_job,
-    cron_schedule="15 17 * * 1-5",
-    execution_timezone="Europe/London",
-    default_status=DefaultScheduleStatus.STOPPED,
-)
-
-
-@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
-def rates_world_load(context) -> None:
-    """Tail-load every FX-matrix country's curve (euro area by member) then validate.
-
-    Manual: ``uv run rates curve load-world`` then ``uv run rates validate``. Each source returns its
-    full published history; we pass a short ``--start_date`` window (last ~12 days) so the daily tick
-    is a light idempotent top-up (equal-value rows skip), not a full re-pull. The driver is
-    attempt-all: a single source failing is logged and skipped, so the op only goes red if validate
-    FAILs (exit 2). GB stays on ``rates_curve_daily`` (the BoE archive is a separate fetch)."""
-    root = str(repo_root())
-    scheduled = getattr(context, "run", None)
-    tick = (scheduled.tags.get("dagster/scheduled_execution_time") if scheduled else None)
-    end = (tick or "")[:10] or date.today().isoformat()
-    start = (date.fromisoformat(end) - timedelta(days=12)).isoformat()
-    load = subprocess.run(
-        [sys.executable, "-m", "rates.cli", "curve", "load-world",
-         "--start_date", start, "--end_date", end],
-        cwd=root, capture_output=True, text=True, timeout=5400,
-    )
-    context.log.info((load.stdout or "")[-6000:])
-    if load.returncode != 0:
-        context.log.error(
-            f"rates load-world FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
-        raise RuntimeError(f"`rates curve load-world` exited {load.returncode}")
-    val = subprocess.run(
-        [sys.executable, "-m", "rates.cli", "validate"],
-        cwd=root, capture_output=True, text=True, timeout=900,
-    )
-    context.log.info((val.stdout or "")[-6000:])
-    if val.returncode != 0:
-        raise RuntimeError(f"`rates validate` exited {val.returncode} (a curve check FAILED)")
-
-
-@job(
-    name="rates_world",
-    description="World yield curves (ex-UK) — tail load + validate for every FX-matrix country "
-    "from its central bank (euro area by member). UK is in `rates_uk_boe`; for everything in one "
-    "run use the `rates` bucket. Manual: `uv run rates curve load-world`.",
-)
-def rates_world_job():
-    rates_world_load()
-
-
-# Weekdays 18:30 America/New_York — after the US Treasury par-curve publish and the US cash close,
-# by which point the day's EU/UK/Asia EOD series are also out (Asia is the prior session, fine for
-# daily EOD curves). Timezone ALWAYS explicit (the hard requirement). STOPPED until enabled in the UI.
-rates_world_daily = ScheduleDefinition(
-    name="rates_world_daily",
-    job=rates_world_job,
-    cron_schedule="30 18 * * 1-5",
-    execution_timezone="America/New_York",
-    default_status=DefaultScheduleStatus.STOPPED,
-)
-
-
-@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
 def commodities_load(context) -> None:
     """Tail-load the commodity continuous front-month series then validate (commodities owns its
     steps; trigger-only here).
@@ -327,7 +224,7 @@ def eod_calculations(context, as_of_date: str) -> None:
     description="Full end-of-day in one trigger, in two sequenced stages: eod_data (sym prices / "
     "identity / classify / index levels / FX + rates UK/world + commodities) THEN eod_calculations "
     "(fact_returns PR+TR + validate), which runs only after the data — incl. equity prices — is in. "
-    "Per-asset jobs (sym_eod / rates_uk_boe / rates_world / commodities) remain for granular runs.",
+    "sym_eod / commodities + the per-asset bucket jobs (rates_load, …) remain for granular runs.",
 )
 def eod_job():
     eod_calculations(eod_data())
