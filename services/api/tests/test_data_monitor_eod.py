@@ -133,6 +133,67 @@ def test_row_degrades_to_unknown_on_read_error():
     assert row["actual_date"] is None  # no fabricated date
 
 
+# --- instrument count (distinct entities in the trailing window) ------------------------
+
+
+class _CountConn:
+    """max() returns the latest date; the windowed DISTINCT count returns a fixed N."""
+
+    def __init__(self, count_sql_marker: str, n: int):
+        self._marker, self._n, self.seen = count_sql_marker, n, []
+
+    def execute(self, sql, params=None):
+        self.seen.append(sql)
+        if sql.strip().startswith("SELECT max("):
+            return _Cur(one=(date(2026, 6, 16),))
+        if self._marker in sql:
+            return _Cur(one=(self._n,))
+        raise AssertionError(f"unexpected SQL: {sql}")
+
+
+def _bucket(key):
+    return next(b for b in BUCKETS if b.key == key)
+
+
+def test_instrument_count_is_windowed_distinct_not_single_day():
+    fx = _bucket("fx")
+    conn = _CountConn("count(DISTINCT quote_currency)", 28)
+    n = EodMonitorGateway(conn)._instrument_count(conn, fx, fx.datasets[0])
+    assert n == 28
+    cnt_sql = next(s for s in conn.seen if "count(DISTINCT quote_currency)" in s)
+    # perf + honesty guard: a TRAILING WINDOW (>=), never a single day (=) or a full-table scan
+    assert ">=" in cnt_sql and "GROUP BY" not in cnt_sql
+
+
+def test_rates_count_uses_the_composite_curve_key():
+    rates = _bucket("rates")  # group_column, no single id_column → composite-key count
+    conn = _CountConn("count(DISTINCT (country, curve_set, basis, rate_type))", 36)
+    n = EodMonitorGateway(conn)._instrument_count(conn, rates, rates.datasets[0])
+    assert n == 36
+
+
+def test_count_none_for_buckets_without_a_count_basis():
+    # calculations + universe carry no id_column (the fact_returns full-table-distinct perf trap /
+    # event-log) → no instrument count, never a fabricated number.
+    for key in ("calculations", "universe"):
+        b = _bucket(key)
+        # a conn whose only answer is max(); if a count query were issued it would AssertionError
+        conn = _CountConn("__never__", 0)
+        assert EodMonitorGateway(conn)._instrument_count(conn, b, b.datasets[0]) is None
+
+
+def test_commodities_is_a_bucket_but_not_a_generated_dagster_job():
+    from lineage.bucket_jobs import BUCKET_JOBS, _EXTERNAL_JOB_BUCKETS
+    from lineage.buckets import bucket_keys
+
+    assert "commodities" in bucket_keys()  # on the EOD board
+    cb = _bucket("commodities")
+    assert cb.datasets[0].wide and cb.datasets[0].id_column == "commodity_code"
+    # collision guard: the dedicated `commodities` job (schedules.py) owns the name — no duplicate
+    assert "commodities" in _EXTERNAL_JOB_BUCKETS
+    assert len(BUCKET_JOBS) == len(bucket_keys()) - 1
+
+
 # --- best-effort Dagster run lookup -----------------------------------------------------
 
 

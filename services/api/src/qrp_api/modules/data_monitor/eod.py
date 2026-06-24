@@ -12,7 +12,7 @@ broken down per country with the worst-lagging country surfaced.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import psycopg
 from lineage.buckets import BUCKETS, SYM, Bucket, Dataset
@@ -192,6 +192,30 @@ class EodMonitorGateway:
             })
         return out
 
+    # -- instrument count (distinct entities at the latest day) ----------------------------
+
+    def _instrument_count(self, conn: psycopg.Connection, b: Bucket, ds: Dataset) -> int | None:
+        """Distinct entities active in the TRAILING WINDOW — not a single day: lagged/slow series
+        (per-country rates curves, monthly macro series) don't all print on the very latest date, so a
+        single-day count understates the universe (rates would read "1 curve"). The window is bounded
+        and date-indexed — cheaper than the coverage-session GROUP BY, and NEVER a full-table
+        count(DISTINCT) (the `calculations` bucket carries no id_column for exactly that reason —
+        fact_returns is 28 windows × figis × dates). Rates has no single id_column (a "curve" is a
+        composite key), so it is counted specially. None when the dataset has no count basis."""
+        latest = self._max_date(conn, ds)
+        if latest is None:
+            return None
+        if ds.id_column:
+            sql = (f"SELECT count(DISTINCT {ds.id_column}) FROM {ds.table} "
+                   f"WHERE {ds.date_column} >= %s")
+        elif b.key == "rates":
+            sql = (f"SELECT count(DISTINCT (country, curve_set, basis, rate_type)) FROM {ds.table} "
+                   f"WHERE {ds.date_column} >= %s")
+        else:
+            return None
+        n = self._scalar(conn, sql, (latest - timedelta(days=COVERAGE_WINDOW_DAYS),))
+        return int(n) if n is not None else None
+
     # -- per-bucket row --------------------------------------------------------------------
 
     def _row(self, b: Bucket, latest_session: date | None, runs: dict[str, dict]) -> dict:
@@ -199,6 +223,7 @@ class EodMonitorGateway:
         actual: date | None = None
         coverage: str | None = None
         subgroups: list[dict] = []
+        instrument_count: int | None = None
         error: str | None = None
         try:
             owns_conn = ds.package != SYM
@@ -222,6 +247,7 @@ class EodMonitorGateway:
                     subgroups = self._index_breakdown(conn, latest_session)
                 elif b.key == "universe":
                     subgroups = self._universe_breakdown(conn)
+                instrument_count = self._instrument_count(conn, b, ds)
             finally:
                 if owns_conn:
                     conn.close()
@@ -244,6 +270,8 @@ class EodMonitorGateway:
             "days_behind": fresh.days_behind,
             "status": status,
             "coverage": coverage,
+            "instrument_count": instrument_count,
+            "instrument_label": ds.count_label,
             "error": error,
             "subgroups": subgroups,
             "last_run": runs.get(b.key),

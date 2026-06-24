@@ -487,3 +487,14 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 - **fed_gsw: a nominal-file download failure also drops the TIPS curves** [rates/sources/fed_gsw.py] — `fetch` downloads `feds200628` then `feds200805` with no per-file guard, so a transient failure on only the nominal file loses the (independently fetchable) real/inflation curves for that run. The CLI attempt-all isolates US/fed_gsw from US/ustreasury (no crash), but unlike the ECB per-series tolerance, the two GSW files fail as a unit. Wrap each file independently if partial GSW loads become desirable.
 - **gateway `curve()` takes `source = rows[0][2]`** [rates/gateway.py] — assumes every node of one series/day shares a single source (true today). If a future backfill ever mixed sources within one (series, day), the surfaced provenance would be the first row's only. Benign; documented.
 - **`band_pp=20` backfill band applied to Fed GSW daily 60-year history** [rates/cli.py load-world] — the 20pp band was tuned for monthly/sparse official series; GSW is daily back to 1961 and includes the early-1980s rate spikes. Verify a full GSW backfill isn't spuriously routing real large moves to review (the band only means to catch decimal-shift corruption).
+
+## Deferred from: code review of data-monitor-compact-counts (2026-06-24)
+
+- **Rates instrument-count column coupling** [data_monitor/eod.py `_instrument_count`] — the rates
+  "curve" count hardcodes `count(DISTINCT (country, curve_set, basis, rate_type))`; those three
+  non-`country` column names live only in the gateway, decoupled from the `rates` `Dataset` (which
+  declares just `group_column="country"`). Verified correct against `curve_point.sql`+`multi_country.sql`
+  and it degrades safely (a rates-schema rename → caught by the never-500 try/except → bucket reads
+  `unknown`, no count). If the rates schema drifts, the board would mask it behind an "unknown" pill
+  rather than failing loudly. Promote the curve key into the `Dataset` (e.g. a `count_columns` tuple)
+  if a second composite-count bucket appears.

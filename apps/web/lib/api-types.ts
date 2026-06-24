@@ -1729,6 +1729,10 @@ export interface components {
             status: string;
             /** Coverage */
             coverage?: string | null;
+            /** Instrument Count */
+            instrument_count?: number | null;
+            /** Instrument Label */
+            instrument_label?: string | null;
             /** Error */
             error?: string | null;
             /**

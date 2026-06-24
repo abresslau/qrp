@@ -22,6 +22,8 @@ export type BucketRow = {
   days_behind: number | null;
   status: "ok" | "stale" | "unknown";
   coverage: string | null;
+  instrument_count: number | null;
+  instrument_label: string | null;
   error: string | null;
   subgroups: Subgroup[];
   last_run: Run;
@@ -84,7 +86,7 @@ export function EodTable({ buckets }: { buckets: BucketRow[] }) {
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-end gap-3">
+      <div className="mb-1 flex items-center justify-end gap-3">
         {staleOnly && (
           <span className="text-xs text-muted">{shown.length} of {buckets.length} buckets behind</span>
         )}
@@ -106,13 +108,13 @@ export function EodTable({ buckets }: { buckets: BucketRow[] }) {
         <table className="w-full min-w-[820px] text-sm">
           <thead>
             <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted">
-              <th className="px-3 py-2 font-medium">Bucket</th>
-              <th className="px-3 py-2 font-medium">Dataset</th>
-              <th className="px-3 py-2 text-right font-medium">Expected</th>
-              <th className="px-3 py-2 text-right font-medium">Actual</th>
-              <th className="px-3 py-2 text-right font-medium">Behind</th>
-              <th className="px-3 py-2 text-center font-medium">Status</th>
-              <th className="px-3 py-2 font-medium">Last run</th>
+              <th className="px-3 py-1.5 font-medium">Bucket</th>
+              <th className="px-3 py-1.5 font-medium">Dataset</th>
+              <th className="px-3 py-1.5 text-right font-medium">Expected</th>
+              <th className="px-3 py-1.5 text-right font-medium">Actual</th>
+              <th className="px-3 py-1.5 text-right font-medium">Behind</th>
+              <th className="px-3 py-1.5 text-center font-medium">Status</th>
+              <th className="px-3 py-1.5 font-medium">Last run</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
@@ -188,8 +190,13 @@ function BucketRows({ b, subs, expanded, toggleable, onToggle, launch, onRun }: 
         className={`align-top ${toggleable ? "cursor-pointer" : ""} hover:bg-fg/5`}
         onClick={onToggle}
       >
-        <td className="px-3 py-2.5">
-          <div className="flex items-center gap-1.5 font-medium text-fg">
+        <td className="px-3 py-1 2xl:py-2">
+          {/* note + coverage (the honest freshness caveats) live in the label tooltip — kept off the
+              row to preserve the no-scroll density; visible on hover for every bucket. */}
+          <div
+            className="flex items-center gap-1.5 font-medium text-fg"
+            title={[b.coverage, b.note].filter(Boolean).join(" · ") || undefined}
+          >
             {hasSub && (
               <span
                 className={`text-muted transition-transform ${expanded ? "rotate-90" : ""} ${toggleable ? "" : "opacity-40"}`}
@@ -200,15 +207,20 @@ function BucketRows({ b, subs, expanded, toggleable, onToggle, launch, onRun }: 
             )}
             {b.label}
             {hasSub && <span className="text-xs font-normal text-muted/60">({b.subgroups.length})</span>}
+            {b.instrument_count != null && (
+              <span
+                className="text-xs font-normal tabular-nums text-muted/70"
+                title={[b.coverage, b.note].filter(Boolean).join(" · ") || undefined}
+              >
+                · {b.instrument_count.toLocaleString()}
+                {b.instrument_label ? ` ${b.instrument_label}` : ""}
+              </span>
+            )}
           </div>
-          <div className="pl-[1.1rem] text-xs text-muted">
-            by {b.subcategory}
-            {b.cadence === "slow" && <span className="ml-1 text-muted/60">· slow-cadence</span>}
-          </div>
-          {(b.coverage || b.note) && (
-            <div className="pl-[1.1rem] mt-0.5 text-xs text-muted/70">{b.coverage ?? b.note}</div>
-          )}
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-[1.1rem]">
+          {/* one compact meta line: subcategory + cadence + inline run chips (no separate row) */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 pl-[1.1rem] text-xs text-muted">
+            <span>by {b.subcategory}</span>
+            {b.cadence === "slow" && <span className="text-muted/60">slow-cadence</span>}
             <RunBtn label="▷ Run" st={launch[b.key]} onClick={() => onRun(b.key, [], b.key)} />
             {b.run_subcategories.map((opt) => (
               <RunBtn
@@ -220,18 +232,18 @@ function BucketRows({ b, subs, expanded, toggleable, onToggle, launch, onRun }: 
             ))}
           </div>
         </td>
-        <td className="px-3 py-2.5 font-mono text-xs text-muted">{b.datasets.join(", ")}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-muted">{b.expected_date ?? "—"}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-fg">{b.actual_date ?? "—"}</td>
-        <td className="px-3 py-2.5 text-right tabular-nums text-muted">
+        <td className="px-3 py-1 2xl:py-2 font-mono text-xs text-muted">{b.datasets.join(", ")}</td>
+        <td className="px-3 py-1 2xl:py-2 text-right tabular-nums text-muted">{b.expected_date ?? "—"}</td>
+        <td className="px-3 py-1 2xl:py-2 text-right tabular-nums text-fg">{b.actual_date ?? "—"}</td>
+        <td className="px-3 py-1 2xl:py-2 text-right tabular-nums text-muted">
           {b.days_behind === null ? "—" : `${b.days_behind}d`}
         </td>
-        <td className="px-3 py-2.5 text-center">
+        <td className="px-3 py-1 2xl:py-2 text-center">
           <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${pill(b.status)}`}>
             {b.error ? "unknown" : b.status}
           </span>
         </td>
-        <td className="px-3 py-2.5 text-xs">
+        <td className="px-3 py-1 2xl:py-2 text-xs">
           <span className="flex flex-wrap items-center gap-1.5">
             {b.last_run ? (
               <>

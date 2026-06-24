@@ -1,6 +1,6 @@
 # Story: Data Monitor — compact tab-less board with per-bucket instrument counts + commodities
 
-Status: ready-for-dev
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-24 (Andre, three asks in one):
   (1) "make the Data Monitor EOD more compact so I can see most jobs without scrolling";
@@ -182,3 +182,90 @@ http://127.0.0.1:8001/openapi.json -o apps/web/lib/api-types.ts` — same tool u
 - `apps/web/components/eod-table.tsx` — compaction + render the count + `BucketRow` field.
 - `apps/web/lib/api-types.ts` — regenerate against the live API after the model change.
 - `services/api/tests/test_data_monitor_eod.py` — extend.
+
+## Dev Agent Record
+
+**Implemented 2026-06-24 (bmad-dev-story).** All 7 ACs met.
+
+### Backend (taxonomy + counts + commodities)
+- `lineage/buckets.py`: added `COMMODITIES` constant + a `commodities` bucket (`commodities.price_daily`,
+  `wide`, `id_column="commodity_code"`, `count_label="commodities"`); added `count_label` to `Dataset`
+  and `id_column`/`count_label` to fx (`quote_currency`/pairs), equity (names), index_levels
+  (`sym_id`/indices), fundamental (`composite_figi`/names), alt_data (`composite_figi`/series), macro
+  (`series_id`/series); rates gets `count_label="curves"` (composite-key count, no single id).
+- `lineage/bucket_jobs.py`: `_EXTERNAL_JOB_BUCKETS = {"commodities"}` excludes it from generated
+  `BUCKET_JOBS` (AC#5 — the dedicated `commodities` job in `schedules.py` owns the name; verified
+  `definitions.py` loads with no duplicate, BUCKET_JOBS = 9, bucket_keys = 10).
+- `data_monitor/eod.py`: new `_instrument_count` — a **trailing-window** (`>= max-90d`) `count(DISTINCT
+  id)` (composite key for rates). Windowed not single-day because lagged/slow series (per-country
+  curves, monthly macro) don't all print on the latest date — single-day read "1 curve"; windowed
+  reads the real 36. Bounded + date-indexed (cheaper than the coverage GROUP BY); `calculations` +
+  `universe` carry no id_column → no count (the fact_returns full-distinct perf trap / event-log).
+  Added `instrument_count`/`instrument_label` to the row; endpoint still never-500s (per-row try/except).
+- `data_monitor/router.py`: `EodBucketRow` gains `instrument_count`/`instrument_label`.
+
+### Frontend (tab-less + compact)
+- Moved the board to the area index `app/data-monitor/page.tsx` (was a redirect); **deleted**
+  `app/data-monitor/eod/`; title "Data Monitor" (no "— EOD").
+- `app/data-monitor/layout.tsx`: removed the tab strip, kept the viewport-sizing + overflow wrapper.
+- `lib/nav.ts`: `DATA_MONITOR_SUBNAV = []` (no sub-tabs).
+- `components/eod-table.tsx`: `BucketRow` += count fields; render the count inline on the label line
+  (`· 28 pairs`, coverage string as its title); merged the stacked meta lines into one and inlined the
+  run chips (reclaims a row per bucket); two-tier density (`py-1` base, `2xl:py-2`).
+
+### Verification
+- **Backend:** 48 tests (13 data_monitor incl. 4 new: windowed-distinct guard, rates composite count,
+  no-count buckets, commodities-bucket-not-a-generated-job + 35 lineage); full api+lineage suite 208
+  green; ruff clean; `import lineage.definitions` OK.
+- **API restarted** → live `GET /api/data-monitor/eod` returns 10 buckets with counts (fx 28 pairs,
+  commodities 22, rates 36 curves, macro 64 series, …); `api-types.ts` regenerated (carries the new
+  fields). Launch chip for commodities resolves to the real `commodities` Dagster job.
+- **CDP (headless Chrome, dedicated instance, cleaned up):** at **1440×900** and **1366×768** the board
+  shows all 10 buckets with `needsScroll=false` (scrollHeight==clientHeight); no `/data-monitor/eod`
+  tab (only `/data-monitor`); commodities row + `pairs`/`curves` counts present. Web tsc/eslint not
+  runnable locally (the standing `node_modules` caveat) — page verified via CDP (sanctioned method).
+
+### File List
+- `packages/lineage/src/lineage/buckets.py` (M)
+- `packages/lineage/src/lineage/bucket_jobs.py` (M)
+- `services/api/src/qrp_api/modules/data_monitor/eod.py` (M)
+- `services/api/src/qrp_api/modules/data_monitor/router.py` (M)
+- `services/api/tests/test_data_monitor_eod.py` (M — +4 tests)
+- `apps/web/app/data-monitor/page.tsx` (M — redirect → board)
+- `apps/web/app/data-monitor/eod/page.tsx` (DELETED)
+- `apps/web/app/data-monitor/layout.tsx` (M — tab strip removed)
+- `apps/web/lib/nav.ts` (M — DATA_MONITOR_SUBNAV = [])
+- `apps/web/components/eod-table.tsx` (M — count + compaction)
+- `apps/web/lib/api-types.ts` (M — regenerated)
+
+### Change Log
+- 2026-06-24: Data Monitor de-tabbed (board at /data-monitor) + per-bucket trailing-window instrument
+  counts + new commodities bucket (job-collision-guarded) + two-tier compaction (fits 1366×768
+  no-scroll). Status → review.
+
+## Senior Developer Review (AI) — 2026-06-24
+
+**Outcome: Approve (after 3 patches).** Three adversarial layers (Blind / Edge / Acceptance Auditor)
+on the 784-line, 10-file diff (generated api-types.ts excluded). Auditor: **AC1–AC7 all met**; the
+documented single-day→trailing-90-day deviation holds AC6's intent on every property (bounded,
+index-cheap, no full-table distinct, calc/universe carry no count, never-500). **Triage: 0 decision ·
+3 patch (applied) · 1 defer · 3 dismiss.** No High survived.
+
+Patches applied:
+- **[Med] Dead link** — `apps/web/app/sym/page.tsx:131` linked the deleted `/data-monitor/eod` →
+  fixed to `/data-monitor` (the one real regression from removing the route; grep confirmed it was
+  the only stale link).
+- **[Med] False API contract** — `router.py`/`buckets.py` comments described the count as "single-day
+  / at the latest day" while the code is windowed → reworded to "recent trailing window".
+- **[Low] Honesty caveats + null-label** — the compaction dropped the bucket `note`; restored
+  `coverage`+`note` as a hover tooltip on the bucket label (inline re-broke the 1366×768 no-scroll —
+  CDP-confirmed 785>736, reverted), covering count-less buckets too; fixed a dangling space when
+  `instrument_label` is null.
+
+Deferred (deferred-work.md): rates composite-count column names hardcoded in the gateway, decoupled
+from the `Dataset`. Dismissed: SQL f-string interpolation (frozen `BUCKETS` constants, no injection),
+`DATA_MONITOR_SUBNAV=[]` (sidebar gates on `sub.length`, palette iterates empty — both handled),
+nav.ts whole-file CRLF churn (git normalizes; staged diff is 4/3).
+
+Post-patch: ruff clean, 13 data_monitor tests green, CDP re-verified no-scroll @1440×900 & 1366×768.
+Status → done.

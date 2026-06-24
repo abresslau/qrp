@@ -55,6 +55,8 @@ class EodBucketRow(BaseModel):
     days_behind: int | None = None
     status: str  # ok | stale | unknown
     coverage: str | None = None
+    instrument_count: int | None = None  # distinct entities active in the recent trailing window
+    instrument_label: str | None = None  # unit for the count (pairs/names/series/commodities/…)
     error: str | None = None
     subgroups: list[EodSubgroup] = []
     last_run: EodRun | None = None

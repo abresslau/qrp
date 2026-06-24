@@ -27,6 +27,7 @@ SYM = "sym"
 RATES = "rates"
 MACRO = "macro"
 ALTDATA = "altdata"
+COMMODITIES = "commodities"
 
 
 @dataclass(frozen=True)
@@ -39,8 +40,10 @@ class Dataset:
     date_column: str        # the business-date column to take max() / coverage-session over
     label: str              # human label for the page (e.g. "sym.prices_raw")
     wide: bool = False      # True → use the broadly-complete coverage session, not a plain max()
-    id_column: str | None = None   # entity key for the coverage-session count (wide datasets)
+    id_column: str | None = None   # entity key for the instrument count (DISTINCT over a recent window)
     group_column: str | None = None  # subcategory key for per-group worst-lag (e.g. rates.country)
+    count_label: str | None = None   # unit for the instrument count on the page (e.g. "pairs",
+    #                                  "names", "series", "commodities", "indices", "curves")
 
 
 @dataclass(frozen=True)
@@ -66,38 +69,50 @@ class Bucket:
 BUCKETS: tuple[Bucket, ...] = (
     Bucket(
         "fx", "FX rates", "source",
-        (Dataset(SYM, "fx_rate", "as_of_date", "sym.fx_rate"),),
+        (Dataset(SYM, "fx_rate", "as_of_date", "sym.fx_rate",
+                 id_column="quote_currency", count_label="pairs"),),
     ),
     Bucket(
         "equity_prices", "Equity prices", "universe",
         (Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw",
-                 wide=True, id_column="composite_figi"),),
+                 wide=True, id_column="composite_figi", count_label="names"),),
     ),
     Bucket(
         "index_levels", "Index levels", "provider",
-        (Dataset(SYM, "index_levels", "session_date", "sym.index_levels"),),
+        (Dataset(SYM, "index_levels", "session_date", "sym.index_levels",
+                 id_column="sym_id", count_label="indices"),),
         run_options=("yahoo", "msci"),  # yahoo = `sym indices`; msci = `sym msci-pull`
     ),
     Bucket(
+        "commodities", "Commodities", "commodity",
+        (Dataset(COMMODITIES, "commodities.price_daily", "as_of_date", "commodities.price_daily",
+                 wide=True, id_column="commodity_code", count_label="commodities"),),
+    ),
+    Bucket(
         "rates", "Rates curves", "country",
+        # group_column drives the per-country worst-lag; the instrument count is the number of
+        # distinct curves (a composite key) over a recent window — handled specially in the gateway.
         (Dataset(RATES, "rates.curve_point", "as_of_date", "rates.curve_point",
-                 group_column="country"),),
+                 group_column="country", count_label="curves"),),
         note="per-country; worst-lagging country shown",
     ),
     Bucket(
         "fundamental", "Fundamentals", "universe",
-        (Dataset(SYM, "fundamentals", "as_of_date", "sym.fundamentals"),),
+        (Dataset(SYM, "fundamentals", "as_of_date", "sym.fundamentals",
+                 id_column="composite_figi", count_label="names"),),
         cadence="slow",
         note="vendor-cadence; lags the price tape by design",
     ),
     Bucket(
         "alt_data", "Alt data", "source",
-        (Dataset(ALTDATA, "altdata.observation", "obs_date", "altdata.observation"),),
+        (Dataset(ALTDATA, "altdata.observation", "obs_date", "altdata.observation",
+                 id_column="composite_figi", count_label="series"),),
         cadence="slow",
     ),
     Bucket(
         "macro", "Macro", "source",
-        (Dataset(MACRO, "macro.observation", "obs_date", "macro.observation"),),
+        (Dataset(MACRO, "macro.observation", "obs_date", "macro.observation",
+                 id_column="series_id", count_label="series"),),
         cadence="slow",
         note="monthly/quarterly series; large lag is normal",
     ),
