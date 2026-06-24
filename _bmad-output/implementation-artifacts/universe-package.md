@@ -1,6 +1,6 @@
 # Story: Extract `universe` into its own peer package WITH its own database
 
-Status: in-progress  <!-- P1 (scaffold + universe DB) DONE + committed 72a8032; P2-P4 remain — see Dev Agent Record -->>
+Status: review  <!-- P1-P4 ALL DONE + committed (72a8032, 184cfb0, 5b119f2, ee50fa1) on feat/universe-package; extraction complete, all suites green, live cross-DB verified. Ready for code-review. -->>
 
 <!-- Created via bmad-create-story 2026-06-24 (Andre: "feels like universe should be a separate
 package" → "do it" → "change also to separate database"). FINAL DECISION: approach **B** — a full
@@ -201,15 +201,32 @@ first. Independent; no hard ordering dependency, but they share the cross-cuttin
   universe subcommands, eod monitor step, ingest price-load bridge (roster-fetch), backtest/signals
   `_members`. Topology contract updated (universe relations → peer reads). Suites green: universe 153,
   sym 641, backtest 39, signals 14, lineage+api 215; ruff clean.
-- [ ] **P4 — Cut over the READ-ONLY consumers + drop from sym (REMAINING)**: rewire to the universe DB
-  — `validate/{completeness,projection,readiness,plans}` (the EOD gate; completeness/readiness are
-  cross-DB roster-fetch + write `universe_member_completeness` in sym), `api modules/sym/gateway`
-  (~8 universe reads: explorer/coverage/members/proposals → inject a universe conn like fx `_fx()`),
-  `api modules/data_monitor` (universe bucket + breakdown), `indices/links.py` (members + benchmark),
-  `fundamentals.resolved_member_figis`. THEN a sym migration dropping the 7 tables (universe_benchmark
-  stays; drop its universe_id FK → soft ref) + no-op the stale verify scripts + remove from
-  SYM_READ_SURFACE grants. Until P4, those consumers read sym's still-present tables (system works;
-  AC#3 not yet met).
+- [x] **P4 — Cut over the READ-ONLY consumers + drop from sym (DONE, committed `5b119f2` + `ee50fa1`)**:
+  rewired to the universe DB — `validate/{completeness,readiness}` (cross-DB roster-fetch; completeness
+  writes `universe_member_completeness` in sym), `validate/{projection,plans}` + `referential_integrity`
+  (universe seams) via the runner's `_with_universe` per-check conn; `api gateway` (universes/coverage/
+  heatmap/live_heatmap/securities-universe-filter/proposals) via an injected universe conn (coverage +
+  heatmap joins → roster-fetch + Python aggregation); `data_monitor` (bucket package=universe + the
+  breakdowns); `indices/links` + `fundamentals.resolved_member_figis`; sym_contract relations moved to
+  UNIVERSE_RELATIONS. THEN `sym:universe_extract` dropped the 7 tables (universe_benchmark +
+  universe_member_completeness stay; their universe_id FK → soft ref); 8 stale verify scripts no-op'd;
+  qrp_readonly grant now 13 relations. AC#3 met — no universe_* tables in sym.
+
+### Completion Notes
+Universe is now a full peer package with its own `universe` database; one-way `sym → universe` (import-
+guard clean). All ACs met. Verified LIVE with the tables only in the universe DB: backtest _members(sp500)
+=501, gateway universe_coverage + 633-cell heatmap, `sym validate` runs every universe check cross-DB
+(referential/projection/readiness/maintenance/completeness — no crashes; the 2 remaining validate fails
+are pre-existing DATA gaps — 13 incomplete members, 9 unpriced — not regressions), `sym universe members`.
+deploy_all --status clean (sym + universe + fx). Suites: universe 153, sym 641, backtest 39, signals 14,
+lineage+api 215; ruff clean. 7 documented deviations (resolver impl/ingest/fundamentals stay in sym as
+the injected adapter; etc.) all serve AC#2 + behavior preservation.
+
+## Change Log
+- 2026-06-24/25: Story (approach B) implemented across 5 commits on feat/universe-package: P1 scaffold +
+  universe DB (72a8032); P2 invert circular dep via Resolver + P3 migrate data + rewire core consumers
+  (184cfb0); P4a read-only-consumer cutover (5b119f2); P4b drop the 7 tables from sym + cross-DB
+  referential check (ee50fa1). All ACs met; suites green; live cross-DB verified. Status → review.
 
 ### Refined design from the coupling map (Explore, 2026-06-24) — READ BEFORE P2
 The map CONFIRMS approach B and sharpens the module split. The inversion is deeper than "inject one
