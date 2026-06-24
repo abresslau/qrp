@@ -291,4 +291,9 @@ def _make_job(b):
     return _bucket_job
 
 
-BUCKET_JOBS = [_make_job(b) for b in BUCKETS]
+# Buckets whose Dagster job is owned elsewhere (a dedicated job in `schedules.py`) and which have no
+# command builder here — they appear on the EOD board (via `buckets.BUCKETS`) but must NOT mint a
+# second job of the same name, which would collide at definitions load.
+_EXTERNAL_JOB_BUCKETS = {"commodities"}  # `commodities` job + schedule live in schedules.py
+
+BUCKET_JOBS = [_make_job(b) for b in BUCKETS if b.key not in _EXTERNAL_JOB_BUCKETS]

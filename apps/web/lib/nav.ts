@@ -39,9 +39,10 @@ export const MONITOR_SUBNAV: SubItem[] = [
 ];
 
 // Data Monitor — the data/ETL observability area (sits near the market Monitor in the rail).
-// Distinct from the market `monitor` boards: this is pipeline health, not market views. v1 = the
-// EOD page (per-bucket expected-vs-actual freshness + Dagster runs); it supersedes the old sym Overview.
-export const DATA_MONITOR_SUBNAV: SubItem[] = [{ href: "/data-monitor/eod", label: "EOD" }];
+// Distinct from the market `monitor` boards: this is pipeline health, not market views. A single
+// tab-less screen at /data-monitor (per-bucket freshness + counts + Dagster runs; supersedes the old
+// sym Overview) — no sub-tabs, so the rail area opens straight to the board.
+export const DATA_MONITOR_SUBNAV: SubItem[] = [];
 
 // rates — the fixed-income curve module (v1 is one page: curve chart + spread monitors).
 export const RATES_SUBNAV: SubItem[] = [{ href: "/rates", label: "Curves & spreads" }];
