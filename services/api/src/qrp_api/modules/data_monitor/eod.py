@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 import psycopg
-from lineage.buckets import BUCKETS, SYM, Bucket, Dataset
+from lineage.buckets import BUCKETS, SYM, Bucket, Dataset, job_name
 
 from qrp_api.config import dagster_job_url, package_dsn
 from qrp_api.modules.data_monitor.dagster_runs import latest_runs_by_job
@@ -311,8 +311,9 @@ class EodMonitorGateway:
             "instrument_label": ds.count_label,
             "error": error,
             "subgroups": subgroups,
-            "last_run": runs.get(b.key),
-            "dagster_url": dagster_job_url(b.key),
+            # Dagster keys runs + the job URL by the JOB name (mnemonic), not the bucket key.
+            "last_run": runs.get(job_name(b.key)),
+            "dagster_url": dagster_job_url(job_name(b.key)),
             "run_subcategories": list(b.run_options),
         }
 

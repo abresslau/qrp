@@ -26,7 +26,7 @@ from datetime import date, timedelta
 from dagster import Config, RetryPolicy, job, op
 from pydantic import Field
 
-from .buckets import BUCKETS
+from .buckets import BUCKETS, job_name
 from .sym_run import repo_root
 
 # A single command = (module, *args); run as ``python -m <module> <args>``. ``critical`` commands
@@ -124,11 +124,11 @@ def _fundamental_one(u: str, a: str) -> list[Cmd]:
 
 
 def _altdata_all(a: str) -> list[Cmd]:
-    return [("altdata.ingest",)]
+    return [("altdata.cli", "load")]
 
 
 def _macro_all(a: str) -> list[Cmd]:
-    return [("macro.ingest",)]
+    return [("macro.cli", "load")]
 
 
 def _universe_all(a: str) -> list[Cmd]:
@@ -276,12 +276,12 @@ def _run_bucket(context, key: str, config: BucketConfig) -> None:
 def _make_job(b):
     # Light retry: bucket jobs are usually operator-triggered, so a long inter-retry wait reads as a
     # "stuck" run. One quick retry covers a transient network blip; a real error surfaces fast.
-    @op(name=f"{b.key}_load", retry_policy=RetryPolicy(max_retries=1, delay=20))
+    @op(name=f"{b.key}_op", retry_policy=RetryPolicy(max_retries=1, delay=20))
     def _bucket_op(context, config: BucketConfig) -> None:
         _run_bucket(context, b.key, config)
 
     @job(
-        name=b.key,
+        name=job_name(b.key),  # mnemonic <asset>_<verb> (see buckets.JOB_NAMES); key stays the id
         description=f"{b.label} bucket — by {b.subcategory}. Empty subcategories = all; "
         f"set as_of_date for a backfill. Shells the sym/rates/macro/altdata CLI.",
     )

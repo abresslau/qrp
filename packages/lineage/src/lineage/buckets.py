@@ -133,8 +133,30 @@ BUCKETS: tuple[Bucket, ...] = (
     ),
 )
 
-# Quick lookup by key (also the Dagster job name set Part A registers).
+# Quick lookup by key.
 BUCKETS_BY_KEY: dict[str, Bucket] = {b.key: b for b in BUCKETS}
+
+
+# Dagster job name per bucket — a mnemonic ``<asset>_<verb>`` (the command the bucket runs), distinct
+# from the bucket ``key`` (the stable internal id used for dispatch + freshness special-casing). Keeps
+# the bucket jobs readable in the Dagster UI and kills the `rates` clash with `rates_uk_boe`/
+# `rates_world`. Anything not listed keeps its key as the job name (calculations; commodities is the
+# dedicated schedules.py job, not a generated bucket job).
+JOB_NAMES: dict[str, str] = {
+    "fx": "fx_load",
+    "equity_prices": "equity_load",
+    "index_levels": "index_load",
+    "rates": "rates_load",
+    "fundamental": "fundamental_load",
+    "alt_data": "alt_data_load",
+    "macro": "macro_load",
+    "universe": "universe_load",
+}
+
+
+def job_name(key: str) -> str:
+    """The Dagster job name for a bucket key (mnemonic where mapped, else the key itself)."""
+    return JOB_NAMES.get(key, key)
 
 
 def bucket_keys() -> list[str]:
