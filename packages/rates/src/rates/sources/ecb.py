@@ -3,10 +3,13 @@
 Two distinct ECB feeds, both served by the ECB Data Portal SDMX REST API as CSV
 (``?format=csvdata``). Probed 2026-06-22:
 
-  - **Yield Curve (YC)** — the euro-area AAA-rated government-bond spot curve, fitted with the
-    Svensson model, published daily since 2004. One series per maturity; the maturity lives in
-    the ``DATA_TYPE_FM`` dimension as a token like ``SR_10Y``. We enumerate the standard grid and
-    fetch one series per tenor. country="EU", rate_type="spot".
+  - **Yield Curve (YC)** — the euro-area government-bond curve, fitted with the Svensson model,
+    published daily since 2004. Two universes live under the ``REF_AREA``-coded key: AAA-rated
+    central governments (``G_N_A``, the benchmark → curve_set ``govt``) and ALL euro-area central
+    governments (``G_N_C`` → curve_set ``govt_all``; the AAA−all spread is a credit/risk premium).
+    Each publishes three rate types in the ``DATA_TYPE_FM`` dimension — spot (``SR_*``),
+    instantaneous forward (``IF_*``) and par (``PY_*``) — over a standard grid (token ``SR_10Y``).
+    We fetch one series per (universe, rate type, tenor) and concatenate. country="EU".
 
   - **Long-term interest rate for convergence (IRS)** — the Maastricht 10-year benchmark government
     bond yield, monthly since 1986, one series per member state (``REF_AREA`` dimension). country
@@ -30,21 +33,17 @@ from .base import CurvePoint
 
 ECB_BASE = "https://data-api.ecb.europa.eu/service/data"
 
-# Euro-area AAA spot curve: DATA_TYPE_FM maturity token → tenor in years.
-YC_KEY = "B.U2.EUR.4F.G_N_A.SV_C_YM"
-YC_TENORS: dict[str, float] = {
-    "SR_3M": 0.25,
-    "SR_6M": 0.5,
-    "SR_9M": 0.75,
-    "SR_1Y": 1.0,
-    "SR_2Y": 2.0,
-    "SR_3Y": 3.0,
-    "SR_5Y": 5.0,
-    "SR_7Y": 7.0,
-    "SR_10Y": 10.0,
-    "SR_15Y": 15.0,
-    "SR_20Y": 20.0,
-    "SR_30Y": 30.0,
+# Euro-area Svensson yield curves: two universes (REF_AREA-coded key) × three rate types × the grid.
+YC_KEYS: dict[str, str] = {
+    "govt": "B.U2.EUR.4F.G_N_A.SV_C_YM",      # AAA-rated central govts — the benchmark
+    "govt_all": "B.U2.EUR.4F.G_N_C.SV_C_YM",  # all euro-area central govts
+}
+# rate_type → DATA_TYPE_FM token prefix: spot / instantaneous-forward / par.
+YC_RATE_TOKENS: dict[str, str] = {"spot": "SR", "forward": "IF", "par": "PY"}
+# maturity token → tenor in years.
+YC_GRID: dict[str, float] = {
+    "3M": 0.25, "6M": 0.5, "9M": 0.75, "1Y": 1.0, "2Y": 2.0, "3Y": 3.0,
+    "5Y": 5.0, "7Y": 7.0, "10Y": 10.0, "15Y": 15.0, "20Y": 20.0, "30Y": 30.0,
 }
 
 # Long-term convergence rate series key template (one per member state via REF_AREA).
@@ -125,11 +124,15 @@ def _period_params(start_date: date | None, end_date: date | None) -> str:
 
 
 class EcbYieldCurveSource:
-    """Euro-area AAA government-bond Svensson spot curve (daily). ``country`` = ``EU``.
+    """Euro-area government-bond Svensson curves (daily). ``country`` = ``EU``.
 
-    Fetches one series per standard-grid tenor and concatenates them into a full curve. A single
-    bad/empty tenor is tolerated (skipped) so a partial grid still loads; the loader's attempt-all
-    driver plus the core-grid VERIFY guard catch a wholesale outage.
+    Fetches one series per (universe ``govt``/``govt_all``, rate type spot/forward/par, grid tenor)
+    and concatenates them into the full curve set. A single bad/empty/unavailable series is
+    tolerated (skipped) so a partial grid still loads — covering a transport error (OSError/HTTP), a
+    garbled
+    body (a 200 with an HTML/maintenance page → CurveLayoutError) or a non-UTF-8 response
+    (UnicodeDecodeError). But if EVERY series fails (a wholesale outage or a layout drift), fetch
+    raises rather than silently returning nothing.
     """
 
     SOURCE = "ecb"
@@ -141,18 +144,34 @@ class EcbYieldCurveSource:
     ) -> list[CurvePoint]:
         params = _period_params(start_date, end_date)
         out: list[CurvePoint] = []
-        for token, tenor in YC_TENORS.items():
-            url = f"{ECB_BASE}/YC/{YC_KEY}.{token}?{params}"
-            text = _download(url)
-            out.extend(
-                _parse_csv(
-                    text,
-                    country="EU",
-                    curve_set="govt",
-                    basis="nominal",
-                    rate_type="spot",
-                    tenor=tenor,
-                )
+        attempts = 0
+        failures = 0
+        for curve_set, key in YC_KEYS.items():
+            for rate_type, prefix in YC_RATE_TOKENS.items():
+                for token, tenor in YC_GRID.items():
+                    attempts += 1
+                    url = f"{ECB_BASE}/YC/{key}.{prefix}_{token}?{params}"
+                    try:
+                        text = _download(url)
+                        out.extend(
+                            _parse_csv(
+                                text,
+                                country="EU",
+                                curve_set=curve_set,
+                                basis="nominal",
+                                rate_type=rate_type,
+                                tenor=tenor,
+                            )
+                        )
+                    except (OSError, ValueError, CurveLayoutError):
+                        # tolerate ONE bad series (transport error / garbled-200 body / bad decode)
+                        # so a partial grid still loads; a wholesale failure is caught below.
+                        failures += 1
+                        continue
+        if attempts and failures == attempts:
+            raise CurveLayoutError(
+                f"all {attempts} ECB yield-curve series failed to load "
+                "— wholesale outage or SDMX layout drift"
             )
         return out
 

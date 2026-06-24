@@ -48,20 +48,21 @@ def test_curve_sets_shapes_coverage_rows():
 
 
 def test_curve_returns_anchored_grid_latest_vintage():
-    conn = _Conn(anchor=date(2026, 6, 19), point_rows=[(0.5, 3.8), (1.0, 4.1)])
+    conn = _Conn(anchor=date(2026, 6, 19), point_rows=[(0.5, 3.8, "boe"), (1.0, 4.1, "boe")])
     out = DbRatesGateway(conn).curve("GB", "glc", "nominal", "spot")
     assert out["as_of_date"] == "2026-06-19" and out["vintage"] == "latest"
     assert out["country"] == "GB"
     assert out["points"] == [{"tenor": 0.5, "value": 3.8}, {"tenor": 1.0, "value": 4.1}]
+    assert out["source"] == "boe"  # provenance surfaced for the UI
     assert conn.value_cols == ["value"]  # latest vintage reads the `value` column
 
 
 def test_curve_first_vintage_reads_first_value_column():
-    conn = _Conn(anchor=date(2026, 6, 19), point_rows=[(0.5, 3.7)])
+    conn = _Conn(anchor=date(2026, 6, 19), point_rows=[(0.5, 3.7, "boe")])
     DbRatesGateway(conn).curve("GB", "glc", "nominal", "spot", vintage="first")
     assert conn.value_cols == ["first_value"]  # PIT read selects the immutable first value
 
 
 def test_curve_empty_when_no_data_for_anchor():
     out = DbRatesGateway(_Conn(anchor=None)).curve("GB", "glc", "real", "spot")
-    assert out["as_of_date"] is None and out["points"] == []
+    assert out["as_of_date"] is None and out["points"] == [] and out["source"] is None

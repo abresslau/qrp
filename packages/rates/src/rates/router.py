@@ -51,6 +51,7 @@ class Curve(BaseModel):
     rate_type: str
     vintage: str
     as_of_date: str | None
+    source: str | None = None
     points: list[CurvePointOut]
 
 
@@ -61,6 +62,7 @@ class CompareCurve(BaseModel):
     basis: str
     rate_type: str
     as_of_date: str | None
+    source: str | None = None
     points: list[CurvePointOut]
 
 
