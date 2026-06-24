@@ -55,23 +55,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sym/overview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Overview */
-        get: operations["overview"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/sym/universes": {
         parameters: {
             query?: never;
@@ -797,6 +780,193 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/rates/countries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Countries */
+        get: operations["list_countries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/curve/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Curve Series */
+        get: operations["list_curve_series"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/curve/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Curves */
+        get: operations["compare_curves"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/curve/compare/tenor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Compare Tenor */
+        get: operations["compare_tenor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/spreads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Spreads */
+        get: operations["list_spreads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/spread/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Spread */
+        get: operations["get_spread"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/curve/movie": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Curve Movie */
+        get: operations["get_curve_movie"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/rates/curve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Curve */
+        get: operations["get_curve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/commodities/board": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Board */
+        get: operations["get_board"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/commodities/history/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get History */
+        get: operations["get_history"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/commodities/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Coverage */
+        get: operations["get_coverage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/signals/factors": {
         parameters: {
             query?: never;
@@ -842,6 +1012,57 @@ export interface paths {
         put?: never;
         /** Run Backtest Ep */
         post: operations["run_backtest_ep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtest/sweep": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Sweep Ep */
+        post: operations["run_sweep_ep"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtest/sweeps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sweeps */
+        get: operations["list_sweeps"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/backtest/sweeps/{sweep_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Sweep */
+        get: operations["get_sweep"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1007,6 +1228,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/data-monitor/eod": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Data Monitor Eod
+         * @description Per-bucket EOD freshness (expected vs actual business date) + best-effort latest Dagster run.
+         */
+        get: operations["data_monitor_eod"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/data-monitor/launch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Data Monitor Launch
+         * @description Trigger a bucket job in the running Dagster instance (one-click run from the EOD board).
+         *
+         *     ``subcategories`` narrows the run (e.g. ``index_levels`` + ``["msci"]`` runs only `sym msci-pull`).
+         *     Mutating + same-origin-guarded (Story O.3); returns the run id + a deep link to the run, or a
+         *     clean error if Dagster isn't running.
+         */
+        post: operations["data_monitor_launch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1155,6 +1420,45 @@ export interface components {
             /** Currency */
             currency: string | null;
         };
+        /** BoardRow */
+        BoardRow: {
+            /** Code */
+            code: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string;
+            /** Sector Label */
+            sector_label: string;
+            /** Exchange */
+            exchange: string;
+            /** Currency */
+            currency: string;
+            /** Unit */
+            unit: string;
+            /** As Of Date */
+            as_of_date: string | null;
+            /** Last */
+            last: number | null;
+            /** Prev */
+            prev: number | null;
+            /** Chg 1D */
+            chg_1d: number | null;
+            /** Pct 1D */
+            pct_1d: number | null;
+            /** Pct 1W */
+            pct_1w: number | null;
+            /** Pct 1M */
+            pct_1m: number | null;
+            /** Pct Ytd */
+            pct_ytd: number | null;
+            /** Pct 1Y */
+            pct_1y: number | null;
+            /** Volume */
+            volume: number | null;
+            /** Spark */
+            spark: number[];
+        };
         /** CategorySummary */
         CategorySummary: {
             /** Category */
@@ -1185,6 +1489,40 @@ export interface components {
             created_at: string | null;
             /** N Portfolios */
             n_portfolios: number;
+        };
+        /** CompareCurve */
+        CompareCurve: {
+            /** Country */
+            country: string;
+            /** Currency */
+            currency: string | null;
+            /** Curve Set */
+            curve_set: string;
+            /** Basis */
+            basis: string;
+            /** Rate Type */
+            rate_type: string;
+            /** As Of Date */
+            as_of_date: string | null;
+            /** Source */
+            source?: string | null;
+            /** Points */
+            points: components["schemas"]["CurvePointOut"][];
+        };
+        /** CompareTenor */
+        CompareTenor: {
+            /** Country */
+            country: string;
+            /** Curve Set */
+            curve_set: string;
+            /** Basis */
+            basis: string;
+            /** Rate Type */
+            rate_type: string;
+            /** Tenor */
+            tenor: number;
+            /** Points */
+            points: components["schemas"]["SparkPoint"][];
         };
         /** CompositionHolding */
         CompositionHolding: {
@@ -1235,6 +1573,34 @@ export interface components {
             /** Freshness */
             freshness: string;
         };
+        /** Country */
+        Country: {
+            /** Country */
+            country: string;
+            /** Currency */
+            currency: string | null;
+            /** Start Date */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
+        };
+        /** Coverage */
+        Coverage: {
+            /** Code */
+            code: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string | null;
+            /** Days */
+            days: number;
+            /** Start Date */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
+            /** Source */
+            source: string | null;
+        };
         /** CreateClient */
         CreateClient: {
             /** Name */
@@ -1267,6 +1633,45 @@ export interface components {
             /** Portfolio Id */
             portfolio_id: number;
         };
+        /** Curve */
+        Curve: {
+            /** Country */
+            country: string;
+            /** Curve Set */
+            curve_set: string;
+            /** Basis */
+            basis: string;
+            /** Rate Type */
+            rate_type: string;
+            /** Vintage */
+            vintage: string;
+            /** As Of Date */
+            as_of_date: string | null;
+            /** Source */
+            source?: string | null;
+            /** Points */
+            points: components["schemas"]["CurvePointOut"][];
+        };
+        /** CurveMovie */
+        CurveMovie: {
+            /** Country */
+            country: string;
+            /** Curve Set */
+            curve_set: string;
+            /** Basis */
+            basis: string;
+            /** Rate Type */
+            rate_type: string;
+            /** Frames */
+            frames: components["schemas"]["CurveMovieFrame"][];
+        };
+        /** CurveMovieFrame */
+        CurveMovieFrame: {
+            /** As Of Date */
+            as_of_date: string;
+            /** Points */
+            points: components["schemas"]["CurvePointOut"][];
+        };
         /** CurvePoint */
         CurvePoint: {
             /** Obs Date */
@@ -1275,6 +1680,131 @@ export interface components {
             strat: number;
             /** Base */
             base: number;
+        };
+        /** CurvePointOut */
+        CurvePointOut: {
+            /** Tenor */
+            tenor: number;
+            /** Value */
+            value: number;
+        };
+        /** CurveSeries */
+        CurveSeries: {
+            /** Country */
+            country: string;
+            /** Curve Set */
+            curve_set: string;
+            /** Basis */
+            basis: string;
+            /** Rate Type */
+            rate_type: string;
+            /** Days */
+            days: number;
+            /** Start Date */
+            start_date: string | null;
+            /** End Date */
+            end_date: string | null;
+        };
+        /** EodBucketRow */
+        EodBucketRow: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Subcategory */
+            subcategory: string;
+            /** Datasets */
+            datasets: string[];
+            /** Cadence */
+            cadence: string;
+            /** Note */
+            note?: string | null;
+            /** Actual Date */
+            actual_date?: string | null;
+            /** Expected Date */
+            expected_date?: string | null;
+            /** Days Behind */
+            days_behind?: number | null;
+            /** Status */
+            status: string;
+            /** Coverage */
+            coverage?: string | null;
+            /** Error */
+            error?: string | null;
+            /**
+             * Subgroups
+             * @default []
+             */
+            subgroups: components["schemas"]["EodSubgroup"][];
+            last_run?: components["schemas"]["EodRun"] | null;
+            /** Dagster Url */
+            dagster_url?: string | null;
+            /**
+             * Run Subcategories
+             * @default []
+             */
+            run_subcategories: string[];
+        };
+        /** EodMonitor */
+        EodMonitor: {
+            /** Expected Date */
+            expected_date?: string | null;
+            /** Expected Basis */
+            expected_basis: string;
+            /** Dagster Runs Available */
+            dagster_runs_available: boolean;
+            summary: components["schemas"]["EodSummary"];
+            /** Buckets */
+            buckets: components["schemas"]["EodBucketRow"][];
+        };
+        /** EodPipelineRun */
+        EodPipelineRun: {
+            /** Run Id */
+            run_id?: string | null;
+            /** Mode */
+            mode?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Rows Written */
+            rows_written?: number | null;
+        };
+        /** EodRun */
+        EodRun: {
+            /** Status */
+            status?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Source */
+            source?: string | null;
+        };
+        /** EodSubgroup */
+        EodSubgroup: {
+            /** Group */
+            group: string;
+            /** As Of Date */
+            as_of_date?: string | null;
+            /** Days Behind */
+            days_behind?: number | null;
+            /** Detail */
+            detail?: string | null;
+        };
+        /** EodSummary */
+        EodSummary: {
+            /** Securities */
+            securities?: number | null;
+            /** Universes */
+            universes?: number | null;
+            /** Priced Securities */
+            priced_securities?: number | null;
+            /** Latest Session */
+            latest_session?: string | null;
+            last_pipeline_run?: components["schemas"]["EodPipelineRun"] | null;
         };
         /** FactorConstituent */
         FactorConstituent: {
@@ -1348,19 +1878,6 @@ export interface components {
             flows: components["schemas"]["FieldFlow"][];
             /** Dagster Url */
             dagster_url: string;
-        };
-        /** FreshnessItem */
-        FreshnessItem: {
-            /** Area */
-            area: string;
-            /** As Of Date */
-            as_of_date: string | null;
-            /** Days Behind */
-            days_behind: number | null;
-            /** Status */
-            status: string;
-            /** Coverage */
-            coverage?: string | null;
         };
         /** FundamentalsInfo */
         FundamentalsInfo: {
@@ -1513,6 +2030,38 @@ export interface components {
             price: number | null;
             /** Ret */
             ret: number | null;
+        };
+        /** History */
+        History: {
+            /** Code */
+            code: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string | null;
+            /** Unit */
+            unit: string | null;
+            /** Currency */
+            currency: string | null;
+            /** Exchange */
+            exchange: string | null;
+            /** Points */
+            points: components["schemas"]["HistoryPoint"][];
+        };
+        /** HistoryPoint */
+        HistoryPoint: {
+            /** As Of Date */
+            as_of_date: string;
+            /** Settle */
+            settle: number;
+            /** Open */
+            open?: number | null;
+            /** High */
+            high?: number | null;
+            /** Low */
+            low?: number | null;
+            /** Volume */
+            volume?: number | null;
         };
         /**
          * IndexBoardLive
@@ -1733,20 +2282,30 @@ export interface components {
             /** Heartbeat At */
             heartbeat_at: string | null;
         };
-        /** LastRun */
-        LastRun: {
+        /** LaunchRequest */
+        LaunchRequest: {
+            /** Job */
+            job: string;
+            /**
+             * Subcategories
+             * @default []
+             */
+            subcategories: string[];
+            /** As Of Date */
+            as_of_date?: string | null;
+        };
+        /** LaunchResult */
+        LaunchResult: {
+            /** Ok */
+            ok: boolean;
             /** Run Id */
-            run_id: string | null;
-            /** Mode */
-            mode: string | null;
+            run_id?: string | null;
             /** Status */
-            status: string | null;
-            /** Started At */
-            started_at: string | null;
-            /** Finished At */
-            finished_at: string | null;
-            /** Rows Written */
-            rows_written: number | null;
+            status?: string | null;
+            /** Run Url */
+            run_url?: string | null;
+            /** Error */
+            error?: string | null;
         };
         /** LayerCoverage */
         LayerCoverage: {
@@ -2706,6 +3265,43 @@ export interface components {
             /** Train End */
             train_end?: string | null;
         };
+        /** SparkPoint */
+        SparkPoint: {
+            /** As Of Date */
+            as_of_date: string;
+            /** Value */
+            value: number;
+        };
+        /** SpreadHistory */
+        SpreadHistory: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Unit */
+            unit: string;
+            /** Points */
+            points: components["schemas"]["SparkPoint"][];
+        };
+        /** SpreadSummary */
+        SpreadSummary: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Unit */
+            unit: string;
+            /** Value */
+            value: number | null;
+            /** Zscore */
+            zscore: number | null;
+            /** Percentile */
+            percentile: number | null;
+            /** As Of Date */
+            as_of_date: string | null;
+            /** History */
+            history: components["schemas"]["SparkPoint"][];
+        };
         /** Stats */
         Stats: {
             /** Total Return */
@@ -2777,28 +3373,100 @@ export interface components {
             /** Spread Significant */
             spread_significant?: boolean | null;
         };
+        /**
+         * SweepRequest
+         * @description A parameter-grid sweep (Story 1B): fixed base params + a grid of varied run-kwargs.
+         *
+         *     ``grid`` keys are run parameters (e.g. ``top_pct``, ``rebalance``, ``cost_bps``, ``factor``);
+         *     the cartesian product is the trial set whose size N feeds the Deflated Sharpe / MinBTL.
+         */
+        SweepRequest: {
+            /**
+             * Factor
+             * @default mom_12_1
+             */
+            factor: string;
+            /**
+             * Universe
+             * @default sp500
+             */
+            universe: string;
+            /**
+             * Weighting
+             * @default equal
+             */
+            weighting: string;
+            /**
+             * Rebalance
+             * @default monthly
+             */
+            rebalance: string;
+            /**
+             * Cost Bps
+             * @default 10
+             */
+            cost_bps: number;
+            /** Start Date */
+            start_date?: string | null;
+            /** End Date */
+            end_date?: string | null;
+            /**
+             * Grid
+             * @description {run_param: [values, ...]}
+             */
+            grid: {
+                [key: string]: unknown[];
+            };
+            /**
+             * N Splits
+             * @default 16
+             */
+            n_splits: number;
+        };
+        /** SweepResult */
+        SweepResult: {
+            /** Ok */
+            ok: boolean;
+            /** Sweep Id */
+            sweep_id?: number | null;
+            /** N Configs */
+            n_configs?: number | null;
+            /** Summary */
+            summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Error */
+            error?: string | null;
+        };
+        /** SweepSummary */
+        SweepSummary: {
+            /** Sweep Id */
+            sweep_id: number;
+            /** Created At */
+            created_at: string | null;
+            /** Base Spec */
+            base_spec: {
+                [key: string]: unknown;
+            } | null;
+            /** Grid */
+            grid: {
+                [key: string]: unknown;
+            } | null;
+            /** N Configs */
+            n_configs: number;
+            /** Best Run Id */
+            best_run_id?: number | null;
+            /** Summary */
+            summary?: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** SymHealth */
         SymHealth: {
             /** Module */
             module: string;
             /** Healthy */
             healthy: boolean;
-        };
-        /** SymOverview */
-        SymOverview: {
-            /** Securities */
-            securities: number;
-            /** Universes */
-            universes: number;
-            /** Priced Securities */
-            priced_securities: number;
-            /** Priced At Latest */
-            priced_at_latest: number;
-            /** Latest Session */
-            latest_session: string | null;
-            /** Freshness */
-            freshness: components["schemas"]["FreshnessItem"][];
-            last_run: components["schemas"]["LastRun"] | null;
         };
         /** UniverseCoverage */
         UniverseCoverage: {
@@ -2970,26 +3638,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SymHealth"];
-                };
-            };
-        };
-    };
-    overview: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SymOverview"];
                 };
             };
         };
@@ -4154,6 +4802,348 @@ export interface operations {
             };
         };
     };
+    list_countries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Country"][];
+                };
+            };
+        };
+    };
+    list_curve_series: {
+        parameters: {
+            query?: {
+                /** @description ISO-2 filter; all countries if omitted */
+                country?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurveSeries"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_curves: {
+        parameters: {
+            query: {
+                /** @description Comma ISO-2 list, e.g. GB,DE,US */
+                countries: string;
+                /** @description As-of (latest per country if omitted) */
+                as_of_date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompareCurve"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_tenor: {
+        parameters: {
+            query: {
+                /** @description Comma ISO-2 list, e.g. GB,DE,US */
+                countries: string;
+                /** @description Tenor in years to compare across countries */
+                tenor?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompareTenor"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_spreads: {
+        parameters: {
+            query?: {
+                /** @description ISO-2 country */
+                country?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpreadSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_spread: {
+        parameters: {
+            query?: {
+                /** @description 1Y | 5Y | MAX */
+                window?: string;
+                /** @description ISO-2 country */
+                country?: string;
+            };
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpreadHistory"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_curve_movie: {
+        parameters: {
+            query?: {
+                country?: string;
+                curve_set?: string;
+                basis?: string;
+                rate_type?: string;
+                /** @description max frames sampled across the window */
+                frames?: number;
+                /** @description window start; full history if omitted */
+                start_date?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurveMovie"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_curve: {
+        parameters: {
+            query?: {
+                /** @description ISO-2 country (GB/DE/EU/US/JP/...) */
+                country?: string;
+                /** @description curve family: glc/ois (UK) | govt | irs */
+                curve_set?: string;
+                /** @description nominal | real | inflation */
+                basis?: string;
+                /** @description spot | forward | par | yield */
+                rate_type?: string;
+                /** @description Curve as-of (latest if omitted) */
+                as_of_date?: string | null;
+                /** @description latest (restated) | first (first-published, PIT) */
+                vintage?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Curve"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_board: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BoardRow"][];
+                };
+            };
+        };
+    };
+    get_history: {
+        parameters: {
+            query?: {
+                /** @description 1Y | 5Y | MAX */
+                window?: string;
+            };
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["History"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_coverage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Coverage"][];
+                };
+            };
+        };
+    };
     list_factors: {
         parameters: {
             query?: never;
@@ -4231,6 +5221,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BacktestRunResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_sweep_ep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SweepRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sweeps: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepSummary"][];
+                };
+            };
+        };
+    };
+    get_sweep: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                sweep_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SweepSummary"];
                 };
             };
             /** @description Validation Error */
@@ -4469,6 +5543,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FieldFlows"];
+                };
+            };
+        };
+    };
+    data_monitor_eod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EodMonitor"];
+                };
+            };
+        };
+    };
+    data_monitor_launch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LaunchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LaunchResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
