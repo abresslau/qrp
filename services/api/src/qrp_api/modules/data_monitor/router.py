@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException
-from lineage.buckets import bucket_keys
+from lineage.buckets import bucket_keys, job_name
 from pydantic import BaseModel
 
 from qrp_api.config import dagster_run_url
@@ -119,7 +119,8 @@ def data_monitor_launch(req: LaunchRequest) -> dict:
     """
     if req.job not in set(bucket_keys()):
         raise HTTPException(status_code=422, detail=f"unknown job {req.job!r}")
-    res = launch_job(req.job, req.subcategories or None, req.as_of_date)
+    # the page sends the bucket key; Dagster knows the job by its mnemonic name (buckets.JOB_NAMES).
+    res = launch_job(job_name(req.job), req.subcategories or None, req.as_of_date)
     out: dict = {"ok": res["ok"], "error": res.get("error")}
     if res["ok"]:
         out["run_id"] = res["run_id"]
