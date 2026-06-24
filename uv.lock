@@ -15,6 +15,7 @@ members = [
     "altdata",
     "analytics",
     "backtest",
+    "commodities",
     "lineage",
     "macro",
     "operate",
@@ -325,6 +326,37 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/84/1b/1ecdd371fa68839cfbda15cc671d0f6c92d2c42688df995a9bf6e36f3511/coloredlogs-14.0.tar.gz", hash = "sha256:a1fab193d2053aa6c0a97608c4342d031f1f93a3d1218432c59322441d31a505", size = 275863, upload-time = "2020-02-16T20:51:12.172Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/2f/12747be360d6dea432e7b5dfae3419132cb008535cfe614af73b9ce2643b/coloredlogs-14.0-py2.py3-none-any.whl", hash = "sha256:346f58aad6afd48444c2468618623638dadab76e4e70d5e10822676f2d32226a", size = 43888, upload-time = "2020-02-16T20:51:09.712Z" },
+]
+
+[[package]]
+name = "commodities"
+version = "0.1.0"
+source = { editable = "packages/commodities" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pydantic" },
+    { name = "yfinance" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pydantic", specifier = ">=2" },
+    { name = "yfinance", specifier = ">=0.2.40" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.15.16" },
 ]
 
 [[package]]
@@ -1748,6 +1780,7 @@ dependencies = [
     { name = "altdata" },
     { name = "analytics" },
     { name = "backtest" },
+    { name = "commodities" },
     { name = "fastapi" },
     { name = "lineage" },
     { name = "macro" },
@@ -1770,6 +1803,7 @@ requires-dist = [
     { name = "altdata", editable = "packages/altdata" },
     { name = "analytics", editable = "packages/analytics" },
     { name = "backtest", editable = "packages/backtest" },
+    { name = "commodities", editable = "packages/commodities" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "lineage", editable = "packages/lineage" },
     { name = "macro", editable = "packages/macro" },

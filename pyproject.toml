@@ -25,6 +25,7 @@ members = [
     "packages/sym",
     "packages/lineage",
     "packages/rates",
+    "packages/commodities",
 ]
 
 [dependency-groups]
