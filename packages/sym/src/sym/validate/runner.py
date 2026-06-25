@@ -33,13 +33,14 @@ from sym.validate.symbology import (
 
 
 def _fx_coverage(conn: psycopg.Connection) -> CheckResult:
-    """FX coverage is cross-DB now (fx lives in its own database). Open the fx connection here so
-    a failure to reach it is isolated as a FAIL by run_all's per-check try/except (not a suite
-    abort)."""
+    """FX coverage is cross-DB now (fx + the priced set in their own databases). Open the fx +
+    equity connections here so a failure to reach either is isolated as a FAIL by run_all's
+    per-check try/except (not a suite abort)."""
+    from equity.db import connect as equity_connect
     from fx.db import connect as fx_connect
 
-    with fx_connect() as fx_conn:
-        return check_fx_coverage(conn, fx_conn)
+    with fx_connect() as fx_conn, equity_connect() as eq_conn:
+        return check_fx_coverage(conn, fx_conn, eq_conn)
 
 
 def _with_universe(fn):

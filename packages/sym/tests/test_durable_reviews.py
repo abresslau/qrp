@@ -230,7 +230,7 @@ def test_fx_coverage_warns_on_open_rejections():
 
     cov = _CovConn(["BRL"], 10, {"BRL": (_d(2026, 6, 10), Decimal("5.0"))},
                    open_rejections=3)  # one fake serves both the sym + fx reads
-    r = check_fx_coverage(cov, cov, as_of_date=_d(2026, 6, 10))
+    r = check_fx_coverage(cov, cov, cov, as_of_date=_d(2026, 6, 10))
     assert r.status == "warn"
     assert any("3 open FX rejection" in s for s in r.samples)
 

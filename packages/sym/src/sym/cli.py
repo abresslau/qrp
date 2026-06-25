@@ -994,7 +994,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "coverage":
                 from sym.validate.fx import check_fx_coverage
 
-                r = check_fx_coverage(conn, fx_conn)
+                r = check_fx_coverage(conn, fx_conn, eq_conn)
                 print(f"fx coverage: {r.status} ({r.checked} currencies, {r.failures} fail, "
                       f"{r.warnings} warn)")
                 for s in r.samples[:20]:
