@@ -169,9 +169,13 @@ Python merge.
 ## Dev Agent Record
 
 ### Key decisions / deviations (recorded during dev, 2026-06-25)
-1. **equity DB uses the `public` schema** (not an `equity.` schema like fx/rates) — the engine modules
-   moved verbatim from sym keep unqualified table names, the lowest-churn split for the largest table
-   set. Documented in `equity/db.py` + sqitch.conf.
+1. **equity DB uses a dedicated `equity` schema** (the per-package named-schema convention, matching
+   fx.*/universe.*). Initially built in `public` to minimise churn on the verbatim-moved engine, then
+   corrected on Andre's call (2026-06-25) via the `equity_namespace` migration: in-place
+   `ALTER … SET SCHEMA equity` (catalog-only, no data re-copy) for all objects + a DB-level
+   `ALTER DATABASE equity SET search_path TO equity, public` so the engine's + every consumer's
+   UNQUALIFIED reads resolve on every connection path (more robust than universe's import-only pin,
+   since equity is read over several connect paths). `equity/db.py` pins it too.
 2. **No circular dep to invert** (unlike universe): the only `equity → sym` code import was
    `returns/loader.py`'s `current_calendar_version` — inlined as a 1-line query reading the injected
    sym_conn. equity is now sym-import-free (guard clean); engine entry points take `(equity_conn,

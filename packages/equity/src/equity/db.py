@@ -5,10 +5,12 @@ environment (PGHOST/PGPORT/PGUSER/PGPASSWORD), loaded from a .env if present. No
 import — this package is standalone-shaped (the `rates`/`commodities`/`fx` pattern). Override the
 database with ``EQUITY_DATABASE_URL`` (whole DSN) or rename it with ``EQUITY_DB_NAME``.
 
-The equity DB uses the ``public`` schema (like sym), NOT an ``equity`` schema — the engine
-modules moved verbatim from sym keep unqualified table names, so this is the lowest-churn split
-for the largest table set. equity reads sym identity/calendar through an INJECTED read-only sym
-connection (see ``sym_connect``); equity itself never imports sym.
+The equity objects live in a dedicated ``equity`` schema (the per-package named-schema convention,
+matching fx.*/universe.*). The engine + every consumer read the tables UNQUALIFIED; a DB-level
+``search_path`` (set by the equity_namespace migration: ``ALTER DATABASE equity SET search_path TO
+equity, public``) resolves them on every connection, and this module pins it too for good measure.
+equity reads sym identity/calendar through an INJECTED read-only sym connection (see
+``sym_connect``); equity itself never imports sym.
 """
 
 from __future__ import annotations
@@ -40,7 +42,11 @@ def connect(dbname: str | None = None) -> psycopg.Connection:
     _load_env()
     name = dbname or os.environ.get(f"{_OWN.upper()}_DB_NAME", _OWN)
     target = os.environ.get(f"{name.upper()}_DATABASE_URL") or f"dbname={name}"
-    return psycopg.connect(target, connect_timeout=5)
+    conn = psycopg.connect(target, connect_timeout=5)
+    # Resolve the engine's unqualified table names against the `equity` schema (the DB-level
+    # search_path already does this for every connection; pinned here too, self-documenting).
+    conn.execute("SET search_path TO equity, public")
+    return conn
 
 
 def sym_connect() -> psycopg.Connection:
