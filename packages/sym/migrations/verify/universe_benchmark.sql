@@ -1,3 +1,4 @@
 -- Verify sym:universe_benchmark on pg
-
-SELECT universe_id, sym_id, role, is_primary, created_at FROM universe_benchmark WHERE FALSE;
+-- No-op: the objects this change created were extracted to the `indices` package+database
+-- (sym:index_extract). The indices DB owns + verifies them now.
+SELECT 1;

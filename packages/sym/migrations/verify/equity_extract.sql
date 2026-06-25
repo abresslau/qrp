@@ -16,12 +16,11 @@ BEGIN
             RAISE EXCEPTION '% still present in the sym database', rel;
         END IF;
     END LOOP;
-    -- the index facts MUST remain (kept in sym)
-    IF to_regclass('public.fact_index_returns') IS NULL THEN
-        RAISE EXCEPTION 'fact_index_returns was dropped — index facts must stay in sym';
-    END IF;
+    -- return_window MUST remain (kept in sym — read by the sym API/portfolio/analytics; the indices
+    -- DB has its own seeded copy). The index facts themselves moved on to the `indices` package in a
+    -- later change (sym:index_extract), so they are NOT asserted present here.
     IF to_regclass('public.return_window') IS NULL THEN
-        RAISE EXCEPTION 'return_window was dropped — it is kept in sym for the index facts';
+        RAISE EXCEPTION 'return_window was dropped — it is kept in sym';
     END IF;
 END $$;
 
