@@ -93,7 +93,7 @@ def _select_top(
     return [f for f, _ in ordered[:n]]
 
 
-def _cap_weights(conn, figis: list[str], d: date) -> tuple[dict[str, float], int]:
+def _cap_weights(conn, eq_conn, figis: list[str], d: date) -> tuple[dict[str, float], int]:
     """Market-cap weights at ``d`` for the holding.
 
     Names with no POSITIVE market cap on/before ``d`` are DROPPED from the holding and
@@ -101,7 +101,11 @@ def _cap_weights(conn, figis: list[str], d: date) -> tuple[dict[str, float], int
     equal-weight fallback would misstate the spec. (The seam's size factor already
     filters to positive caps, so ``caps`` entries are usable by construction.)
     """
-    caps = {f: v for f, v in raw_factor("size", figis, d, sym_conn=conn).items() if v > 0}
+    caps = {
+        f: v
+        for f, v in raw_factor("size", figis, d, sym_conn=conn, eq_conn=eq_conn).items()
+        if v > 0
+    }
     dropped = len(figis) - len(caps)
     if not caps:
         return {}, dropped
@@ -135,16 +139,17 @@ def _daily_weighted(conn, weights: dict[str, float], lo: date, hi: date) -> dict
 
 
 def score_weights(
-    sym_conn: psycopg.Connection, weights: dict[str, float], start: date, end: date
+    eq_conn: psycopg.Connection, weights: dict[str, float], start: date, end: date
 ) -> dict:
     """Score a FIXED weight vector over (start, end] — THE candidate-scoring seam (Q7.4).
 
     The optimiser calls this to score solved allocations out-of-sample (PRD §4.9 "uses
     backtests to score candidates"): the same daily-rebalanced-to-target weighting and
     stats machinery as a full run, with no persistence. Returns the `_stats` dict plus
-    ``n_days``; all-None stats when no holding day priced in the window.
+    ``n_days``; all-None stats when no holding day priced in the window. ``eq_conn`` is the
+    equity DB (fact_returns).
     """
-    daily_map = _daily_weighted(sym_conn, weights, start, end)
+    daily_map = _daily_weighted(eq_conn, weights, start, end)
     days = sorted(daily_map)
     daily = [daily_map[d] for d in days]
     curve: list[float] = []
@@ -184,16 +189,24 @@ def _stats(daily: list[float], curve: list[float]) -> dict:
 def run_backtest(
     *args,
     universe_conn: psycopg.Connection | None = None,
+    equity_conn: psycopg.Connection | None = None,
     **kwargs,
 ) -> dict:
-    """Public entry: guarantee a universe-membership connection (its own DB), closing it
-    iff we opened it. All other args pass straight through to :func:`_run_backtest`."""
-    if universe_conn is not None:
-        return _run_backtest(*args, universe_conn=universe_conn, **kwargs)
-    from universe.db import connect as _u_connect
+    """Public entry: guarantee universe-membership + equity (fact_returns) connections (their own
+    DBs), closing each iff we opened it. All other args pass straight to :func:`_run_backtest`."""
+    from contextlib import ExitStack
 
-    with _u_connect() as owned:  # psycopg3: closed on block exit (no leak on early returns)
-        return _run_backtest(*args, universe_conn=owned, **kwargs)
+    from backtest.db import connect as _connect
+
+    with ExitStack() as stack:
+        if universe_conn is None:
+            from universe.db import connect as _u_connect
+            universe_conn = stack.enter_context(_u_connect())
+        if equity_conn is None:
+            equity_conn = stack.enter_context(_connect("equity"))
+        return _run_backtest(
+            *args, universe_conn=universe_conn, equity_conn=equity_conn, **kwargs
+        )
 
 
 def _run_backtest(
@@ -212,6 +225,7 @@ def _run_backtest(
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
     universe_conn: psycopg.Connection | None = None,
+    equity_conn: psycopg.Connection | None = None,
 ) -> dict:
     """Run the spec'd strategy. The full spec persists on the run (FR-18 reproducibility).
 
@@ -219,9 +233,11 @@ def _run_backtest(
     preference); neither given falls back to the documented top-quintile default.
     ``alt_conn``/``macro_conn`` are required only when the chosen factor's declared
     inputs need them (signals.required_modules). ``universe_conn`` reads point-in-time
-    membership from the universe package's own DB (defaults to opening one).
+    membership from the universe package's own DB; ``equity_conn`` reads fact_returns from the
+    equity package's own DB (both guaranteed by the public ``run_backtest`` wrapper).
     """
-    conn = sym_conn  # all sym reads below
+    conn = sym_conn  # sym reads (fundamentals via _cap_weights/size)
+    eq_conn = equity_conn  # fact_returns reads (the equity DB; the wrapper guarantees one)
     u_conn = universe_conn  # membership reads (its own DB; the public wrapper guarantees one)
     bt_conn.autocommit = True
     try:
@@ -242,7 +258,7 @@ def _run_backtest(
     members = _members(u_conn, universe_id)  # all-ever: calendar + data range only
     if not members:
         return {"error": f"unknown or empty universe {universe_id!r}"}
-    rng = conn.execute(
+    rng = eq_conn.execute(
         "SELECT min(as_of_date), max(as_of_date) FROM fact_returns "
         "WHERE window_id=%s AND composite_figi = ANY(%s)",
         (_W_1D, members),
@@ -254,7 +270,7 @@ def _run_backtest(
     end_date = end_date or data_hi
     if start_date and end_date and start_date > end_date:
         return {"error": f"start_date {start_date} is after end_date {end_date}"}
-    days = _trading_days(conn, members, start_date, end_date)
+    days = _trading_days(eq_conn, members, start_date, end_date)
     if len(days) < 30:
         return {"error": f"insufficient history ({len(days)} trading days)"}
     all_rebals = _rebalance_dates(days, rebalance)
@@ -273,7 +289,7 @@ def _run_backtest(
         if not mem:
             continue
         try:
-            raw = raw_factor(factor, mem, d, sym_conn=conn,
+            raw = raw_factor(factor, mem, d, sym_conn=conn, eq_conn=eq_conn,
                              alt_conn=alt_conn, macro_conn=macro_conn)
         except ValueError as exc:  # missing required module connection — caller error
             return {"error": str(exc)}
@@ -281,7 +297,7 @@ def _run_backtest(
             continue
         held = _select_top(raw, direction, top_pct, top_n)
         if weighting == "cap":
-            w, dropped = _cap_weights(conn, held, d)
+            w, dropped = _cap_weights(conn, eq_conn, held, d)
         else:
             w, dropped = ({f: 1.0 / len(held) for f in held} if held else {}), 0
         if not w:
@@ -312,10 +328,10 @@ def _run_backtest(
     base_daily: dict[date, float] = {}
     for i, d in enumerate(rebals):
         nxt = rebals[i + 1] if i + 1 < len(rebals) else end_date
-        strat_daily.update(_daily_weighted(conn, weights_at[d], d, nxt))
+        strat_daily.update(_daily_weighted(eq_conn, weights_at[d], d, nxt))
         # Baseline = equal weight of the SAME as-of roster, rebalanced on the same dates.
         eq = {f: 1.0 / len(members_at[d]) for f in members_at[d]}
-        base_daily.update(_daily_weighted(conn, eq, d, nxt))
+        base_daily.update(_daily_weighted(eq_conn, eq, d, nxt))
 
     common = sorted(set(strat_daily) & set(base_daily))
     if not common:

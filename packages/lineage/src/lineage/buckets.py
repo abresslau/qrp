@@ -30,6 +30,7 @@ ALTDATA = "altdata"
 COMMODITIES = "commodities"
 FX = "fx"
 UNIVERSE = "universe"
+EQUITY = "equity"
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ BUCKETS: tuple[Bucket, ...] = (
     ),
     Bucket(
         "equity_prices", "Equity prices", "universe",
-        (Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw",
+        (Dataset(EQUITY, "prices_raw", "session_date", "equity.prices_raw",
                  wide=True, id_column="composite_figi", count_label="names"),),
     ),
     Bucket(
@@ -130,7 +131,7 @@ BUCKETS: tuple[Bucket, ...] = (
         # coverage-session count(DISTINCT) is ~28× the cost of the prices scan (12s+). Returns are
         # recomputed FROM prices, so the equity_prices bucket already carries the laggard story; the
         # last as_of_date with returns is the honest signal here.
-        (Dataset(SYM, "fact_returns", "as_of_date", "sym.fact_returns"),),
+        (Dataset(EQUITY, "fact_returns", "as_of_date", "equity.fact_returns"),),
         run_options=("returns", "gics", "index_returns"),
     ),
 )

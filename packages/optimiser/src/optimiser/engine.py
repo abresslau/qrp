@@ -42,24 +42,37 @@ METHODS = ("min_variance", "max_sharpe")
 COV_METHODS = ("shrinkage", "sample")  # default = Ledoit-Wolf const-correlation shrinkage
 
 
-def _select_names(conn, universe_id: str, n: int) -> list[str]:
-    """The n largest current members by latest market cap (keeps the covariance tractable)."""
-    rows = conn.execute(
+def _select_names(u_conn, sym_conn, universe_id: str, n: int) -> list[str]:
+    """The n largest current members by latest market cap (keeps the covariance tractable).
+
+    Cross-DB roster-fetch: the current-member roster comes from the universe DB (``u_conn``);
+    their latest ``market_cap_usd`` from sym ``fundamentals`` (``sym_conn``). Sorted + topped
+    locally — no cross-DB join."""
+    roster = [
+        r[0]
+        for r in u_conn.execute(
+            "SELECT composite_figi FROM universe_membership "
+            "WHERE universe_id = %s AND valid_to IS NULL",
+            (universe_id,),
+        ).fetchall()
+    ]
+    if not roster:
+        return []
+    caps = sym_conn.execute(
         """
-        SELECT um.composite_figi
-          FROM universe_membership um
+        SELECT um.composite_figi, fc.market_cap_usd
+          FROM unnest(%s::char(12)[]) AS um(composite_figi)
           JOIN LATERAL (
               SELECT market_cap_usd FROM fundamentals f
                WHERE f.composite_figi = um.composite_figi AND f.market_cap_usd IS NOT NULL
                ORDER BY f.as_of_date DESC LIMIT 1
           ) fc ON TRUE
-         WHERE um.universe_id = %s AND um.valid_to IS NULL
          ORDER BY fc.market_cap_usd DESC
          LIMIT %s
         """,
-        (universe_id, n),
+        (roster, n),
     ).fetchall()
-    return [r[0] for r in rows]
+    return [r[0] for r in caps]
 
 
 def _return_matrix(
@@ -279,7 +292,7 @@ def _stats(w, mean, cov):
 
 def _tilt_scores(
     factor: str, figis: list[str], as_of_date: date, *,
-    sym_conn, alt_conn=None, macro_conn=None,
+    sym_conn, eq_conn, alt_conn=None, macro_conn=None,
 ) -> tuple[list[float], int]:
     """Favourable-oriented cross-sectional z-scores for the tilt term (Q9.4).
 
@@ -289,7 +302,7 @@ def _tilt_scores(
     ``(z, n_scored)`` — the caller refuses a tilt that cannot apply (n_scored < 2 or a
     degenerate cross-section) rather than recording a silent no-op.
     """
-    raw = raw_factor(factor, figis, as_of_date, sym_conn=sym_conn,
+    raw = raw_factor(factor, figis, as_of_date, sym_conn=sym_conn, eq_conn=eq_conn,
                      alt_conn=alt_conn, macro_conn=macro_conn)
     if len(raw) < 2:
         return [0.0] * len(figis), len(raw)
@@ -309,7 +322,8 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
           holdout_days: int = 0,
           cov_method: str = "shrinkage",
           portfolios_gw=None,
-          alt_conn=None, macro_conn=None) -> dict:
+          alt_conn=None, macro_conn=None,
+          u_conn=None, eq_conn=None) -> dict:
     """Solve the spec'd allocation; persist solution + weights + the full spec.
 
     ``signal_tilt`` = ``{"factor": <signals key>, "strength": float > 0}``;
@@ -318,7 +332,7 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
     weights as a Portfolio (Q7.4). Module conns are needed only when the tilt factor's
     declared inputs demand them.
     """
-    conn = sym_conn  # all sym reads below
+    conn = sym_conn  # sym reads (fundamentals)
     opt_conn.autocommit = True
     if method not in METHODS:
         return {"error": f"unknown method {method!r} (one of {METHODS})"}
@@ -337,10 +351,10 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
         return {"error": "signal_tilt is not meaningful under min_variance "
                          "(the variance term dominates at λ=1e6) — use max_sharpe"}
 
-    names = _select_names(conn, universe_id, n)
+    names = _select_names(u_conn, conn, universe_id, n)
     if len(names) < 5:
         return {"error": f"too few members with market cap for {universe_id!r}"}
-    figis, matrix, dates = _return_matrix(conn, names, lookback)
+    figis, matrix, dates = _return_matrix(eq_conn, names, lookback)
     if len(figis) < 5 or len(matrix[0]) < 30:
         return {"error": "insufficient aligned daily history for a covariance"}
     if max_weight is not None and max_weight * len(figis) < 1.0:
@@ -375,7 +389,7 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
     if tilt_factor:
         try:
             z, n_scored = _tilt_scores(tilt_factor, figis, cov_end, sym_conn=conn,
-                                       alt_conn=alt_conn, macro_conn=macro_conn)
+                                       eq_conn=eq_conn, alt_conn=alt_conn, macro_conn=macro_conn)
         except ValueError as exc:  # unknown factor / missing module conn — attributed
             return {"error": str(exc)}
         if n_scored < 2:
@@ -420,8 +434,8 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
             "n_aligned_days": len(holdout_dates),
             "selection_caveat": "universe selected by latest mcap/current membership "
                                 "(not point-in-time at train_end)",
-            "strategy": score_weights(conn, w_map, cov_end, holdout_dates[-1]),
-            "equal_weight": score_weights(conn, ew_map, cov_end, holdout_dates[-1]),
+            "strategy": score_weights(eq_conn, w_map, cov_end, holdout_dates[-1]),
+            "equal_weight": score_weights(eq_conn, ew_map, cov_end, holdout_dates[-1]),
         }
 
     # The spec reproduces the SOLVE DEFINITION; the resolved name set is data-dependent
@@ -503,10 +517,13 @@ if __name__ == "__main__":
 
     sym_conn = connect("sym")
     opt_conn = connect()
+    u_conn = connect("universe")
+    eq_conn = connect("equity")
     try:
         for m in METHODS:
-            print(json.dumps(solve(sym_conn, opt_conn, "sp500", m, 40, 252),
+            print(json.dumps(solve(sym_conn, opt_conn, "sp500", m, 40, 252,
+                                   u_conn=u_conn, eq_conn=eq_conn),
                              indent=2, default=str))
     finally:
-        sym_conn.close()
-        opt_conn.close()
+        for c in (sym_conn, opt_conn, u_conn, eq_conn):
+            c.close()
