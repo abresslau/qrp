@@ -1,6 +1,6 @@
 # Story: Extract `index` (benchmark levels · index returns · universe-benchmark link) into its own peer package WITH its own database
 
-Status: in-progress
+Status: review
 
 <!-- Created via bmad-create-story 2026-06-25 (Andre: "remove also index from sym database and packages
 and create a dedicated one index"). FOURTH extraction in the sym-decomposition program, the explicit
@@ -182,43 +182,43 @@ not move. (Identical to equity.)
 
 ## Tasks / Subtasks (the 7-phase extraction playbook)
 
-- [ ] **P0 — Resolve the naming decision** (`index` vs recommended `indices`); fix the token. (AC: 1)
-- [ ] **P1 — Scaffold the package + DB** (AC: 1)
-  - [ ] `packages/index/` pyproject (deps psycopg/pandas/yfinance/equity + workspace), `src/index/`
+- [x] **P0 — Resolve the naming decision** (`index` vs recommended `indices`); fix the token. (AC: 1)
+- [x] **P1 — Scaffold the package + DB** (AC: 1)
+  - [x] `packages/index/` pyproject (deps psycopg/pandas/yfinance/equity + workspace), `src/index/`
         skeleton, `db.py` (`connect()` pinning search_path; `sym_connect()` read-only helper).
-  - [ ] sqitch project (`db/sqitch.conf` %project, `sqitch.plan`, deploy/revert/verify for
+  - [x] sqitch project (`db/sqitch.conf` %project, `sqitch.plan`, deploy/revert/verify for
         `index_schema` + `seed_reference` [return_window 28 rows] + `index_namespace` [named schema +
         DB search_path]). Schema mirrors the 4 tables; cross-DB FKs dropped → soft refs.
-  - [ ] Register in `tools/deploy_all.py` REGISTRY, workspace pyproject, services/api deps.
-  - [ ] `deploy_all.py --only index` → deployed + verified.
-- [ ] **P2 — Move the Python engine** (AC: 4, 7)
-  - [ ] `git mv packages/sym/src/sym/indices packages/index/src/index/` (+ the indices test files);
+  - [x] Register in `tools/deploy_all.py` REGISTRY, workspace pyproject, services/api deps.
+  - [x] `deploy_all.py --only index` → deployed + verified.
+- [x] **P2 — Move the Python engine** (AC: 4, 7)
+  - [x] `git mv packages/sym/src/sym/indices packages/index/src/index/` (+ the indices test files);
         move `sym/validate/index_levels.py`. Make the package sym-import-free.
-  - [ ] Thread `(index_conn, sym_conn[, u_conn])` through `load_index_levels`, `recompute_index_returns`,
+  - [x] Thread `(index_conn, sym_conn[, u_conn])` through `load_index_levels`, `recompute_index_returns`,
         `link_universe_indices`, `load_msci_*`, `attach_index_figis`, `check_index_level_fidelity`.
-  - [ ] New `index` CLI (`index/cli.py`) with the verbs; keep equity import for returns math.
-- [ ] **P3 — Migrate the data** (AC: 2)
-  - [ ] `tools/migrate_index_data.py` (binary COPY, idempotent, per-table commit, row-count assert;
+  - [x] New `index` CLI (`index/cli.py`) with the verbs; keep equity import for returns math.
+- [x] **P3 — Migrate the data** (AC: 2)
+  - [x] `tools/migrate_index_data.py` (binary COPY, idempotent, per-table commit, row-count assert;
         seed return_window first; FK-safe order: index_levels → fact_index_returns/extremes;
         universe_benchmark independent). Run it; verify counts == sym.
-- [ ] **P4 — Rewire sym + external consumers** (AC: 5, 6, 7, 8)
-  - [ ] `sym/eod.py` `indices` step → open index_conn (+ sym_conn + u_conn), call the index package.
-  - [ ] `sym/cli.py` — remove the moved index subcommands (or thin-dispatch); EOD no longer imports
+- [x] **P4 — Rewire sym + external consumers** (AC: 5, 6, 7, 8)
+  - [x] `sym/eod.py` `indices` step → open index_conn (+ sym_conn + u_conn), call the index package.
+  - [x] `sym/cli.py` — remove the moved index subcommands (or thin-dispatch); EOD no longer imports
         `sym.indices`.
-  - [ ] API gateway (Knot 1): add `_index()` + `index_conn`; split the 5 index methods into
+  - [x] API gateway (Knot 1): add `_index()` + `index_conn`; split the 5 index methods into
         roster-fetch + Python merge; keep response shapes. Routes UNCHANGED.
-  - [ ] lineage: `INDEX` const + repoint `index_levels`/`fact_index_returns` Datasets/assets/lineage;
+  - [x] lineage: `INDEX` const + repoint `index_levels`/`fact_index_returns` Datasets/assets/lineage;
         `bucket_jobs.py`/`schedules.py` commands → `index` CLI.
-  - [ ] `data_monitor/eod.py`: read `index_levels` over an index connection.
-- [ ] **P5 — Drop from sym (fail-loud)** (AC: 3)
-  - [ ] `sym/migrations/{deploy,revert,verify}/index_extract.sql` (drop the 4 tables, FK-safe; NOT
+  - [x] `data_monitor/eod.py`: read `index_levels` over an index connection.
+- [x] **P5 — Drop from sym (fail-loud)** (AC: 3)
+  - [x] `sym/migrations/{deploy,revert,verify}/index_extract.sql` (drop the 4 tables, FK-safe; NOT
         return_window). No-op stale verify scripts for moved objects. Deploy via Docker sqitch.
-- [ ] **P6 — Topology + contract** (AC: 8)
-  - [ ] `sym_contract.py`: remove the 4 index relations from the sym sets (keep return_window).
-  - [ ] `test_topology_discipline.py`: add `INDEX_RELATIONS`, add `packages/index/db` to PROJECT list,
+- [x] **P6 — Topology + contract** (AC: 8)
+  - [x] `sym_contract.py`: remove the 4 index relations from the sym sets (keep return_window).
+  - [x] `test_topology_discipline.py`: add `INDEX_RELATIONS`, add `packages/index/db` to PROJECT list,
         extend the known-vocabulary union.
-- [ ] **P7 — Verify everything** (AC: 9)
-  - [ ] Full suites + ruff + `deploy_all --status`; live EOD `indices` run → index DB; API + WEI +
+- [x] **P7 — Verify everything** (AC: 9)
+  - [x] Full suites + ruff + `deploy_all --status`; live EOD `indices` run → index DB; API + WEI +
         Indices pages via headless Chrome; update any api fakes for the new cross-DB query shapes.
 
 ## Dev Notes
@@ -283,8 +283,81 @@ not move. (Identical to equity.)
 
 ### Agent Model Used
 
+claude-opus-4-8[1m] (bmad-dev-story), 2026-06-25. Branch `feat/indices-package` off main.
+
 ### Debug Log References
+
+- **Name resolved to `indices`** (not `index` — SQL reserved word). All identifiers
+  (package/DB/schema/sqitch project) match; table names (index_levels, fact_index_returns, …),
+  routes (/api/sym/indices), and the lineage `INDICES` const kept their existing forms.
+- **env churn**: a prior failed `uv sync` (blocked by a running uvicorn/dagster holding their .exe
+  shims) had removed editable workspace members. Resolved by killing the stale stack + the correct
+  command for this virtual-root workspace: **`uv sync --all-packages`** (plain `uv sync` installs
+  only the root's deps and removes members). Recorded for next time.
+- **INTRANS write-path bug (fixed)**: `connect()` ran `SET search_path` on a non-autocommit conn →
+  INTRANS; the write-engine functions set `conn.autocommit = True` first → raised. Fixed by opening
+  with `autocommit=True`. **The fake-conn tests did not catch it; the live recompute did.** The
+  equity/universe/fx `connect()` share the identical pattern — pre-existing, flagged for follow-up.
 
 ### Completion Notes List
 
+All ACs met. Executed the proven 7-phase extraction playbook (4th, after fx/universe/equity):
+
+- **P1** new `indices` package + own `indices` DB (named schema + DB search_path; sqitch
+  indices_schema + seed_reference; 4 tables, sym_id/universe_id soft refs, window_id same-DB FK;
+  registered in deploy_all + workspace). Deployed+verified.
+- **P2** moved `sym/indices/{levels,returns,msci,figis,links}` → the package; sym-import-free via a
+  local `indices/identity.py` (generic instrument-identity helpers operating on an injected
+  `sym_conn`); threaded `(indices_conn, sym_conn[, u_conn])` through every entry point; new `indices`
+  CLI. reconcile/fidelity stays in sym as a validate consumer.
+- **P3** `tools/migrate_indices_data.py` — binary COPY of 4 tables (225,815 / 4,189,976 / 7,345 / 12);
+  counts match sym.
+- **P4** rewired sym eod/cli, the API sym gateway (5 index methods → roster-fetch + Python merge via a
+  lazy `_indices()`; routes UNCHANGED), the validate reconcile consumer, lineage (INDICES const +
+  index_levels/fact_index_returns assets), data_monitor `_index_breakdown`. Updated api test fakes.
+- **P5** `sym:index_extract` dropped the 4 tables from sym (fail-loud; return_window + instrument
+  stay). Fixed the earlier extract verifies (`sqitch verify` re-runs them) that asserted
+  fact_index_returns/universe_benchmark present. Deployed+verified; data intact in indices.
+- **P6** `sym_contract.py` reclassified the index relations off the sym surface; `INDEX_RELATIONS`
+  added to the topology gate. qrp_readonly grant clean (8/8).
+- **P7** verified: **930 tests green** (indices 36 + sym 493 + equity + backtest + signals + optimiser
+  + lineage 40 + api 175), ruff clean, all 14 DBs up to date, live cross-DB gateway reads
+  (indices 29 instruments / board 26 rows / levels), live recompute write (27 series / 756 rows),
+  and the WEI (`/monitor/wei`) + Indices (`/sym/indices`) console pages render real data (headless
+  Chrome). Restarted the dev stack (API :8001 + console :3001).
+
+**Deviations from the literal story (all serve AC#2/#4 + behavior preservation):**
+1. Named `indices`, not `index` (reserved-word; Andre's AskUserQuestion choice).
+2. The reconcile/fidelity check STAYS in sym as a validate consumer (it produces sym's `CheckResult`
+   for the validate runner) — the fx precedent; it reads the indices DB cross-DB.
+3. The sym index CLI subcommands were KEPT (rewired to open the indices conn) rather than removed, so
+   the lineage `index_levels` job commands (`sym indices`/`sym msci-pull`) need no change; the new
+   `indices` CLI is the standalone entry point.
+4. `indices` NOT added to the topology gate's PROJECT_SCHEMAS/ALL_PACKAGE_SCHEMAS (matches the
+   universe/equity precedent — extracted peers get a *_RELATIONS vocabulary set instead).
+5. `return_window` master stays in sym (read by the sym API/portfolio/analytics); indices seeds its
+   own copy (equity precedent).
+
+**Follow-up (pre-existing, out of scope):** equity/universe/fx `connect()` have the same INTRANS
+autocommit bug — their orchestrated write steps (equity recompute, fx fill) would fail live; worth a
+one-line fix each (`autocommit=True`).
+
 ### File List
+
+NEW: `packages/indices/**` (pyproject, src/indices/{__init__,db,cli,identity,levels,returns,msci,
+figis,links}.py, db/{sqitch.conf,sqitch.plan,deploy,revert,verify}, tests/*), `tools/migrate_indices_data.py`,
+`packages/sym/migrations/{deploy,revert,verify}/index_extract.sql`.
+MOVED (from sym/indices): the 5 engine modules + 5 test files.
+UPDATED: `pyproject.toml`, `tools/deploy_all.py`, `packages/sym/pyproject.toml`,
+`packages/sym/src/sym/{eod.py,cli.py,validate/index_levels.py}`,
+`packages/sym/migrations/sqitch.plan` + the no-op'd index verify scripts + equity_extract/
+universe_extract verifies, `services/api/src/qrp_api/modules/sym/gateway.py`,
+`services/api/src/qrp_api/sym_contract.py`, `services/api/src/qrp_api/modules/data_monitor/eod.py`,
+`packages/lineage/src/lineage/{buckets.py,assets.py}`,
+`services/api/tests/{test_indices_route.py,test_data_monitor_eod.py}`,
+`services/api/tests/test_topology_discipline.py`, `uv.lock`.
+
+### Change Log
+
+- 2026-06-25: index/benchmark subsystem extracted from sym into the `indices` peer package + database
+  (P1–P7). Branch `feat/indices-package`; 7 commits; NOT yet merged (awaiting code-review).
