@@ -631,19 +631,20 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
 def _cmd_msci_import(args: argparse.Namespace) -> int:
     import psycopg
     from equity.returns.loader import DEFAULT_LOOKBACK
+    from indices.db import connect as indices_connect
+    from indices.msci import load_msci_file
+    from indices.returns import recompute_index_returns
 
     from sym.config import load_dotenv
     from sym.db import connect
-    from sym.indices.msci import load_msci_file
-    from sym.indices.returns import recompute_index_returns
 
     load_dotenv()
     try:
-        with connect() as conn:
+        with connect() as sym_conn, indices_connect() as conn:
             conn.autocommit = True
             summary = load_msci_file(
-                conn, args.path, msci_code=args.msci_code, variant=args.variant, name=args.name,
-                currency_code=args.currency,
+                conn, sym_conn, args.path, msci_code=args.msci_code, variant=args.variant,
+                name=args.name, currency_code=args.currency,
             )
             end_date = date.today()
             rets = recompute_index_returns(
@@ -672,11 +673,12 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
 
     import psycopg
     from equity.returns.loader import DEFAULT_LOOKBACK
+    from indices.db import connect as indices_connect
+    from indices.msci import MSCI_HISTORY_FLOOR, load_msci_pull, pull_all_msci
+    from indices.returns import recompute_index_returns
 
     from sym.config import load_dotenv
     from sym.db import connect
-    from sym.indices.msci import MSCI_HISTORY_FLOOR, load_msci_pull, pull_all_msci
-    from sym.indices.returns import recompute_index_returns
 
     load_dotenv()
     if not args.all and not (args.msci_code and args.variant):
@@ -685,10 +687,10 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
     start_date = date.fromisoformat(args.start) if args.start else MSCI_HISTORY_FLOOR
     end_date = date.fromisoformat(args.end) if args.end else date.today()
     try:
-        with connect() as conn:
+        with connect() as sym_conn, indices_connect() as conn:
             conn.autocommit = True
             if args.all:
-                allsum = pull_all_msci(conn, start_date=start_date, end_date=end_date)
+                allsum = pull_all_msci(conn, sym_conn, start_date=start_date, end_date=end_date)
                 rets = recompute_index_returns(
                     conn, start_date=end_date - DEFAULT_LOOKBACK, end_date=end_date
                 )
@@ -702,8 +704,8 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
                 # red only if EVERY instrument failed (a single dead series stays non-fatal)
                 return 1 if (allsum.instruments and allsum.pulled == 0) else 0
             summary = load_msci_pull(
-                conn, msci_code=args.msci_code, variant=args.variant, currency=args.currency,
-                name=args.name, start_date=start_date, end_date=end_date,
+                conn, sym_conn, msci_code=args.msci_code, variant=args.variant,
+                currency=args.currency, name=args.name, start_date=start_date, end_date=end_date,
             )
             rets = recompute_index_returns(
                 conn, start_date=end_date - DEFAULT_LOOKBACK, end_date=end_date
@@ -729,29 +731,30 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
 def _cmd_indices(args: argparse.Namespace) -> int:
     import psycopg
     from equity.returns.loader import DEFAULT_LOOKBACK
+    from indices.db import connect as indices_connect
+    from indices.figis import attach_index_figis
+    from indices.levels import YahooIndexLevelSource, load_index_levels
+    from indices.links import link_universe_indices
+    from indices.returns import recompute_index_returns
     from universe.db import connect as u_connect
 
     from sym.config import load_dotenv
     from sym.db import connect
-    from sym.indices.figis import attach_index_figis
-    from sym.indices.levels import YahooIndexLevelSource, load_index_levels
-    from sym.indices.links import link_universe_indices
-    from sym.indices.returns import recompute_index_returns
 
     load_dotenv()
     end_date = date.today()
     start_date = end_date - DEFAULT_LOOKBACK
     try:
-        with connect() as conn, u_connect() as u_conn:
+        with connect() as sym_conn, indices_connect() as conn, u_connect() as u_conn:
             conn.autocommit = True
-            if args.attach_figis:  # standalone: just (re)attach canonical FIGIs
-                attached, missing = attach_index_figis(conn)
+            if args.attach_figis:  # standalone: just (re)attach canonical FIGIs (sym identity)
+                attached, missing = attach_index_figis(sym_conn)
                 print(f"figis: {attached} attached, {missing} missing (load levels first)")
                 return 0
-            summary = load_index_levels(conn, YahooIndexLevelSource())
+            summary = load_index_levels(conn, sym_conn, YahooIndexLevelSource())
             rets = recompute_index_returns(conn, start_date=start_date, end_date=end_date)
-            links = link_universe_indices(conn, u_conn)
-            attached, _ = attach_index_figis(conn)
+            links = link_universe_indices(conn, sym_conn, u_conn)
+            attached, _ = attach_index_figis(sym_conn)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -767,11 +770,10 @@ def _cmd_indices(args: argparse.Namespace) -> int:
 
 def _cmd_universe_index(args: argparse.Namespace) -> int:
     import psycopg
+    from indices.db import connect as indices_connect
+    from indices.links import universe_with_index
     from universe.db import connect as u_connect
     from universe.registry import UniverseError
-
-    from sym.db import connect
-    from sym.indices.links import universe_with_index
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -781,7 +783,7 @@ def _cmd_universe_index(args: argparse.Namespace) -> int:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
-        with connect() as conn, u_connect() as u_conn:
+        with indices_connect() as conn, u_connect() as u_conn:
             snap = universe_with_index(conn, u_conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
@@ -861,10 +863,11 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 def _cmd_index_reconcile(args: argparse.Namespace) -> int:
     import psycopg
+    from indices.db import connect as indices_connect
+    from indices.levels import YahooIndexLevelSource
 
     from sym.config import load_dotenv
     from sym.db import connect
-    from sym.indices.levels import YahooIndexLevelSource
     from sym.validate.index_levels import check_index_level_fidelity
     from sym.validate.results import FAIL
     from sym.validate.runner import format_report
@@ -872,10 +875,10 @@ def _cmd_index_reconcile(args: argparse.Namespace) -> int:
     load_dotenv()
     source = YahooIndexLevelSource()
     try:
-        with connect() as conn:
+        with connect() as conn, indices_connect() as ix_conn:
             conn.autocommit = True
             result = check_index_level_fidelity(
-                conn, source, warn_bps=args.warn_bps, fail_bps=args.fail_bps
+                conn, ix_conn, source, warn_bps=args.warn_bps, fail_bps=args.fail_bps
             )
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)

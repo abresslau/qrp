@@ -217,12 +217,25 @@ class EodMonitorGateway:
         return out
 
     def _index_breakdown(self, conn, expected: date | None) -> list[dict]:
-        """Per-index latest level date (one row per index instrument by name)."""
-        rows = conn.execute(
-            "SELECT i.name, max(l.session_date) FROM index_levels l "
-            "JOIN instrument i USING (sym_id) GROUP BY i.name ORDER BY i.name"
-        ).fetchall()
-        return [self._subgroup(name or "(unnamed)", _as_date(d), expected, None) for name, d in rows]
+        """Per-index latest level date (one row per index instrument by name).
+
+        Cross-DB: the level dates live in the indices DB (``conn`` — the bucket's package conn); the
+        index names live in sym (``self._sym``). Roster-fetch the latest date per sym_id, resolve
+        names from sym, merge in Python (no cross-DB join)."""
+        latest = dict(
+            conn.execute("SELECT sym_id, max(session_date) FROM index_levels GROUP BY sym_id").fetchall()
+        )
+        if not latest:
+            return []
+        names = dict(
+            self._sym.execute(
+                "SELECT sym_id, name FROM instrument WHERE sym_id = ANY(%s)", (list(latest),)
+            ).fetchall()
+        )
+        rows = sorted(
+            ((names.get(sid) or "(unnamed)", d) for sid, d in latest.items()), key=lambda t: t[0]
+        )
+        return [self._subgroup(name, _as_date(d), expected, None) for name, d in rows]
 
     def _universe_breakdown(self, conn) -> list[dict]:
         """Per-universe membership: current member count + last membership-event date. Informational

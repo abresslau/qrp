@@ -211,16 +211,22 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
             return detail
         if key == "indices":
             from equity.returns.loader import DEFAULT_LOOKBACK
+            from indices.db import connect as indices_connect
+            from indices.levels import YahooIndexLevelSource, load_index_levels
+            from indices.links import link_universe_indices
+            from indices.returns import recompute_index_returns
             from universe.db import connect as u_connect
 
-            from sym.indices.levels import YahooIndexLevelSource, load_index_levels
-            from sym.indices.links import link_universe_indices
-            from sym.indices.returns import recompute_index_returns
-
-            lv = load_index_levels(conn, YahooIndexLevelSource())
-            recompute_index_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
-            with u_connect() as u_conn:  # universe-existence check reads the universe DB
-                link_universe_indices(conn, u_conn)
+            # Index levels/returns/links live in the indices DB — open it here (scoped to this
+            # step); identity (instrument spine) reads sym (`conn`); the universe-existence check
+            # reads the universe DB.
+            with indices_connect() as ix_conn:
+                lv = load_index_levels(ix_conn, conn, YahooIndexLevelSource())
+                recompute_index_returns(
+                    ix_conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date
+                )
+                with u_connect() as u_conn:
+                    link_universe_indices(ix_conn, conn, u_conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
             from fx.db import connect as fx_connect
@@ -263,10 +269,13 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 raise RuntimeError(detail)
             return detail
         if key == "index-reconcile":
-            from sym.indices.levels import YahooIndexLevelSource
+            from indices.db import connect as indices_connect
+            from indices.levels import YahooIndexLevelSource
+
             from sym.validate.index_levels import check_index_level_fidelity
 
-            r = check_index_level_fidelity(conn, YahooIndexLevelSource())
+            with indices_connect() as ix_conn:
+                r = check_index_level_fidelity(conn, ix_conn, YahooIndexLevelSource())
             detail = f"{r.status} (checked={r.checked} warn={r.warnings} fail={r.failures})"
             if r.status == "fail":
                 # Mirror validate: a real divergence (>= fail_bps) must REPORT, not show [ok].
