@@ -11,10 +11,10 @@ DB-level ``search_path`` (set by the indices_schema migration: ``ALTER DATABASE 
 search_path TO indices, public``) resolves them on every connection, and this module pins it too for
 good measure.
 
-Index facts are keyed on the universal ``sym_id`` identity bridge, which lives in the sym DB; indices
-reads it through an INJECTED read-only sym connection (see ``sym_connect``), and reads the membership
-roster for the universe→benchmark link from the universe DB (``universe_connect``). indices itself
-never imports sym or universe.
+Index facts are keyed on the universal ``sym_id`` identity bridge, which lives in the sym DB;
+indices reads it through an INJECTED read-only sym connection (see ``sym_connect``), and reads
+the membership roster for the universe→benchmark link from the universe DB
+(``universe_connect``). indices itself never imports sym or universe.
 """
 
 from __future__ import annotations
@@ -56,10 +56,10 @@ def connect(dbname: str | None = None) -> psycopg.Connection:
 def sym_connect() -> psycopg.Connection:
     """Open a connection to the sym DB for identity/symbology READS (+ identity WRITES on load).
 
-    The index loaders resolve/ensure instrument identity (``instrument``/``instrument_xref``) and the
-    board reads instrument metadata (name/region/country/currency) — all in the sym DB. This is a
-    convenience for standalone ``indices`` CLI use; the sym-orchestrated paths (``sym eod``) pass their
-    own sym connection in, so indices stays sym-import-free either way.
+    The index loaders resolve/ensure instrument identity (``instrument``/``instrument_xref``) and
+    the board reads instrument metadata (name/region/country/currency) — all in the sym DB. This is
+    a convenience for standalone ``indices`` CLI use; the sym-orchestrated paths (``sym eod``) pass
+    their own sym connection in, so indices stays sym-import-free either way.
     """
     _load_env()
     name = os.environ.get("SYM_DB_NAME", "sym")

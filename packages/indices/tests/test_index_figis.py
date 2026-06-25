@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sym.indices.figis import INDEX_FIGIS, attach_index_figis
+from indices.figis import INDEX_FIGIS, attach_index_figis
 
 
 def test_figis_are_well_formed_bbg_ids():

@@ -27,7 +27,7 @@ from pathlib import Path
 
 import psycopg
 
-from sym.identity.instrument import INDEX, SRC_MSCI, ensure_instrument, sym_id_for
+from indices.identity import INDEX, SRC_MSCI, ensure_instrument, sym_id_for
 
 _DATE_FORMATS = ("%Y-%m-%d", "%b %d, %Y", "%d %b %Y", "%d/%m/%Y", "%m/%d/%Y", "%d-%b-%Y")
 
@@ -222,6 +222,7 @@ class MsciImportSummary:
 
 def load_msci_file(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     path: str | Path,
     *,
     msci_code: str,
@@ -231,6 +232,7 @@ def load_msci_file(
 ) -> MsciImportSummary:
     """Import an MSCI level file for the index identified by ``msci_code``.
 
+    ``conn`` is the indices DB (index_levels); ``sym_conn`` is the sym DB (instrument identity).
     When ``variant`` (PR/NR/GR) is given the instrument is resolved from the SAME variant-encoded
     ``msci`` xref ``<code>:<VARIANT>`` that ``load_msci_pull`` uses — so a file import and a direct
     pull of the same series land on ONE instrument (no bare-code duplicate). Omitting ``variant``
@@ -238,15 +240,16 @@ def load_msci_file(
     (kind=index). Levels are immutable-upserted into ``index_levels`` tagged ``source='msci'``.
     """
     conn.autocommit = True
+    sym_conn.autocommit = True
     xref_value = msci_xref_value(msci_code, variant) if variant else msci_code
-    sym_id = sym_id_for(conn, SRC_MSCI, xref_value)
+    sym_id = sym_id_for(sym_conn, SRC_MSCI, xref_value)
     if sym_id is None:
         if not name:
             raise ValueError(
                 f"no instrument for msci xref {xref_value!r}; pass name (+ currency) to create it"
             )
         sym_id = ensure_instrument(
-            conn, INDEX, name=name, currency_code=currency_code, xrefs={SRC_MSCI: xref_value}
+            sym_conn, INDEX, name=name, currency_code=currency_code, xrefs={SRC_MSCI: xref_value}
         )
     series = parse_msci_rows(read_rows(path))
     return _upsert_levels(conn, sym_id, series)
@@ -274,6 +277,7 @@ def _upsert_levels(
 
 def load_msci_pull(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     *,
     msci_code: str,
     variant: str,
@@ -285,21 +289,23 @@ def load_msci_pull(
 ) -> MsciImportSummary:
     """Pull an MSCI index level series directly from MSCI and upsert it into ``index_levels``.
 
-    The instrument is resolved from its variant-encoded ``msci`` xref (``<code>:<VARIANT>``); if
-    absent and ``name`` is given, it is created (kind=index) with that xref + currency. Levels are
+    ``conn`` is the indices DB (index_levels); ``sym_conn`` is the sym DB (instrument identity). The
+    instrument is resolved from its variant-encoded ``msci`` xref (``<code>:<VARIANT>``); if absent
+    and ``name`` is given, it is created (kind=index) with that xref + currency. Levels are
     immutable-upserted tagged ``source='msci'`` (same path as the file importer). Each (index,
     variant) is a distinct instrument. Returns at most :data:`MSCI_HISTORY_FLOOR`-onward history.
     """
     conn.autocommit = True
+    sym_conn.autocommit = True
     xref_value = msci_xref_value(msci_code, variant)
-    sym_id = sym_id_for(conn, SRC_MSCI, xref_value)
+    sym_id = sym_id_for(sym_conn, SRC_MSCI, xref_value)
     if sym_id is None:
         if not name:
             raise ValueError(
                 f"no instrument for msci xref {xref_value!r}; pass name (+ currency) to create it"
             )
         sym_id = ensure_instrument(
-            conn, INDEX, name=name, currency_code=currency, xrefs={SRC_MSCI: xref_value}
+            sym_conn, INDEX, name=name, currency_code=currency, xrefs={SRC_MSCI: xref_value}
         )
     series = _fetch(
         msci_code=msci_code, variant=variant, currency=currency,
@@ -318,6 +324,7 @@ class MsciPullAllSummary:
 
 def pull_all_msci(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     *,
     start_date: date = MSCI_HISTORY_FLOOR,
     end_date: date | None = None,
@@ -325,12 +332,15 @@ def pull_all_msci(
 ) -> MsciPullAllSummary:
     """Re-pull EVERY existing MSCI instrument (one network call per code×variant).
 
-    MSCI is one-index-at-a-time; this enumerates the loaded MSCI instruments from their
-    variant-encoded ``msci`` xrefs (``<code>:<VARIANT>``) and re-pulls each. Attempt-all: a single
-    variant failing is recorded in ``failures``, not fatal — so one bad series can't abort the rest.
+    ``conn`` is the indices DB (index_levels); ``sym_conn`` is the sym DB. MSCI is
+    one-index-at-a-time; this enumerates the loaded MSCI instruments from their variant-encoded
+    ``msci`` xrefs (``<code>:<VARIANT>``) in the sym identity spine and re-pulls each. Attempt-all:
+    a single variant failing is recorded in ``failures``, not fatal — one bad series can't abort
+    the rest.
     """
     conn.autocommit = True
-    rows = conn.execute(
+    sym_conn.autocommit = True
+    rows = sym_conn.execute(
         "SELECT i.name, x.value, i.currency_code "
         "FROM instrument i JOIN instrument_xref x ON x.sym_id = i.sym_id "
         "WHERE x.source = %s ORDER BY x.value",
@@ -345,7 +355,7 @@ def pull_all_msci(
             continue
         try:
             res = load_msci_pull(
-                conn, msci_code=code, variant=variant, currency=ccy or "USD", name=name,
+                conn, sym_conn, msci_code=code, variant=variant, currency=ccy or "USD", name=name,
                 start_date=start_date, end_date=end_date, _fetch=_fetch,
             )
             summary.pulled += 1

@@ -9,7 +9,7 @@ from decimal import Decimal
 
 import pytest
 
-from sym.indices.msci import (
+from indices.msci import (
     fetch_msci_levels,
     msci_xref_value,
     parse_msci_graph_json,

@@ -24,8 +24,8 @@ from typing import Protocol
 
 import psycopg
 
-from sym.identity.instrument import INDEX, SRC_MSCI, SRC_YAHOO, ensure_instrument
-from sym.indices.msci import msci_xref_value
+from indices.identity import INDEX, SRC_MSCI, SRC_YAHOO, ensure_instrument
+from indices.msci import msci_xref_value
 
 DEFAULT_START = date(1990, 1, 1)
 
@@ -284,6 +284,7 @@ def _upsert_level(
 
 def load_index_levels(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     source: IndexLevelSource,
     indices: Sequence[Index] = INDICES,
     *,
@@ -291,15 +292,18 @@ def load_index_levels(
 ) -> LevelsSummary:
     """Ensure each index's instrument identity and load its level series.
 
-    MSCI-only indices (no Yahoo symbol) get an instrument + ``msci`` xref but
-    their levels are deferred to a file import. Yahoo levels are immutable-upserted.
+    ``conn`` is the indices DB (index_levels); ``sym_conn`` is the sym DB (the instrument identity
+    spine — ``ensure_instrument`` resolves/creates each index's sym_id there, cross-DB). MSCI-only
+    indices (no Yahoo symbol) get an instrument + ``msci`` xref but their levels are deferred to a
+    file import. Yahoo levels are immutable-upserted.
     """
     conn.autocommit = True
+    sym_conn.autocommit = True
     summary = LevelsSummary()
     for b in indices:
         xrefs = index_xrefs(b)
         sym_id = ensure_instrument(
-            conn, INDEX, name=b.name, currency_code=b.currency_code, xrefs=xrefs
+            sym_conn, INDEX, name=b.name, currency_code=b.currency_code, xrefs=xrefs
         )
         summary.instruments += 1
         if not b.yahoo_symbol:

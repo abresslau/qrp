@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import psycopg
 
-from sym.identity.instrument import SRC_FIGI, SRC_YAHOO, add_xref, sym_id_for
+from indices.identity import SRC_FIGI, SRC_YAHOO, add_xref, sym_id_for
 
 # yahoo_symbol -> canonical OpenFIGI (share class FIGI of the "<TICKER> Index"
 # Bloomberg security). Verified by exact-ticker match against OpenFIGI /v3/search
@@ -35,20 +35,21 @@ INDEX_FIGIS: dict[str, str] = {
 }
 
 
-def attach_index_figis(conn: psycopg.Connection) -> tuple[int, int]:
+def attach_index_figis(sym_conn: psycopg.Connection) -> tuple[int, int]:
     """Attach canonical FIGIs from the static map to their index instruments.
 
-    Resolves each entry's instrument by its Yahoo xref and attaches the ``figi``
-    xref (idempotent). Returns ``(attached, missing)`` where *missing* counts
-    map entries whose index instrument doesn't exist yet (load levels first).
+    Operates purely on the sym identity spine (``instrument_xref``): resolves each entry's
+    instrument by its Yahoo xref and attaches the ``figi`` xref (idempotent). Returns
+    ``(attached, missing)``
+    where *missing* counts map entries whose index instrument doesn't exist yet (load levels first).
     """
-    conn.autocommit = True
+    sym_conn.autocommit = True
     attached = missing = 0
     for yahoo_symbol, figi in INDEX_FIGIS.items():
-        sym_id = sym_id_for(conn, SRC_YAHOO, yahoo_symbol)
+        sym_id = sym_id_for(sym_conn, SRC_YAHOO, yahoo_symbol)
         if sym_id is None:
             missing += 1
             continue
-        add_xref(conn, sym_id, SRC_FIGI, figi)
+        add_xref(sym_conn, sym_id, SRC_FIGI, figi)
         attached += 1
     return attached, missing
