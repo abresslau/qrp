@@ -29,8 +29,8 @@ from decimal import Decimal
 
 import psycopg
 
-from sym.ingest.prices import expected_trading_days, ingest_result
-from sym.sources.contract import OhlcvResult
+from equity.ingest.prices import expected_trading_days, ingest_result
+from equity.sources.contract import OhlcvResult
 
 # The two load modes. `fill` adds only missing bars (forward from each cursor for the daily
 # `load`, or gap-aware from an explicit floor for `load --start_date`); `overwrite` re-fetches
@@ -159,21 +159,26 @@ class LoadSummary:
 
 
 def read_active_with_cursor(
-    conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
+    equity_conn: psycopg.Connection,
 ) -> list[tuple[str, str, date | None]]:
-    """Active securities with their listing MIC and last-loaded cursor (DB state)."""
-    rows = conn.execute(
-        """
-        SELECT s.composite_figi, s.mic, p.cursor_date
-          FROM securities s
-          LEFT JOIN pipeline_backfill_progress p ON p.composite_figi = s.composite_figi
-         WHERE s.status = 'active'
-         ORDER BY s.composite_figi
-        """
+    """Active securities with their listing MIC and last-loaded cursor (DB state).
+
+    Cross-DB (post equity split): ``securities`` lives in the sym DB, the per-figi cursor
+    (``pipeline_backfill_progress``) in the equity DB. Fetch the active roster from sym and the
+    cursor map from equity (both small) and merge locally — no cross-DB join.
+    """
+    active = sym_conn.execute(
+        "SELECT composite_figi, mic FROM securities WHERE status = 'active' ORDER BY composite_figi"
     ).fetchall()
+    cursors = dict(
+        equity_conn.execute(
+            "SELECT composite_figi, cursor_date FROM pipeline_backfill_progress"
+        ).fetchall()
+    )
     return [
-        (figi, mic.strip() if isinstance(mic, str) else mic, cursor)
-        for figi, mic, cursor in rows
+        (figi, mic.strip() if isinstance(mic, str) else mic, cursors.get(figi))
+        for figi, mic in active
     ]
 
 
@@ -225,7 +230,9 @@ def _mark_error(conn: psycopg.Connection, figi: str, source: str, detail: str) -
     )
 
 
-def _delete_prices_range(conn: psycopg.Connection, figi: str, start_date: date, end_date: date) -> None:
+def _delete_prices_range(
+    conn: psycopg.Connection, figi: str, start_date: date, end_date: date
+) -> None:
     """Discard stored raw bars for one figi in [start_date, end_date].
 
     The one explicit override of the immutable ``ON CONFLICT DO NOTHING`` write (Story 2.10
@@ -274,6 +281,7 @@ def _write_run_log(
 
 def run_load(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     source: object,
     mode: str,
     *,
@@ -289,6 +297,10 @@ def run_load(
     end_cap_for: Callable[[str], date | None] | None = None,
 ) -> LoadSummary:
     """Load a security set in ``mode``; one durable transaction per figi.
+
+    ``conn`` is the **equity** DB (prices/factors/gaps/cursor/run-log writes); ``sym_conn`` is the
+    **sym** DB, read-only, for the active roster (``securities``) + the trading calendar. Writes go
+    only to the equity DB, so the per-figi atomic transaction is fully within ``conn``.
 
     ``gap_aware`` makes a ``FILL`` re-examine history below the cursor (a backfill);
     omit it for the daily forward fill. By default loads the active master
@@ -307,7 +319,7 @@ def run_load(
     started_at = now()
 
     if securities is None:
-        securities = read_active_with_cursor(conn)
+        securities = read_active_with_cursor(sym_conn, conn)
     if limit is not None:
         if limit < 0:
             raise ValueError(f"limit must be >= 0, got {limit}")  # [:-n] would drop the tail
@@ -315,7 +327,7 @@ def run_load(
 
     for figi, mic, cursor in securities:
         summary.attempted += 1
-        end_date = latest_session_for(conn, mic, as_of_date)
+        end_date = latest_session_for(sym_conn, mic, as_of_date)
         if end_cap_for is not None:
             cap = end_cap_for(figi)
             if cap is not None and (end_date is None or cap < end_date):
@@ -339,7 +351,7 @@ def run_load(
                 # outcome overwrite must never produce — a vendor gap must not destroy history.
                 summary.skipped += 1
                 continue
-            expected = expected_trading_days(conn, mic, start_date, end_date)
+            expected = expected_trading_days(sym_conn, mic, start_date, end_date)
             if mode == OVERWRITE:
                 # Replace ONLY the span the re-fetch actually covered (clamped to the fetched
                 # min/max): deleting the full requested window against a partial fetch would
@@ -464,6 +476,7 @@ AUDIT_LOOKBACK_DAYS = 90
 
 def run_audit(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     source: object,
     *,
     as_of_date: date,
@@ -483,7 +496,7 @@ def run_audit(
     started_at = now()
     start_date = as_of_date - timedelta(days=lookback_days)
 
-    for figi, _mic, _cursor in read_active_with_cursor(conn):
+    for figi, _mic, _cursor in read_active_with_cursor(sym_conn, conn):
         summary.attempted += 1
         try:
             result = fetch_with_retry(source, figi, start_date, as_of_date, sleep=sleep)

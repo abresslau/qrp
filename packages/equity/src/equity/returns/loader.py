@@ -18,9 +18,8 @@ from decimal import Decimal
 
 import psycopg
 
-from sym.calendar.snapshot import current_calendar_version
-from sym.returns.extremes import ExtremeRow, compute_extreme_rows
-from sym.returns.windows import (
+from equity.returns.extremes import ExtremeRow, compute_extreme_rows
+from equity.returns.windows import (
     INCEPTION,
     WINDOWS,
     base_date,
@@ -174,6 +173,20 @@ def compute_return_rows(
     return rows
 
 
+def _current_calendar_version(sym_conn: psycopg.Connection, mic: str) -> int | None:
+    """The currently-effective ``calendar_version`` for an exchange (read from the sym DB).
+
+    Inlined from ``sym.calendar.snapshot.current_calendar_version`` so the equity engine imports
+    nothing from sym — the calendar reference lives in the sym DB and is read via an injected sym
+    connection.
+    """
+    row = sym_conn.execute(
+        "SELECT calendar_version FROM trading_calendar_version WHERE mic = %s AND is_current",
+        (mic,),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def _securities_for_returns(conn: psycopg.Connection) -> list[tuple[str, str]]:
     """All securities, regardless of lifecycle status (AR-8 survivorship invariant).
 
@@ -322,6 +335,7 @@ class RecomputeSummary:
 
 def load_returns(
     conn: psycopg.Connection,
+    sym_conn: psycopg.Connection,
     *,
     start_date: date,
     end_date: date,
@@ -329,19 +343,20 @@ def load_returns(
 ) -> RecomputeSummary:
     """Materialize PR + TR into fact_returns for as_of_dates in [start_date, end_date].
 
-    Spans ALL securities including delisted (AR-8 survivorship invariant) — see
-    ``_securities_for_returns``.
+    ``conn`` is the **equity** DB (prices/returns); ``sym_conn`` is the **sym** DB, read-only,
+    for identity (``securities``) + the trading calendar. Spans ALL securities including delisted
+    (AR-8 survivorship invariant) — see ``_securities_for_returns``.
     """
     conn.autocommit = True  # per-figi durable commits
     wanted = set(figis) if figis is not None else None
     summary = RecomputeSummary()
-    for figi, mic in _securities_for_returns(conn):
+    for figi, mic in _securities_for_returns(sym_conn):
         if wanted is not None and figi not in wanted:
             continue
-        calendar_version = current_calendar_version(conn, mic)
+        calendar_version = _current_calendar_version(sym_conn, mic)
         if calendar_version is None:
             continue  # no calendar for this exchange (e.g. XNSE)
-        sessions = _calendar_sessions(conn, mic)
+        sessions = _calendar_sessions(sym_conn, mic)
         price_rows = _price_rows(conn, figi)
         adj = {d: adj_close for d, _close_raw, adj_close in price_rows}
         dividends = _dividends(conn, figi)

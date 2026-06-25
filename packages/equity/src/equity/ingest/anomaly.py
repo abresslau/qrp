@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from sym.sources.contract import OhlcvBar, SplitEvent, cumulative_split_factor
+from equity.sources.contract import OhlcvBar, SplitEvent, cumulative_split_factor
 
 PRICE_JUMP = "price_jump"
 PRICE_ON_NON_TRADING_DAY = "price_on_non_trading_day"

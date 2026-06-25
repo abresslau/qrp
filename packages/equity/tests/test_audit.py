@@ -7,9 +7,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from sym.ingest import pipeline
-from sym.ingest.pipeline import detect_divergences, run_audit
-from sym.sources.contract import OhlcvBar, OhlcvResult
+from equity.ingest import pipeline
+from equity.ingest.pipeline import detect_divergences, run_audit
+from equity.sources.contract import OhlcvBar, OhlcvResult
 
 FIXED = datetime(2026, 6, 6, tzinfo=UTC)
 
@@ -91,14 +91,15 @@ class _Source:
 
 
 def test_run_audit_flags_divergence_without_overwriting(monkeypatch):
-    monkeypatch.setattr(pipeline, "read_active_with_cursor", lambda conn: [("F1", "XNAS", None)])
+    monkeypatch.setattr(pipeline, "read_active_with_cursor",
+                        lambda sym_conn, eq_conn: [("F1", "XNAS", None)])
     monkeypatch.setattr(
         pipeline, "_read_stored_closes",
         lambda conn, figi, s, e: {date(2026, 5, 1): Decimal("100")},
     )
     conn = _Conn()
     src = _Source([_bar(date(2026, 5, 1), 110)])  # 10% correction
-    summary = run_audit(conn, src, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
+    summary = run_audit(conn, conn, src, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
 
     assert summary.mode == "audit" and summary.flags == 1 and summary.run_id == 7
     assert conn.autocommit is True

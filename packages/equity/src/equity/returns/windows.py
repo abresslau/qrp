@@ -178,7 +178,9 @@ def _session_before(sessions: Sequence[date], as_of_date: date) -> date | None:
     return sessions[i - 1] if i > 0 else None
 
 
-def _completed_period_end(window: Window, as_of_date: date, sessions: Sequence[date]) -> date | None:
+def _completed_period_end(
+    window: Window, as_of_date: date, sessions: Sequence[date]
+) -> date | None:
     """Last session of the calendar period that ended just before ``as_of_date``'s period.
 
     Shared by ``calendar`` windows (their base) and ``period`` windows (their end).

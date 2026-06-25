@@ -17,7 +17,7 @@ from typing import Any
 
 import psycopg
 
-from sym.sources.contract import (
+from equity.sources.contract import (
     DividendEvent,
     OhlcvBar,
     OhlcvResult,
@@ -25,7 +25,7 @@ from sym.sources.contract import (
     UnknownSymbolError,
     cumulative_split_factor,
 )
-from sym.sources.registry import register_source
+from equity.sources.registry import register_source
 
 SOURCE = "yfinance"
 

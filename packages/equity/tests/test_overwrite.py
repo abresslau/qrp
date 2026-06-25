@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sym.ingest.pipeline import FILL, OVERWRITE, compute_window
+from equity.ingest.pipeline import FILL, OVERWRITE, compute_window
 
 FLOOR = date(1990, 1, 1)
 

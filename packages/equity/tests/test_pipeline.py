@@ -6,8 +6,8 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from sym.ingest import pipeline
-from sym.ingest.pipeline import (
+from equity.ingest import pipeline
+from equity.ingest.pipeline import (
     FILL,
     OVERWRITE,
     LoadSummary,
@@ -16,8 +16,8 @@ from sym.ingest.pipeline import (
     plan_load,
     run_load,
 )
-from sym.ingest.prices import IngestSummary
-from sym.sources.contract import OhlcvResult
+from equity.ingest.prices import IngestSummary
+from equity.sources.contract import OhlcvResult
 
 FIXED = datetime(2026, 6, 6, tzinfo=UTC)
 FLOOR = date(1990, 1, 1)
@@ -32,7 +32,9 @@ def test_gap_aware_fill_window_is_full_from_floor():
 
 
 def test_forward_fill_window_starts_after_cursor():
-    assert compute_window(FILL, date(2024, 1, 1), floor=FLOOR, end_date=END) == (date(2024, 1, 2), END)
+    assert compute_window(FILL, date(2024, 1, 1), floor=FLOOR, end_date=END) == (
+        date(2024, 1, 2), END,
+    )
 
 
 def test_forward_fill_without_cursor_is_full():
@@ -44,7 +46,9 @@ def test_up_to_date_security_is_skipped():
     assert compute_window(FILL, END, floor=FLOOR, end_date=END) is None
     # A gap-aware fill: a current cursor only skips once the floor was reached
     # (else there may be unfetched history below the earliest stored bar).
-    assert compute_window(FILL, END, floor=FLOOR, end_date=END, gap_aware=True, floor_reached=FLOOR) is None
+    assert compute_window(
+        FILL, END, floor=FLOOR, end_date=END, gap_aware=True, floor_reached=FLOOR
+    ) is None
     # ...but a current cursor with no recorded floor still re-fetches to fill below.
     assert compute_window(FILL, END, floor=FLOOR, end_date=END, gap_aware=True) == (FLOOR, END)
 
@@ -163,7 +167,7 @@ def stub_db(monkeypatch):
 
 
 def _set_universe(monkeypatch, securities):
-    monkeypatch.setattr(pipeline, "read_active_with_cursor", lambda conn: securities)
+    monkeypatch.setattr(pipeline, "read_active_with_cursor", lambda sym_conn, eq_conn: securities)
 
 
 def test_forward_fill_skips_up_to_date_and_windows_from_cursor(stub_db, monkeypatch):
@@ -174,7 +178,7 @@ def test_forward_fill_skips_up_to_date_and_windows_from_cursor(stub_db, monkeypa
     ])
     conn = _Conn()
     src = _Source()
-    summary = run_load(conn, src, FILL, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
+    summary = run_load(conn, conn, src, FILL, as_of_date=date(2026, 6, 6), sleep=lambda d: None)
     assert (summary.loaded, summary.skipped, summary.attempted) == (2, 1, 3)
     assert conn.autocommit is True  # per-figi durable commits (Story 2.4 finding)
     fetched = dict((f, (s, e)) for f, s, e in src.fetched)
@@ -190,7 +194,7 @@ def test_one_failing_figi_is_isolated(stub_db, monkeypatch):
         ("F1", "XNAS", None), ("F2", "XNAS", None), ("F3", "XNAS", None),
     ])
     conn = _Conn()
-    summary = run_load(conn, _Source(fail_figis={"F2"}), FILL, as_of_date=date(2026, 6, 6),
+    summary = run_load(conn, conn, _Source(fail_figis={"F2"}), FILL, as_of_date=date(2026, 6, 6),
                        gap_aware=True, sleep=lambda d: None)
     assert (summary.loaded, summary.errored) == (2, 1)
     assert summary.errors[0][0] == "F2"
@@ -213,7 +217,7 @@ def test_load_summary_status():
 def test_write_run_log_records_the_run():
     from datetime import UTC, datetime
 
-    from sym.ingest.pipeline import _write_run_log
+    from equity.ingest.pipeline import _write_run_log
 
     conn = _Conn()
     summary = LoadSummary(mode="fill", attempted=3, loaded=2, errored=1, rows=500,
@@ -231,7 +235,7 @@ def test_write_run_log_stamps_triggered_by_from_env(monkeypatch):
     # child env; manual CLI runs leave it unset -> NULL.
     from datetime import UTC, datetime
 
-    from sym.ingest.pipeline import _write_run_log
+    from equity.ingest.pipeline import _write_run_log
 
     monkeypatch.setenv("SYM_TRIGGERED_BY", "qrp-job:7")
     conn = _Conn()

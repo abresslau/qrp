@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from sym.returns.extremes import (
+from equity.returns.extremes import (
     WINDOW_DAYS,
     compute_extreme_rows,
     extreme_input_hash,
@@ -185,13 +185,19 @@ def _expected_pinned_hash() -> str:
 
 
 def test_extreme_tables_have_matching_deploy_revert_verify():
-    base = Path(__file__).resolve().parents[1] / "migrations"
-    for change in ("fact_price_extremes", "fact_index_extremes"):
-        for kind in ("deploy", "revert", "verify"):
-            assert (base / kind / f"{change}.sql").exists(), f"missing {kind}/{change}.sql"
+    # equity consolidates its DDL into one `equity_schema` change (deploy/revert/verify trio);
+    # fact_price_extremes is defined there. (fact_index_extremes stays in the sym DB — index
+    # facts ride the sym_id bridge and were deliberately left in sym.)
+    base = Path(__file__).resolve().parents[1] / "db"
+    for kind in ("deploy", "revert", "verify"):
+        path = base / kind / "equity_schema.sql"
+        assert path.exists(), f"missing {kind}/equity_schema.sql"
+    assert "fact_price_extremes" in (base / "deploy/equity_schema.sql").read_text()
 
 
 def test_extreme_tables_registered_in_sqitch_plan():
-    plan = (Path(__file__).resolve().parents[1] / "migrations/sqitch.plan").read_text()
-    assert re.search(r"^fact_price_extremes \[", plan, re.MULTILINE)
-    assert re.search(r"^fact_index_extremes \[", plan, re.MULTILINE)
+    plan = (Path(__file__).resolve().parents[1] / "db/sqitch.plan").read_text()
+    assert re.search(r"^equity_schema \[?", plan, re.MULTILINE)
+    assert "fact_price_extremes" in (
+        Path(__file__).resolve().parents[1] / "db/deploy/equity_schema.sql"
+    ).read_text()
