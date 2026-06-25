@@ -701,7 +701,7 @@ export interface paths {
         };
         /**
          * Pipeline History
-         * @description Recent sym pipeline runs (FR-6) with qrp-job correlation via triggered_by.
+         * @description Recent equity pipeline runs (FR-6) with qrp-job correlation via triggered_by.
          */
         get: operations["pipeline_history"];
         put?: never;
@@ -1749,6 +1749,15 @@ export interface components {
              */
             run_subcategories: string[];
         };
+        /** EodDagster */
+        EodDagster: {
+            /** Reachable */
+            reachable: boolean;
+            /** Ui Url */
+            ui_url: string;
+            /** Jobs With Runs */
+            jobs_with_runs: number;
+        };
         /** EodMonitor */
         EodMonitor: {
             /** Expected Date */
@@ -1757,6 +1766,7 @@ export interface components {
             expected_basis: string;
             /** Dagster Runs Available */
             dagster_runs_available: boolean;
+            dagster: components["schemas"]["EodDagster"];
             summary: components["schemas"]["EodSummary"];
             /** Buckets */
             buckets: components["schemas"]["EodBucketRow"][];

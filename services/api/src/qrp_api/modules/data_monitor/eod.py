@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 import psycopg
 from lineage.buckets import BUCKETS, SYM, Bucket, Dataset, job_name
 
-from qrp_api.config import dagster_job_url, package_dsn
+from qrp_api.config import dagster_job_url, dagster_ui_base, package_dsn
 from qrp_api.modules.data_monitor.dagster_runs import latest_runs_by_job
 from qrp_api.modules.sym.freshness import classify
 
@@ -414,6 +414,12 @@ class EodMonitorGateway:
             "expected_date": expected.isoformat() if expected else None,
             "expected_basis": "previous business date (last completed equity trading session)",
             "dagster_runs_available": dagster_reachable,
+            "dagster": {
+                "reachable": dagster_reachable,
+                "ui_url": dagster_ui_base(),
+                # how many bucket jobs Dagster reported a run for (health signal beyond "daemon up").
+                "jobs_with_runs": sum(1 for r in runs.values() if r),
+            },
             "summary": summary,
             "buckets": [self._row(b, expected, runs) for b in BUCKETS],
         }
