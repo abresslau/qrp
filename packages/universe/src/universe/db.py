@@ -41,6 +41,9 @@ def connect(dbname: str | None = None) -> psycopg.Connection:
     _load_env()
     name = dbname or os.environ.get(f"{_OWN.upper()}_DB_NAME", _OWN)
     target = os.environ.get(f"{name.upper()}_DATABASE_URL") or f"dbname={name}"
-    conn = psycopg.connect(target, connect_timeout=5)
+    # autocommit=True so the SET below doesn't leave the connection in an open transaction — write
+    # paths that set ``conn.autocommit = True`` would otherwise raise on an INTRANS conn. Reads
+    # unaffected; explicit transactions still wrap writes.
+    conn = psycopg.connect(target, connect_timeout=5, autocommit=True)
     conn.execute("SET search_path TO universe, public")
     return conn
