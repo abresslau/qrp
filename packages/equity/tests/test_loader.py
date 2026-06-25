@@ -7,12 +7,12 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
-from sym.returns.loader import (
+from equity.returns.loader import (
     compute_return_rows,
     input_hash,
     total_return_index,
 )
-from sym.returns.windows import BY_CODE, WINDOWS
+from equity.returns.windows import BY_CODE, WINDOWS
 
 SESSIONS = [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)]
 ADJ = {
@@ -158,7 +158,7 @@ def test_return_window_seed_matches_windows_py():
     # and some are later renamed by `UPDATE ... SET code='X' ... WHERE window_id=N`.
     # Reconstruct the final window_id->code map from both, in plan order, so this
     # anti-drift check stays exact as windows are added or relabelled.
-    deploy = Path(__file__).resolve().parents[1] / "migrations/deploy"
+    deploy = Path(__file__).resolve().parents[1] / "db/deploy"
     plan = (deploy.parent / "sqitch.plan").read_text()
     ordered = re.findall(r"^([a-z0-9_]+) \[", plan, re.MULTILINE)
     id_to_code: dict[int, str] = {}
@@ -167,10 +167,12 @@ def test_return_window_seed_matches_windows_py():
         if not sql_path.exists():
             continue
         sql = sql_path.read_text()
-        for block in re.findall(r"INSERT INTO return_window\b.*?VALUES(.*?);", sql, re.DOTALL):
+        for block in re.findall(
+            r"INSERT INTO (?:public\.)?return_window\b.*?VALUES(.*?);", sql, re.DOTALL
+        ):
             for wid, code in re.findall(r"\(\s*(\d+),\s*'([0-9A-Z_]+)'", block):
                 id_to_code[int(wid)] = code
-        rename = r"UPDATE return_window SET[^;]*?\bcode\s*=\s*'([0-9A-Z_]+)'"
+        rename = r"UPDATE (?:public\.)?return_window SET[^;]*?\bcode\s*=\s*'([0-9A-Z_]+)'"
         rename += r"[^;]*?\bwindow_id\s*=\s*(\d+)"
         for code, wid in re.findall(rename, sql):
             id_to_code[int(wid)] = code
@@ -188,7 +190,7 @@ def test_returns_engine_has_no_lifecycle_status_filter():
     securities out of fact_returns, reintroducing survivorship bias. The
     active/delisted split is a query-time choice, never a compute-time filter.
     """
-    returns_dir = Path(__file__).resolve().parents[1] / "src/sym/returns"
+    returns_dir = Path(__file__).resolve().parents[1] / "src/equity/returns"
     offenders = [
         f"{path.name}:{i}: {line.strip()}"
         for path in returns_dir.glob("*.py")
@@ -201,9 +203,11 @@ def test_returns_engine_has_no_lifecycle_status_filter():
 def test_v_prices_adjusted_does_not_join_securities_status():
     """The adjusted-price view reads prices_raw directly, with no status gate (AC#1)."""
     sql = (
-        Path(__file__).resolve().parents[1] / "migrations/deploy/v_prices_adjusted.sql"
+        Path(__file__).resolve().parents[1] / "db/deploy/equity_schema.sql"
     ).read_text(encoding="utf-8")
-    assert "status" not in sql.lower()
+    # isolate the view definition (the consolidated schema mentions securities in FK comments)
+    view = sql[sql.index("CREATE VIEW public.v_prices_adjusted"):]
+    assert "status" not in view.lower()
 
 
 # --- 52-week extremes ride the returns pass (Story 3.2-ext) -----------------
@@ -211,7 +215,7 @@ def test_v_prices_adjusted_does_not_join_securities_status():
 
 def _loader_src() -> str:
     return (
-        Path(__file__).resolve().parents[1] / "src/sym/returns/loader.py"
+        Path(__file__).resolve().parents[1] / "src/equity/returns/loader.py"
     ).read_text(encoding="utf-8")
 
 
@@ -236,6 +240,6 @@ def test_extremes_upsert_has_dirty_set_guard():
 
 def test_recompute_summary_counts_extreme_rows():
     """RecomputeSummary exposes extreme_rows so the CLI can report it (AC#7)."""
-    from sym.returns.loader import RecomputeSummary
+    from equity.returns.loader import RecomputeSummary
 
     assert RecomputeSummary().extreme_rows == 0

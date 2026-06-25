@@ -94,9 +94,15 @@ def portfolio_exists(conn: psycopg.Connection, portfolio_id: int) -> bool:
 
 
 class DbPortfolioGateway:
-    def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
+    def __init__(
+        self,
+        conn: psycopg.Connection,
+        sym_conn: psycopg.Connection | None = None,
+        equity_conn: psycopg.Connection | None = None,
+    ) -> None:
         self._conn = conn      # qrp DB — portfolio / portfolio_weight (read + write)
-        self._sym = sym_conn   # sym package — securities / labels / fact_returns (read-only)
+        self._sym = sym_conn   # sym package — securities / labels (read-only)
+        self._equity = equity_conn  # equity package — fact_returns (PnL), read-only
         self._conn.autocommit = True  # portfolios are small interactive writes
 
     def _labels(self, figis: list[str]) -> tuple[dict, dict]:
@@ -385,7 +391,7 @@ class DbPortfolioGateway:
         # to it would drop every constituent whose market's latest session is a day behind. Pick
         # the most recent date that >=90% of the covered members reach (scoped to THESE figis, so
         # it's a tiny grouped scan, not a full fact_returns aggregate).
-        ret_date = self._sym.execute(
+        ret_date = self._equity.execute(
             """
             WITH per_day AS (
                 SELECT as_of_date, count(*) AS n
@@ -404,7 +410,7 @@ class DbPortfolioGateway:
         # last date with actual returns (mirrors portfolios-live-returns-fix's skip-null rule).
         pr_map = (
             dict(
-                self._sym.execute(
+                self._equity.execute(
                     "SELECT composite_figi, pr FROM fact_returns "
                     "WHERE composite_figi = ANY(%s) AND window_id = %s AND as_of_date = %s "
                     "AND pr IS NOT NULL",

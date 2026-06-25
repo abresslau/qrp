@@ -34,9 +34,10 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Protocol
 
+from equity.sources.yfinance_adapter import YAHOO_SUFFIX
+
 from sym.classification._http import RequestThrottle
 from sym.classification.gics import GicsClassification, SecurityIdentity
-from sym.sources.yfinance_adapter import YAHOO_SUFFIX
 
 # Yahoo gates these endpoints by browser-likeness; a desktop UA + the crumb flow
 # is what lifts the 401 (probed 2026-06-17: AAPL→Technology, SHEL.L→Energy).

@@ -41,8 +41,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-
-from sym.returns.windows import BY_CODE
+from equity.returns.windows import BY_CODE
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures/accuracy_reference.json"
 
@@ -59,6 +58,15 @@ def _connect():
 
         return connect()
     except Exception:  # noqa: BLE001 - any config/connection failure -> skip the gate
+        return None
+
+
+def _equity_connect():
+    try:
+        from equity.db import connect
+
+        return connect()
+    except Exception:  # noqa: BLE001 - fact_returns moved to the equity DB; skip the gate if down
         return None
 
 
@@ -95,7 +103,8 @@ def _resolve_benchmark_figi(sym_map: dict, ticker: str, symbol: str) -> str | No
 def sym_returns(reference) -> dict:
     """{ticker: {window_code: (pr, tr)}} from fact_returns at the fixture's as_of_date."""
     conn = _connect()
-    if conn is None:
+    eq_conn = _equity_connect()  # fact_returns lives in the equity DB now
+    if conn is None or eq_conn is None:
         pytest.skip("database unavailable")
     try:
         as_of_date = reference["as_of_date"]
@@ -112,7 +121,7 @@ def sym_returns(reference) -> dict:
             figi = _resolve_benchmark_figi(sym_map, ticker, info.get("symbol", ticker))
             if figi is None:
                 continue
-            rows = conn.execute(
+            rows = eq_conn.execute(
                 "SELECT window_id, pr, tr FROM fact_returns "
                 "WHERE composite_figi = %s AND as_of_date = %s",
                 (figi, as_of_date),
@@ -125,6 +134,7 @@ def sym_returns(reference) -> dict:
     except psycopg.Error:
         pytest.skip("fact_returns not available")
     finally:
+        eq_conn.close()
         conn.close()
 
 

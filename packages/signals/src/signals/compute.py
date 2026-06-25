@@ -109,6 +109,7 @@ def raw_factor(
     as_of_date: date,
     *,
     sym_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
 ) -> dict[str, float]:
@@ -118,7 +119,8 @@ def raw_factor(
     scoring run here) call this instead of re-implementing factor SQL. Recomputes from
     the source modules at ``as_of_date`` (no look-ahead, no stored-score reads). A
     factor whose required module connection is missing raises a ValueError NAMING the
-    module — never a silent sym-only result.
+    module — never a silent sym-only result. ``sym_conn`` = sym DB (fundamentals);
+    ``eq_conn`` = equity DB (fact_returns).
     """
     needed = required_modules(factor_key)  # also validates the key
     have = {m for m, c in (("altdata", alt_conn), ("macro", macro_conn)) if c is not None}
@@ -128,15 +130,15 @@ def raw_factor(
             f"factor {factor_key!r} requires module connection(s): {', '.join(sorted(missing))}"
         )
     if factor_key == "mom_12_1":
-        return _raw_momentum(sym_conn, members, as_of_date)
+        return _raw_momentum(eq_conn, members, as_of_date)
     if factor_key == "vol_1y":
-        return _raw_vol(sym_conn, members, as_of_date)
+        return _raw_vol(eq_conn, members, as_of_date)
     if factor_key == "size":
         return _raw_size(sym_conn, members, as_of_date)
     if factor_key == "wiki_attention":
         return _raw_wiki_attention(alt_conn, members, as_of_date)
     if factor_key == "fiscal_sens":
-        return _raw_fiscal_sens(sym_conn, macro_conn, members, as_of_date)
+        return _raw_fiscal_sens(eq_conn, macro_conn, members, as_of_date)
     # unreachable while every FACTORS key has a branch above — a factor added to the
     # catalog without a dispatch branch must FAIL here, not silently compute the
     # wrong definition (the single-definition-source guarantee)
@@ -244,7 +246,7 @@ def _raw_wiki_attention(alt_conn, members, as_of_date) -> dict[str, float]:
     return out
 
 
-def _raw_fiscal_sens(sym_conn, macro_conn, members, as_of_date) -> dict[str, float]:
+def _raw_fiscal_sens(eq_conn, macro_conn, members, as_of_date) -> dict[str, float]:
     """ABSOLUTE 1Y OLS beta of daily returns to UST:DEBT daily %-changes, matched on date.
 
     The raw value is |beta|: the factor measures SENSITIVITY magnitude, so direction
@@ -269,7 +271,7 @@ def _raw_fiscal_sens(sym_conn, macro_conn, members, as_of_date) -> dict[str, flo
             changes[d_cur] = float(v_cur) / float(v_prev) - 1.0
     if len(changes) < 60:
         return {}
-    rows = sym_conn.execute(
+    rows = eq_conn.execute(
         "SELECT composite_figi, as_of_date, pr FROM fact_returns "
         "WHERE window_id = %s AND pr IS NOT NULL AND composite_figi = ANY(%s) "
         "AND as_of_date > %s AND as_of_date <= %s",
@@ -362,27 +364,32 @@ def _compute_universe(
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
     universe_conn: psycopg.Connection | None = None,
+    eq_conn: psycopg.Connection | None = None,
 ) -> dict:
     """Compute all factors for a universe as-of a date; write scores to the signals DB.
 
-    Each input module is read over its OWN read-only connection (sym, altdata, macro —
-    AR-R2 app-side assembly). A factor whose module connection was not supplied is
-    SKIPPED and named on ``skipped`` with the reason — never silently zero-scored.
-    ``universe_conn`` reads point-in-time membership from the universe package's own DB.
+    Each input module is read over its OWN read-only connection (sym fundamentals, equity
+    fact_returns, altdata, macro — AR-R2 app-side assembly). A factor whose module connection
+    was not supplied is SKIPPED and named on ``skipped`` with the reason — never silently
+    zero-scored. ``universe_conn`` reads point-in-time membership from the universe package's own
+    DB; ``eq_conn`` reads fact_returns from the equity DB.
     """
     sig_conn.autocommit = True
     _ensure_catalog(sig_conn)
+    if eq_conn is None:
+        from signals.db import connect as _connect
+        eq_conn = _connect("equity")
     if as_of_date is None:
-        as_of_date = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
+        as_of_date = eq_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
         if as_of_date is None:
             return {"universe_id": universe_id, "as_of_date": None, "members": 0,
                     "scored": {}, "skipped": {}, "error": "no fact_returns data to score against"}
     members = _members(universe_conn, universe_id, as_of_date)
     counts = {
         "mom_12_1": _store(sig_conn, universe_id, as_of_date, "mom_12_1", "high",
-                           _raw_momentum(sym_conn, members, as_of_date)),
+                           _raw_momentum(eq_conn, members, as_of_date)),
         "vol_1y": _store(sig_conn, universe_id, as_of_date, "vol_1y", "low",
-                         _raw_vol(sym_conn, members, as_of_date)),
+                         _raw_vol(eq_conn, members, as_of_date)),
         "size": _store(sig_conn, universe_id, as_of_date, "size", "low",
                        _raw_size(sym_conn, members, as_of_date)),
     }
@@ -396,7 +403,7 @@ def _compute_universe(
     if macro_conn is not None:
         counts["fiscal_sens"] = _store(
             sig_conn, universe_id, as_of_date, "fiscal_sens", "low",
-            _raw_fiscal_sens(sym_conn, macro_conn, members, as_of_date))
+            _raw_fiscal_sens(eq_conn, macro_conn, members, as_of_date))
     else:
         skipped["fiscal_sens"] = "no macro connection"
     return {"universe_id": universe_id, "as_of_date": as_of_date.isoformat(),
@@ -418,15 +425,16 @@ def _try_connect(dbname: str):
 if __name__ == "__main__":
     from signals.db import connect
 
-    sym_conn = connect("sym")          # sym package — read-only upstream peer (required)
+    sym_conn = connect("sym")          # sym package — read-only upstream peer (fundamentals)
+    eq_conn = connect("equity")        # equity package — read-only upstream peer (fact_returns)
     sig_conn = connect()               # signals DB — the derived store (required)
     alt_conn = _try_connect("altdata")  # optional input modules: skip-attributed if down
     macro_conn = _try_connect("macro")
     try:
         for uid in ("sp500", "ibov", "ibx"):
             print(compute_universe(sym_conn, sig_conn, uid,
-                                   alt_conn=alt_conn, macro_conn=macro_conn))
+                                   alt_conn=alt_conn, macro_conn=macro_conn, eq_conn=eq_conn))
     finally:
-        for c in (sym_conn, sig_conn, alt_conn, macro_conn):
+        for c in (sym_conn, eq_conn, sig_conn, alt_conn, macro_conn):
             if c is not None:
                 c.close()

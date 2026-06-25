@@ -16,16 +16,20 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
     conn = connect("portfolios")  # portfolios DB — portfolio weights
+    sym = equity = None
     try:
-        sym = connect("sym")                            # sym package — fact_returns / index returns / instrument
+        sym = connect("sym")        # sym package — securities / index returns / instrument / gics
+        equity = connect("equity")  # equity package — fact_returns / prices_raw / extremes
     except Exception:
-        conn.close()  # don't leak the first connection when the second connect fails
+        for c in (conn, sym, equity):  # don't leak partial connections on a failed connect
+            if c is not None:
+                c.close()
         raise
     try:
-        yield DbAnalyticsGateway(conn, sym)
+        yield DbAnalyticsGateway(conn, sym, equity)
     finally:
-        conn.close()
-        sym.close()
+        for c in (conn, sym, equity):
+            c.close()
 
 
 class Benchmark(BaseModel):

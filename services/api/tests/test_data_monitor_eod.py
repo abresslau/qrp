@@ -127,9 +127,9 @@ class _BoomConn:
 
 def test_row_degrades_to_unknown_on_read_error():
     gw = EodMonitorGateway(_BoomConn())
-    # a sym-backed bucket uses the injected (boom) sym conn (fx/rates/commodities now open their
-    # own package DB, so they wouldn't hit the boom conn).
-    bucket = next(b for b in BUCKETS if b.key == "equity_prices")
+    # a sym-backed bucket uses the injected (boom) sym conn (fx/rates/commodities/equity/universe now
+    # open their own package DB, so they wouldn't hit the boom conn — index_levels stays in sym).
+    bucket = next(b for b in BUCKETS if b.key == "index_levels")
     row = gw._row(bucket, date(2026, 6, 16), runs={})
     assert row["status"] == "unknown" and row["error"] is not None
     assert row["actual_date"] is None  # no fabricated date

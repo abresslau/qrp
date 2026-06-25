@@ -19,10 +19,16 @@ class DbOptimiserGateway:
               max_weight: float | None = None, signal_tilt: dict | None = None,
               holdout_days: int = 0, cov_method: str = "shrinkage", portfolios_gw=None,
               alt_conn=None, macro_conn=None) -> dict:
-        return _solve(self._sym, self._conn, universe_id=universe_id, method=method, n=n,
-                      lookback=lookback, max_weight=max_weight, signal_tilt=signal_tilt,
-                      holdout_days=holdout_days, cov_method=cov_method,
-                      portfolios_gw=portfolios_gw, alt_conn=alt_conn, macro_conn=macro_conn)
+        # Membership lives in the universe DB; fact_returns in the equity DB — open both for the
+        # solve (roster-fetch + return matrix), scoped to this call.
+        from optimiser.db import connect
+
+        with connect("universe") as u_conn, connect("equity") as eq_conn:
+            return _solve(self._sym, self._conn, universe_id=universe_id, method=method, n=n,
+                          lookback=lookback, max_weight=max_weight, signal_tilt=signal_tilt,
+                          holdout_days=holdout_days, cov_method=cov_method,
+                          portfolios_gw=portfolios_gw, alt_conn=alt_conn, macro_conn=macro_conn,
+                          u_conn=u_conn, eq_conn=eq_conn)
 
     def solutions(self, limit: int = 25) -> list[dict]:
         rows = self._conn.execute(

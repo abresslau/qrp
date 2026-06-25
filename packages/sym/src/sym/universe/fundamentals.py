@@ -151,6 +151,7 @@ def _upsert_row(
 
 def load_fundamentals_history(
     conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     source: SharesHistorySource,
     figis: Sequence[str],
 ) -> FundamentalsSummary:
@@ -159,6 +160,9 @@ def load_fundamentals_history(
     For each shares change-point, market cap = the raw close on/before that date ×
     shares (so each stored row's market cap is correct for its own date). A security
     with no shares history is counted as a gap (no fabricated value).
+
+    ``conn`` is sym (``fundamentals``/``securities``); ``eq_conn`` is the equity DB — the raw
+    close comes from ``prices_raw`` there (cross-DB; each lookup is a small per-figi read).
     """
     conn.autocommit = True
     currency = _currency_map(conn, figis)
@@ -172,7 +176,7 @@ def load_fundamentals_history(
         summary.loaded += 1
         ccy = currency.get(figi)
         for effective_date, shares in series:
-            close = _close_on_or_before(conn, figi, effective_date)
+            close = _close_on_or_before(eq_conn, figi, effective_date)
             market_cap_lcy = close * shares if close is not None else None
             _upsert_row(conn, figi, effective_date, market_cap_lcy, shares, ccy, source.SOURCE)
             summary.rows += 1

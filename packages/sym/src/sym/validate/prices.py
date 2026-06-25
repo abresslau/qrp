@@ -47,7 +47,9 @@ def _current_sessions(conn: psycopg.Connection, mic: str) -> set[date]:
     return {r[0] for r in rows}
 
 
-def check_price_calendar_consistency(conn: psycopg.Connection) -> CheckResult:
+def check_price_calendar_consistency(
+    conn: psycopg.Connection, eq_conn: psycopg.Connection
+) -> CheckResult:
     """No price after delisting (fail); off-calendar bars are vendor noise (warn).
 
     An off-calendar price means the vendor disagrees with the *authoritative*
@@ -55,16 +57,28 @@ def check_price_calendar_consistency(conn: psycopg.Connection) -> CheckResult:
     returns engine reads sessions from the calendar, so a bar on a non-session day
     is never referenced by PR/TR — so it is a ``warn`` (vendor noise), not a hard
     failure. A price *after* ``delist_date`` is a real lifecycle violation (fail).
+
+    Cross-DB (post equity split): prices live in the equity DB, securities/calendar in sym. We
+    roster-fetch the priced figis from equity, resolve their MIC + delist_date from sym, and never
+    join across the boundary.
     """
     failures: list[str] = []
     warnings: list[str] = []
-    priced_mics = [
-        r[0].strip() if isinstance(r[0], str) else r[0]
+    # Priced figis (equity) -> their MIC (sym). The mic set drives the off-calendar scan.
+    priced_figis = [r[0] for r in eq_conn.execute(
+        "SELECT DISTINCT composite_figi FROM prices_raw"
+    ).fetchall()]
+    mic_by_figi = {
+        r[0]: (r[1].strip() if isinstance(r[1], str) else r[1])
         for r in conn.execute(
-            "SELECT DISTINCT s.mic FROM securities s "
-            "WHERE EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)"
+            "SELECT composite_figi, mic FROM securities WHERE composite_figi = ANY(%s)",
+            (priced_figis,),
         ).fetchall()
-    ]
+    } if priced_figis else {}
+    figis_by_mic: dict[str, list[str]] = {}
+    for figi, mic in mic_by_figi.items():
+        figis_by_mic.setdefault(mic, []).append(figi)
+    priced_mics = sorted(figis_by_mic)
     for mic in priced_mics:
         sessions = _current_sessions(conn, mic)
         if not sessions:
@@ -74,25 +88,32 @@ def check_price_calendar_consistency(conn: psycopg.Connection) -> CheckResult:
         # "off-calendar vendor noise" — the calendar simply doesn't cover them.
         lo, hi = min(sessions), max(sessions)
         price_dates = {
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT p.session_date FROM prices_raw p "
-                "JOIN securities s USING (composite_figi) "
-                "WHERE s.mic = %s AND p.session_date BETWEEN %s AND %s",
-                (mic, lo, hi),
+            r[0] for r in eq_conn.execute(
+                "SELECT DISTINCT session_date FROM prices_raw "
+                "WHERE composite_figi = ANY(%s) AND session_date BETWEEN %s AND %s",
+                (figis_by_mic[mic], lo, hi),
             ).fetchall()
         }
         for d in sorted(off_calendar(price_dates, sessions)):
             warnings.append(f"{mic}: vendor bar on non-session {d} (calendar authoritative)")
 
-    post_delist = conn.execute(
-        """
-        SELECT p.composite_figi, max(p.session_date) FROM prices_raw p
-          JOIN securities s USING (composite_figi)
-         WHERE s.delist_date IS NOT NULL AND p.session_date > s.delist_date
-         GROUP BY p.composite_figi
-        """
-    ).fetchall()
-    failures += [f"{figi}: price {d} after delist" for figi, d in post_delist]
+    # Post-delist bars: delisted roster (sym) -> their max price date (equity), compared locally.
+    delist_by_figi = dict(
+        conn.execute(
+            "SELECT composite_figi, delist_date FROM securities WHERE delist_date IS NOT NULL"
+        ).fetchall()
+    )
+    if delist_by_figi:
+        max_px = eq_conn.execute(
+            "SELECT composite_figi, max(session_date) FROM prices_raw "
+            "WHERE composite_figi = ANY(%s) GROUP BY composite_figi",
+            (list(delist_by_figi),),
+        ).fetchall()
+        failures += [
+            f"{figi}: price {d} after delist"
+            for figi, d in max_px
+            if d is not None and d > delist_by_figi[figi]
+        ]
     return CheckResult.from_items(
         "price_calendar_consistency",
         checked=len(priced_mics),
@@ -130,22 +151,30 @@ def check_calendar_coverage(conn: psycopg.Connection) -> CheckResult:
     )
 
 
-def check_unpriced_securities(conn: psycopg.Connection) -> CheckResult:
+def check_unpriced_securities(
+    conn: psycopg.Connection, eq_conn: psycopg.Connection
+) -> CheckResult:
     """Classify securities holding no prices into expected vs unexpected.
 
     Scans ALL lifecycle statuses — an active-only filter would make the
     delisted/suspended → "expected, warn" classification unreachable and leave an
     unpriced delisted security reported by no check at all.
+
+    Cross-DB: the priced-figi set comes from the equity DB; the unpriced set is the difference
+    against the sym master (computed locally, no cross-DB join).
     """
-    rows = conn.execute(
+    priced = {r[0] for r in eq_conn.execute(
+        "SELECT DISTINCT composite_figi FROM prices_raw"
+    ).fetchall()}
+    secs = conn.execute(
         """
         SELECT s.composite_figi, s.status,
                EXISTS (SELECT 1 FROM trading_calendar_version v
                         WHERE v.is_current AND v.mic = s.mic) AS has_calendar
           FROM securities s
-         WHERE NOT EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)
         """
     ).fetchall()
+    rows = [(figi, status, has_cal) for figi, status, has_cal in secs if figi not in priced]
     failures: list[str] = []
     warnings: list[str] = []
     for figi, status, has_calendar in rows:
@@ -153,7 +182,7 @@ def check_unpriced_securities(conn: psycopg.Connection) -> CheckResult:
         (failures if severity == "fail" else warnings).append(f"{figi}: {reason}")
     return CheckResult.from_items(
         "unpriced_securities",
-        checked=conn.execute("SELECT count(*) FROM securities").fetchone()[0],
+        checked=len(secs),
         failures=failures,
         warnings=warnings,
         detail=f"{len(rows)} securities unpriced ({len(failures)} unexpected)",

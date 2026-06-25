@@ -52,7 +52,7 @@ def test_live_pnl_weighted_sum_with_partial_coverage(monkeypatch):
         return None  # PETR4.SA: reachable but no data -> uncovered
 
     monkeypatch.setattr(quotes, "fetch_raw_quote", fake_fetch)
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).live_pnl(1, now=_EPOCH + 10)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).live_pnl(1, now=_EPOCH + 10)
 
     assert out["n_constituents"] == 2 and out["n_priced"] == 1
     assert out["total_weight"] == pytest.approx(1.0)
@@ -73,7 +73,7 @@ def test_live_pnl_delayed_when_a_priced_name_is_stale(monkeypatch):
         quotes, "fetch_raw_quote",
         lambda ysym, **kw: RawQuote(110.0, 100.0, "USD", _EPOCH),
     )
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).live_pnl(1, now=_EPOCH + 600)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).live_pnl(1, now=_EPOCH + 600)
     assert out["freshness"] == "delayed"
 
 
@@ -86,7 +86,7 @@ def test_live_pnl_priced_but_timeless_quote_is_delayed_not_live(monkeypatch):
         quotes, "fetch_raw_quote",
         lambda ysym, **kw: RawQuote(110.0, 100.0, "USD", None),  # priced, no timestamp
     )
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).live_pnl(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).live_pnl(1, now=_EPOCH)
     assert out["n_priced"] == 1
     assert out["freshness"] == "delayed"           # never 'live' without a fresh stamp
     assert out["as_of"] is None                    # no epoch to anchor as_of
@@ -102,12 +102,12 @@ def test_live_pnl_all_unreachable_raises(monkeypatch):
 
     monkeypatch.setattr(quotes, "fetch_raw_quote", boom)
     with pytest.raises(QuoteSourceUnreachable):
-        DbAnalyticsGateway(conn=object(), sym_conn=sym).live_pnl(1, now=_EPOCH)
+        DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).live_pnl(1, now=_EPOCH)
 
 
 def test_live_pnl_no_weights_is_empty(monkeypatch):
     _wire(monkeypatch, weights={})
-    out = DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([])).live_pnl(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([]), equity_conn=_SymConn([])).live_pnl(1, now=_EPOCH)
     assert out["n_constituents"] == 0 and out["live_return_normalized"] is None
     assert out["pnl"] is None and out["freshness"] == "unavailable"
 
@@ -117,7 +117,7 @@ def test_route_missing_portfolio_404(monkeypatch):
 
     class _Gw:
         def live_pnl(self, pid):
-            return DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([])).live_pnl(pid)
+            return DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([]), equity_conn=_SymConn([])).live_pnl(pid)
 
     with pytest.raises(HTTPException) as exc:
         router_mod.portfolio_live(pid=999, gw=_Gw())

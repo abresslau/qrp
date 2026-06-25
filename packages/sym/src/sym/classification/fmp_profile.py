@@ -28,9 +28,10 @@ import urllib.request
 from collections.abc import Sequence
 from typing import Protocol
 
+from equity.sources.yfinance_adapter import YAHOO_SUFFIX
+
 from sym.classification._http import RequestThrottle
 from sym.classification.gics import GicsClassification, SecurityIdentity
-from sym.sources.yfinance_adapter import YAHOO_SUFFIX
 
 FMP_BASE_URL = "https://financialmodelingprep.com/api/v3"
 _PROFILE_PATH = "/profile/{symbol}?apikey={key}"

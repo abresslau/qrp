@@ -155,18 +155,21 @@ def test_shrinkage_grows_when_data_is_scarcer():
 
 def test_solve_rejects_unknown_cov_method():
     sym, opt = _RoutedConn(), _RoutedConn()
-    assert "unknown cov_method" in solve(sym, opt, cov_method="kalman")["error"]
+    assert "unknown cov_method" in solve(
+        sym, opt, u_conn=sym, eq_conn=sym, cov_method="kalman"
+    )["error"]
 
 
 def test_solve_shrinkage_is_the_default_and_is_recorded(monkeypatch):
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
     opt = _RoutedConn([("INSERT INTO optimiser.solution", _Cur(one=(77,)))])
-    out = solve(sym, opt, n=6, lookback=200)  # no cov_method given → default
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200)  # default cov_method
     assert out.get("solution_id") == 77, out.get("error")
     assert out["spec"]["cov_method"] == "shrinkage"
     assert out["summary"]["shrink_delta"] is not None
@@ -184,7 +187,7 @@ def test_tilt_scores_oriented_and_neutral_for_unscored(monkeypatch):
                         lambda key, members, d, **kw: {"A": 1.0, "B": 3.0})
     monkeypatch.setattr(eng, "factor_direction", lambda key: "low")
     z, n_scored = _tilt_scores("vol_1y", ["A", "B", "C"], date(2026, 6, 5),
-                               sym_conn=_RoutedConn())
+                               sym_conn=_RoutedConn(), eq_conn=_RoutedConn())
     assert n_scored == 2
     assert z[0] > 0 > z[1]  # A (low raw) favourable, B punished
     assert z[2] == 0.0  # unscored name: NEUTRAL, never fabricated
@@ -205,16 +208,16 @@ def test_tilt_shifts_weight_toward_the_favourable_name():
 
 def test_solve_rejects_infeasible_cap_and_bad_tilt():
     sym, opt = _RoutedConn(), _RoutedConn()
-    out = solve(sym, opt, max_weight=0.01, n=40)  # 0.01*40 = 0.4 < 1
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, max_weight=0.01, n=40)  # 0.01*40 = 0.4 < 1
     assert "infeasible max_weight" in out["error"]
     sym, opt = _RoutedConn(), _RoutedConn()
-    out = solve(sym, opt, signal_tilt={"factor": "", "strength": 1.0})
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, signal_tilt={"factor": "", "strength": 1.0})
     assert "signal_tilt needs" in out["error"]
     sym, opt = _RoutedConn(), _RoutedConn()
-    assert "unknown method" in solve(sym, opt, method="alchemy")["error"]
+    assert "unknown method" in solve(sym, opt, u_conn=sym, eq_conn=sym, method="alchemy")["error"]
     # a tilt under min_variance would be numerically annihilated by lam=1e6 — refused
     sym, opt = _RoutedConn(), _RoutedConn()
-    out = solve(sym, opt, method="min_variance",
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, method="min_variance",
                 signal_tilt={"factor": "mom_12_1", "strength": 1.0})
     assert "not meaningful under min_variance" in out["error"]
 
@@ -237,6 +240,7 @@ def test_solve_holdout_split_excludes_tail_from_training_and_scores_it(monkeypat
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -250,7 +254,7 @@ def test_solve_holdout_split_excludes_tail_from_training_and_scores_it(monkeypat
                 "sharpe": 0.2, "max_drawdown": -0.05, "n_days": 63}
 
     monkeypatch.setattr(eng, "score_weights", fake_score)
-    out = solve(sym, opt, n=6, lookback=200, holdout_days=63)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200, holdout_days=63)
     assert out.get("solution_id") == 42, out.get("error")
     # the spec records the TRAIN window: its end strictly precedes the holdout start
     train_end = date.fromisoformat(out["spec"]["train_end"])
@@ -268,12 +272,13 @@ def test_solve_persists_the_full_spec_to_sql():
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
     opt = _RoutedConn([("INSERT INTO optimiser.solution", _Cur(one=(7,)))])
-    out = solve(sym, opt, universe_id="sp500", method="min_variance", n=6, lookback=200,
-                max_weight=0.3)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, universe_id="sp500", method="min_variance",
+                n=6, lookback=200, max_weight=0.3)
     assert out.get("solution_id") == 7, out.get("error")
     insert = next(p for sql, p in opt.calls
                   if not isinstance(p, tuple) or "INSERT INTO optimiser.solution" in sql)
@@ -290,10 +295,12 @@ def test_solve_holdout_too_large_is_a_named_error():
     figis, ret_rows = _market_fixture(n_days=80)
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
     ])
     opt = _RoutedConn()
-    out = solve(sym, opt, n=6, lookback=200, holdout_days=70)  # 80 - 70 < 30
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200,
+                holdout_days=70)  # 80 - 70 < 30
     assert "leaves <30 training days" in out["error"]
 
 
@@ -301,6 +308,7 @@ def test_solve_saves_portfolio_via_the_owning_writer(monkeypatch):
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -320,7 +328,7 @@ def test_solve_saves_portfolio_via_the_owning_writer(monkeypatch):
             return {"stored": len(items)}
 
     spy = _PgwSpy()
-    out = solve(sym, opt, n=6, lookback=200, portfolios_gw=spy)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200, portfolios_gw=spy)
     assert out["portfolio_id"] == 55
     assert spy.created[1] == "(optimiser)"
     pid, as_of, items = spy.uploaded
@@ -336,10 +344,11 @@ def test_cap_revalidated_against_surviving_names(monkeypatch):
     figis, ret_rows = _market_fixture(n_names=6)
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
     ])
     opt = _RoutedConn()
-    out = solve(sym, opt, n=40, lookback=200, max_weight=0.05)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=40, lookback=200, max_weight=0.05)
     assert "surviving alignment" in out["error"]
 
 
@@ -349,12 +358,13 @@ def test_tilt_that_cannot_apply_is_an_error_not_a_silent_noop(monkeypatch):
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
     ])
     opt = _RoutedConn()
     # the factor scores only ONE of the selected names -> tilt cannot apply
     monkeypatch.setattr(eng, "raw_factor", lambda key, members, d, **kw: {figis[0]: 1.0})
-    out = solve(sym, opt, n=6, lookback=200, method="max_sharpe",
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200, method="max_sharpe",
                 signal_tilt={"factor": "mom_12_1", "strength": 1.0})
     assert "tilt cannot apply" in out["error"]
     assert "scored only 1" in out["error"]
@@ -364,6 +374,7 @@ def test_save_portfolio_failure_is_attributed_not_fatal():
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -373,7 +384,7 @@ def test_save_portfolio_failure_is_attributed_not_fatal():
         def create(self, *a):
             raise RuntimeError("portfolios db is down")
 
-    out = solve(sym, opt, n=6, lookback=200, portfolios_gw=_BrokenPgw())
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200, portfolios_gw=_BrokenPgw())
     assert out["solution_id"] == 11  # the committed solution still stands
     assert "portfolios db is down" in out["portfolio_error"]
     assert out["portfolio_id"] is None
@@ -383,6 +394,7 @@ def test_saved_portfolio_weights_are_renormalised():
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -400,7 +412,7 @@ def test_saved_portfolio_weights_are_renormalised():
             return {"stored": len(items), "unresolved": []}
 
     spy = _PgwSpy()
-    out = solve(sym, opt, n=6, lookback=200, portfolios_gw=spy)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200, portfolios_gw=spy)
     assert out["portfolio_id"] == 66
     assert sum(w for _f, w in spy.uploaded) == pytest.approx(1.0)  # full holding stated
     assert out["portfolio_upload"] == {"stored": len(spy.uploaded), "unresolved": []}

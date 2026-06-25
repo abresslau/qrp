@@ -6,13 +6,13 @@ import contextlib
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
-from sym.ingest.prices import (
+from equity.ingest.prices import (
     IngestSummary,
     detect_gaps,
     ingest_result,
     validate_bar,
 )
-from sym.sources.contract import DividendEvent, OhlcvBar, OhlcvResult, SplitEvent
+from equity.sources.contract import DividendEvent, OhlcvBar, OhlcvResult, SplitEvent
 
 FIXED = datetime(2026, 6, 6, tzinfo=UTC)
 

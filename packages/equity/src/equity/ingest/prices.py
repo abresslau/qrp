@@ -1,6 +1,6 @@
 """Atomic raw-price + factor ingestion (Story 2.3, FR-5/NFR-2/3/6).
 
-Takes an :class:`~sym.sources.contract.OhlcvResult` from a source adapter and
+Takes an :class:`~equity.sources.contract.OhlcvResult` from a source adapter and
 persists it per security: raw OHLCV into ``prices_raw``, explicit splits/dividends
 into ``corporate_actions``, missing trading days into ``price_gaps``, and the
 per-figi cursor/status into ``pipeline_backfill_progress`` — all in ONE transaction
@@ -17,8 +17,8 @@ from datetime import date
 
 import psycopg
 
-from sym.ingest.anomaly import PriceFlag, detect_anomalies
-from sym.sources.contract import OhlcvBar, OhlcvResult
+from equity.ingest.anomaly import PriceFlag, detect_anomalies
+from equity.sources.contract import OhlcvBar, OhlcvResult
 
 
 def validate_bar(bar: OhlcvBar) -> tuple[bool, str | None]:

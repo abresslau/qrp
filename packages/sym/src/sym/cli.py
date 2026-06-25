@@ -358,17 +358,18 @@ def _cmd_load(args: argparse.Namespace) -> int:
     replace the window.
     """
     import psycopg
-
-    from sym.config import source_key
-    from sym.db import connect
-    from sym.ingest.pipeline import (
+    from equity.db import connect as equity_connect
+    from equity.ingest.pipeline import (
         OVERWRITE,
         plan_load,
         read_active_with_cursor,
         run_load,
     )
-    from sym.sources import get_source
-    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+    from equity.sources import get_source
+    from equity.sources.yfinance_adapter import make_yahoo_symbol_resolver
+
+    from sym.config import source_key
+    from sym.db import connect
 
     try:
         start_date = date.fromisoformat(args.start_date) if args.start_date else None
@@ -406,28 +407,34 @@ def _cmd_load(args: argparse.Namespace) -> int:
 
     mode, gap_aware = plan_load(start_date=start_date, overwrite=args.overwrite)
     try:
-        with connect() as conn:
+        # sym DB = identity/calendar (resolver reads securities); equity DB = the prices/returns
+        # the load writes into. The engine takes (equity_conn, sym_conn).
+        with connect() as conn, equity_connect() as eq_conn:
             conn.autocommit = True
+            eq_conn.autocommit = True
             resolver = make_yahoo_symbol_resolver(conn)
             source = get_source(source_key(), symbol_for=resolver)
             if universe_id is not None:
-                from sym.universe.ingest import run_universe_load
                 from universe.db import connect as u_connect
+
+                from sym.universe.ingest import run_universe_load
 
                 kwargs = {"as_of_date": end_date, "limit": args.limit, "gap_aware": gap_aware}
                 if mode == OVERWRITE:
                     kwargs["overwrite_start_date"] = start_date
                 elif gap_aware:  # explicit-floor backfill
                     kwargs["history_floor"] = start_date
-                # membership roster comes from the universe DB; prices load into sym.
+                # membership roster from the universe DB; securities in sym; prices into equity.
                 with u_connect() as u_conn:
                     summary = run_universe_load(
-                        conn, u_conn, source, universe_id, mode, **kwargs
+                        conn, u_conn, eq_conn, source, universe_id, mode, **kwargs
                     )
             else:
                 securities = None
                 if figi is not None:
-                    securities = [s for s in read_active_with_cursor(conn) if s[0] == figi]
+                    securities = [
+                        s for s in read_active_with_cursor(conn, eq_conn) if s[0] == figi
+                    ]
                     if not securities:
                         print(f"{figi} not in the active master", file=sys.stderr)
                         return 1
@@ -439,7 +446,7 @@ def _cmd_load(args: argparse.Namespace) -> int:
                     kwargs["overwrite_start_date"] = start_date
                 elif gap_aware:  # explicit-floor backfill
                     kwargs["floor"] = start_date
-                summary = run_load(conn, source, mode, **kwargs)
+                summary = run_load(eq_conn, conn, source, mode, **kwargs)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -472,9 +479,10 @@ def _cmd_load(args: argparse.Namespace) -> int:
 
 def _cmd_recompute(args: argparse.Namespace) -> int:
     import psycopg
+    from equity.db import connect as equity_connect
+    from equity.returns.loader import DEFAULT_LOOKBACK, load_returns
 
     from sym.db import connect
-    from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
 
     try:
         end_date = date.fromisoformat(args.end_date) if args.end_date else date.today()
@@ -489,8 +497,8 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
         print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
         return 1
     try:
-        with connect() as conn:
-            summary = load_returns(conn, start_date=start_date, end_date=end_date)
+        with connect() as conn, equity_connect() as eq_conn:
+            summary = load_returns(eq_conn, conn, start_date=start_date, end_date=end_date)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -530,19 +538,20 @@ def _cmd_backup(args: argparse.Namespace) -> int:
 
 def _cmd_audit(_args: argparse.Namespace) -> int:
     import psycopg
+    from equity.db import connect as equity_connect
+    from equity.ingest.pipeline import run_audit
+    from equity.sources import get_source
+    from equity.sources.yfinance_adapter import make_yahoo_symbol_resolver
 
     from sym.config import source_key
     from sym.db import connect
-    from sym.ingest.pipeline import run_audit
-    from sym.sources import get_source
-    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
 
     key = source_key()
     try:
-        with connect() as conn:
+        with connect() as conn, equity_connect() as eq_conn:
             resolver = make_yahoo_symbol_resolver(conn)
             source = get_source(key, symbol_for=resolver)
-            summary = run_audit(conn, source, as_of_date=date.today())
+            summary = run_audit(eq_conn, conn, source, as_of_date=date.today())
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -558,10 +567,11 @@ def _cmd_audit(_args: argparse.Namespace) -> int:
 
 def _cmd_fundamentals(args: argparse.Namespace) -> int:
     import psycopg
+    from equity.sources.yfinance_adapter import make_yahoo_symbol_resolver
+    from universe.registry import UniverseError
 
     from sym.config import load_dotenv
     from sym.db import connect
-    from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
     from sym.universe.fundamentals import (
         YFinanceSharesHistorySource,
         all_resolved_member_figis,
@@ -569,7 +579,6 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
         recompute_market_cap_usd,
         resolved_member_figis,
     )
-    from universe.registry import UniverseError
 
     if not args.all and not args.universe:
         print("specify --universe <id> or --all", file=sys.stderr)
@@ -577,12 +586,18 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
     if args.all and args.universe:
         print("--all and --universe are mutually exclusive", file=sys.stderr)
         return 1
+    from equity.db import connect as equity_connect
     from fx.db import connect as fx_connect
     from universe.db import connect as u_connect
 
     load_dotenv()
     try:
-        with connect() as conn, fx_connect() as fx_conn, u_connect() as u_conn:
+        with (
+            connect() as conn,
+            fx_connect() as fx_conn,
+            u_connect() as u_conn,
+            equity_connect() as eq_conn,
+        ):
             conn.autocommit = True  # durable per-figi upserts (set before any query)
             fx_conn.autocommit = True
             # resolved member roster comes from the universe DB; filtered to sym's master.
@@ -593,7 +608,8 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
             if args.limit:
                 figis = figis[: args.limit]
             source = YFinanceSharesHistorySource(make_yahoo_symbol_resolver(conn))
-            summary = load_fundamentals_history(conn, source, figis)
+            # close prices come from the equity DB now (cross-DB per-figi reads).
+            summary = load_fundamentals_history(conn, eq_conn, source, figis)
             # market_cap_usd recompute is cross-DB now (rates live in the fx database).
             usd_rows = recompute_market_cap_usd(conn, fx_conn)  # populate for the new rows
     except UniverseError as exc:
@@ -614,12 +630,12 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
 
 def _cmd_msci_import(args: argparse.Namespace) -> int:
     import psycopg
+    from equity.returns.loader import DEFAULT_LOOKBACK
 
     from sym.config import load_dotenv
     from sym.db import connect
     from sym.indices.msci import load_msci_file
     from sym.indices.returns import recompute_index_returns
-    from sym.returns.loader import DEFAULT_LOOKBACK
 
     load_dotenv()
     try:
@@ -655,12 +671,12 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
     import urllib.error
 
     import psycopg
+    from equity.returns.loader import DEFAULT_LOOKBACK
 
     from sym.config import load_dotenv
     from sym.db import connect
     from sym.indices.msci import MSCI_HISTORY_FLOOR, load_msci_pull, pull_all_msci
     from sym.indices.returns import recompute_index_returns
-    from sym.returns.loader import DEFAULT_LOOKBACK
 
     load_dotenv()
     if not args.all and not (args.msci_code and args.variant):
@@ -712,6 +728,8 @@ def _cmd_msci_pull(args: argparse.Namespace) -> int:
 
 def _cmd_indices(args: argparse.Namespace) -> int:
     import psycopg
+    from equity.returns.loader import DEFAULT_LOOKBACK
+    from universe.db import connect as u_connect
 
     from sym.config import load_dotenv
     from sym.db import connect
@@ -719,8 +737,6 @@ def _cmd_indices(args: argparse.Namespace) -> int:
     from sym.indices.levels import YahooIndexLevelSource, load_index_levels
     from sym.indices.links import link_universe_indices
     from sym.indices.returns import recompute_index_returns
-    from sym.returns.loader import DEFAULT_LOOKBACK
-    from universe.db import connect as u_connect
 
     load_dotenv()
     end_date = date.today()
@@ -751,11 +767,11 @@ def _cmd_indices(args: argparse.Namespace) -> int:
 
 def _cmd_universe_index(args: argparse.Namespace) -> int:
     import psycopg
+    from universe.db import connect as u_connect
+    from universe.registry import UniverseError
 
     from sym.db import connect
     from sym.indices.links import universe_with_index
-    from universe.db import connect as u_connect
-    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -889,6 +905,7 @@ def _fx_source(name: str):
 
 def _cmd_fx(args: argparse.Namespace) -> int:
     import psycopg
+    from equity.db import connect as equity_connect
     from fx.db import connect as fx_connect
 
     from sym.config import load_dotenv
@@ -897,12 +914,14 @@ def _cmd_fx(args: argparse.Namespace) -> int:
     load_dotenv()
     today = date.today()
     try:
-        # Two databases now: the sym DB (`conn`: prices/securities/fundamentals/returns) and the fx
-        # DB (`fx_conn`: rates/review queue). FX-native verbs use fx_conn; the security-restatement
-        # verbs (px/returns/mcap/coverage) read sym via `conn` and the FX legs via `fx_conn`.
-        with connect() as conn, fx_connect() as fx_conn:
+        # Three databases now: sym (`conn`: securities/fundamentals), the fx DB (`fx_conn`:
+        # rates/review queue), and the equity DB (`eq_conn`: prices/returns). FX-native verbs use
+        # fx_conn; the security-restatement verbs (px/returns/mcap) read securities via `conn`,
+        # prices/returns via `eq_conn`, and the FX legs via `fx_conn`.
+        with connect() as conn, fx_connect() as fx_conn, equity_connect() as eq_conn:
             conn.autocommit = True
             fx_conn.autocommit = True
+            eq_conn.autocommit = True
             if args.fx_command == "review":
                 from fx.review import FxReviewError, list_fx_reviews, resolve_fx_review
 
@@ -975,7 +994,7 @@ def _cmd_fx(args: argparse.Namespace) -> int:
             elif args.fx_command == "coverage":
                 from sym.validate.fx import check_fx_coverage
 
-                r = check_fx_coverage(conn, fx_conn)
+                r = check_fx_coverage(conn, fx_conn, eq_conn)
                 print(f"fx coverage: {r.status} ({r.checked} currencies, {r.failures} fail, "
                       f"{r.warnings} warn)")
                 for s in r.samples[:20]:
@@ -1027,7 +1046,9 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 from sym.fx.restate import price_in_currency
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                px = price_in_currency(conn, fx_conn, args.figi, as_of_date, args.ccy.upper())
+                px = price_in_currency(
+                    conn, fx_conn, eq_conn, args.figi, as_of_date, args.ccy.upper()
+                )
                 if px is None:
                     print(f"px: unavailable ({args.figi} in {args.ccy.upper()} on {as_of_date})")
                     return 1
@@ -1036,7 +1057,9 @@ def _cmd_fx(args: argparse.Namespace) -> int:
                 from sym.fx.restate import returns_in_currency
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
-                res = returns_in_currency(conn, fx_conn, args.figi, as_of_date, args.ccy.upper())
+                res = returns_in_currency(
+                    conn, fx_conn, eq_conn, args.figi, as_of_date, args.ccy.upper()
+                )
                 if not res:
                     print(f"returns: none for {args.figi} as-of {as_of_date}")
                     return 1
@@ -1053,7 +1076,8 @@ def _cmd_fx(args: argparse.Namespace) -> int:
 
                 as_of_date = date.fromisoformat(args.as_of_date) if args.as_of_date else today
                 mc = market_cap(
-                    conn, fx_conn, args.figi, as_of_date, args.ccy.upper() if args.ccy else None
+                    conn, fx_conn, eq_conn, args.figi, as_of_date,
+                    args.ccy.upper() if args.ccy else None,
                 )
                 if mc.value is None:
                     print(f"mcap: unavailable ({args.figi} on {as_of_date})")
@@ -1078,7 +1102,6 @@ def _cmd_universe_add(args: argparse.Namespace) -> int:
     import json
 
     import psycopg
-
     from universe.db import connect
     from universe.registry import UniverseError
     from universe.store import add_universe
@@ -1136,7 +1159,6 @@ def _cmd_universe_add(args: argparse.Namespace) -> int:
 
 def _cmd_universe_list(_args: argparse.Namespace) -> int:
     import psycopg
-
     from universe.db import connect
     from universe.store import list_universes
 
@@ -1158,13 +1180,13 @@ def _cmd_universe_list(_args: argparse.Namespace) -> int:
 
 def _cmd_universe_refresh(args: argparse.Namespace) -> int:
     import psycopg
+    from universe.db import connect as u_connect
+    from universe.refresh import refresh_universe
+    from universe.registry import UniverseError
 
     from sym.config import load_dotenv
     from sym.db import connect as sym_connect
     from sym.universe.resolver import SymResolver
-    from universe.db import connect as u_connect
-    from universe.refresh import refresh_universe
-    from universe.registry import UniverseError
 
     load_dotenv()
     try:
@@ -1188,7 +1210,6 @@ def _cmd_universe_refresh(args: argparse.Namespace) -> int:
 
 def _cmd_universe_members(args: argparse.Namespace) -> int:
     import psycopg
-
     from universe.db import connect
     from universe.query import members
     from universe.registry import UniverseError
@@ -1221,13 +1242,13 @@ def _cmd_universe_members(args: argparse.Namespace) -> int:
 
 def _cmd_universe_monitor(args: argparse.Namespace) -> int:
     import psycopg
+    from universe.db import connect as u_connect
+    from universe.monitor import run_monitor
+    from universe.registry import UniverseError
 
     from sym.config import load_dotenv
     from sym.db import connect as sym_connect
     from sym.universe.resolver import SymResolver
-    from universe.db import connect as u_connect
-    from universe.monitor import run_monitor
-    from universe.registry import UniverseError
 
     load_dotenv()
     try:
@@ -1251,11 +1272,12 @@ def _cmd_universe_monitor(args: argparse.Namespace) -> int:
 
 def _cmd_universe_coverage(args: argparse.Namespace) -> int:
     import psycopg
+    from equity.db import connect as equity_connect
+    from universe.db import connect as u_connect
+    from universe.registry import UniverseError
 
     from sym.db import connect as sym_connect
     from sym.universe.ingest import coverage
-    from universe.db import connect as u_connect
-    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -1265,8 +1287,8 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
-        with sym_connect() as conn, u_connect() as u_conn:
-            cov = coverage(conn, u_conn, args.universe_id, as_of_date)
+        with sym_connect() as conn, u_connect() as u_conn, equity_connect() as eq_conn:
+            cov = coverage(conn, u_conn, eq_conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -1288,11 +1310,11 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
 
 def _cmd_universe_review(_args: argparse.Namespace) -> int:
     import psycopg
+    from universe.db import connect as u_connect
+    from universe.review import build_digest, format_digest
 
     from sym.db import connect as sym_connect
     from sym.validate.completeness import completeness_summary
-    from universe.db import connect as u_connect
-    from universe.review import build_digest, format_digest
 
     try:
         with sym_connect() as sym_conn, u_connect() as conn:
@@ -1306,11 +1328,11 @@ def _cmd_universe_review(_args: argparse.Namespace) -> int:
 
 def _cmd_universe_confirm(args: argparse.Namespace) -> int:
     import psycopg
+    from universe.db import connect as u_connect
+    from universe.gating import confirm_proposal, reject_proposal
 
     from sym.db import connect as sym_connect
     from sym.universe.resolver import SymResolver
-    from universe.db import connect as u_connect
-    from universe.gating import confirm_proposal, reject_proposal
 
     try:
         with sym_connect() as sym_conn, u_connect() as conn:
@@ -1334,13 +1356,13 @@ def _cmd_universe_confirm(args: argparse.Namespace) -> int:
 
 def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
     import psycopg
+    from universe.accuracy import DEFAULT_THRESHOLD, run_configured_accuracy_check
+    from universe.db import connect as u_connect
+    from universe.registry import UniverseError
 
     from sym.config import load_dotenv
     from sym.db import connect as sym_connect
     from sym.universe.resolver import SymResolver
-    from universe.accuracy import DEFAULT_THRESHOLD, run_configured_accuracy_check
-    from universe.db import connect as u_connect
-    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -1391,13 +1413,13 @@ def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
 
 def _cmd_universe_reverse(args: argparse.Namespace) -> int:
     import psycopg
+    from universe.db import connect as u_connect
+    from universe.gating import reverse_change
+    from universe.registry import UniverseError
 
     from sym.config import load_dotenv
     from sym.db import connect as sym_connect
     from sym.universe.resolver import SymResolver
-    from universe.db import connect as u_connect
-    from universe.gating import reverse_change
-    from universe.registry import UniverseError
 
     try:
         effective_date = date.fromisoformat(args.effective_date)

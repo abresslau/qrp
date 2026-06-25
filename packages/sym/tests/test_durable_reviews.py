@@ -35,7 +35,7 @@ def test_both_writers_upsert_on_the_three_column_key():
     # SQL must carry it, and neither may overwrite flag_type on conflict.
     import inspect
 
-    from sym.ingest import pipeline, prices
+    from equity.ingest import pipeline, prices
 
     audit_src = inspect.getsource(pipeline)
     ingest_src = inspect.getsource(prices)
@@ -46,7 +46,7 @@ def test_both_writers_upsert_on_the_three_column_key():
 
 
 def test_resolve_review_can_target_one_flag_type():
-    from sym.ingest.prices import resolve_review
+    from equity.ingest.prices import resolve_review
 
     class _Conn:
         def __init__(self):
@@ -64,7 +64,7 @@ def test_resolve_review_can_target_one_flag_type():
 
 
 def test_resolve_review_refuses_ambiguity_and_unknown_types():
-    from sym.ingest.prices import resolve_review
+    from equity.ingest.prices import resolve_review
 
     class _Multi:
         def __init__(self, open_count):
@@ -230,7 +230,7 @@ def test_fx_coverage_warns_on_open_rejections():
 
     cov = _CovConn(["BRL"], 10, {"BRL": (_d(2026, 6, 10), Decimal("5.0"))},
                    open_rejections=3)  # one fake serves both the sym + fx reads
-    r = check_fx_coverage(cov, cov, as_of_date=_d(2026, 6, 10))
+    r = check_fx_coverage(cov, cov, cov, as_of_date=_d(2026, 6, 10))
     assert r.status == "warn"
     assert any("3 open FX rejection" in s for s in r.samples)
 

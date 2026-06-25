@@ -21,10 +21,9 @@ from datetime import date
 from decimal import Decimal
 
 import psycopg
+from equity.returns.loader import _calendar_sessions
+from equity.returns.windows import WINDOWS, base_date, end_date, period_years
 from fx.convert import convert
-
-from sym.returns.loader import _calendar_sessions
-from sym.returns.windows import WINDOWS, base_date, end_date, period_years
 
 _ONE = Decimal(1)
 
@@ -59,14 +58,16 @@ def restate_return(
 def price_in_currency(
     conn: psycopg.Connection,
     fx_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     figi: str,
     as_of_date: date,
     target: str,
 ) -> Decimal | None:
     """The adjusted close of ``figi`` on ``as_of_date`` folded to ``target`` (None on any gap).
 
-    ``conn`` is the sym DB (price/security); ``fx_conn`` is the fx DB (the conversion legs)."""
-    row = conn.execute(
+    ``conn`` is the sym DB (security); ``eq_conn`` is the equity DB (the adjusted price);
+    ``fx_conn`` is the fx DB (the conversion legs)."""
+    row = eq_conn.execute(
         "SELECT adj_close FROM v_prices_adjusted WHERE composite_figi=%s AND session_date=%s",
         (figi, as_of_date),
     ).fetchone()
@@ -83,16 +84,17 @@ def price_in_currency(
 def returns_in_currency(
     conn: psycopg.Connection,
     fx_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     figi: str,
     as_of_date: date,
     target: str,
 ) -> dict[str, dict[str, Decimal | None]]:
     """Restate every materialized return window for ``(figi, as_of_date)`` into ``target``.
 
-    ``conn`` is the sym DB (securities/fact_returns/calendar); ``fx_conn`` is the fx DB (rate legs).
-    Returns ``{window_code: {'pr': …, 'tr': …}}``. A window whose base date or FX leg can't
-    resolve yields ``None`` for that window. If the security is already in ``target``, the local
-    returns pass through unchanged.
+    ``conn`` is the sym DB (securities/calendar); ``eq_conn`` is the equity DB (``fact_returns``);
+    ``fx_conn`` is the fx DB (rate legs). Returns ``{window_code: {'pr': …, 'tr': …}}``. A window
+    whose base date or FX leg can't resolve yields ``None`` for that window. If the security is
+    already in ``target``, the local returns pass through unchanged.
     """
     sec = conn.execute(
         "SELECT currency_code, mic FROM securities WHERE composite_figi=%s", (figi,)
@@ -101,7 +103,7 @@ def returns_in_currency(
         return {}
     local = sec[0].strip()
     mic = sec[1].strip() if isinstance(sec[1], str) else sec[1]
-    rows = conn.execute(
+    rows = eq_conn.execute(
         "SELECT window_id, pr, tr FROM fact_returns WHERE composite_figi=%s AND as_of_date=%s",
         (figi, as_of_date),
     ).fetchall()

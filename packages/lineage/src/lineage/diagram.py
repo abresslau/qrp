@@ -13,7 +13,6 @@ Run: ``uv run python -m lineage.diagram`` → writes ``packages/lineage/docs/fie
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 from .assets import edges, key_tables
 

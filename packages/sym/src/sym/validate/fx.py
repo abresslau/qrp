@@ -19,16 +19,25 @@ from fx.resolve import WEEKEND_SPAN_DAYS, fx_rate
 from sym.validate.results import CheckResult
 
 
-def needed_currencies(conn: psycopg.Connection) -> list[str]:
-    """Non-USD currencies of currently-priced securities (the coverage denominator)."""
+def needed_currencies(conn: psycopg.Connection, eq_conn: psycopg.Connection) -> list[str]:
+    """Non-USD currencies of currently-priced securities (the coverage denominator).
+
+    Cross-DB: priced figis come from the equity DB (``prices_raw``), their currencies from sym
+    ``securities`` — joined locally (no cross-DB join)."""
+    priced = [r[0] for r in eq_conn.execute(
+        "SELECT DISTINCT composite_figi FROM prices_raw"
+    ).fetchall()]
+    if not priced:
+        return []
     rows = conn.execute(
         """
         SELECT DISTINCT s.currency_code
           FROM securities s
          WHERE s.currency_code IS NOT NULL AND s.currency_code <> 'USD'
-           AND EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)
+           AND s.composite_figi = ANY(%s)
          ORDER BY s.currency_code
-        """
+        """,
+        (priced,),
     ).fetchall()
     return [r[0] for r in rows]
 
@@ -36,13 +45,14 @@ def needed_currencies(conn: psycopg.Connection) -> list[str]:
 def check_fx_coverage(
     conn: psycopg.Connection,
     fx_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     *,
     as_of_date: date | None = None,
 ) -> CheckResult:
     """Every priced-instrument currency must resolve a non-stale USD rate as-of ``as_of_date``.
 
-    ``conn`` is the sym DB (priced-instrument currencies = the coverage denominator); ``fx_conn``
-    is the fx DB (the rate observations + the rejection queue)."""
+    ``conn`` is the sym DB (securities); ``eq_conn`` is the equity DB (``prices_raw`` — the priced
+    set); ``fx_conn`` is the fx DB (the rate observations + the rejection queue)."""
     as_of_date = as_of_date or date.today()
     # Open rejections are counted BEFORE the early returns — the queue must be
     # visible even when no non-USD currency is priced yet or fx_rate is empty.
@@ -53,7 +63,7 @@ def check_fx_coverage(
         [f"{open_rejections} open FX rejection(s) awaiting stewarding — `fx review`"]
         if open_rejections else []
     )
-    needed = needed_currencies(conn)
+    needed = needed_currencies(conn, eq_conn)
     if not needed:
         # Vacuous-pass guard: zero non-USD priced currencies means coverage is
         # UNVERIFIABLE (pre-load warehouse), not healthy.

@@ -33,6 +33,9 @@ class _Conn:
     def execute(self, sql, params=None):
         if "count(*) FROM fx.fx_rate_review" in sql:
             return _Cur(one=(self.open_rejections,))
+        if "DISTINCT composite_figi FROM prices_raw" in sql:
+            # the priced set (equity DB) — non-empty so needed_currencies proceeds to securities
+            return _Cur(rows=[("PRICED000000",)] if self.needed else [])
         if "DISTINCT s.currency_code" in sql:
             return _Cur(rows=[(c,) for c in self.needed])
         if "count(*) FROM fx.fx_rate" in sql:
@@ -44,7 +47,7 @@ class _Conn:
 
 def test_empty_fx_table_warns_not_fails():
     c = _Conn(["BRL", "GBP"], 0, {})  # one fake serves both the sym + fx reads
-    r = check_fx_coverage(c, c, as_of_date=AS_OF)
+    r = check_fx_coverage(c, c, c, as_of_date=AS_OF)
     assert r.status == "warn" and r.failures == 0 and r.warnings == 2
 
 
@@ -52,18 +55,18 @@ def test_missing_needed_currency_warns():
     # Coverage gaps are completeness signals -> warn (a known source limitation), not a hard
     # fail; integrity is enforced by the fx_rate constraints, not here.
     conn = _Conn(["BRL", "GBP"], 10, {"BRL": (AS_OF, Decimal("5.4")), "GBP": None})
-    r = check_fx_coverage(conn, conn, as_of_date=AS_OF)
+    r = check_fx_coverage(conn, conn, conn, as_of_date=AS_OF)
     assert r.status == "warn" and r.failures == 0 and r.warnings == 1  # GBP has no rate
 
 
 def test_stale_needed_currency_warns():
     conn = _Conn(["BRL"], 10, {"BRL": (date(2026, 1, 1), Decimal("5.4"))})  # ~155d old
-    r = check_fx_coverage(conn, conn, as_of_date=AS_OF)
+    r = check_fx_coverage(conn, conn, conn, as_of_date=AS_OF)
     assert r.status == "warn" and r.warnings == 1
 
 
 def test_all_fresh_passes():
     rates = {"BRL": (AS_OF, Decimal("5.4")), "GBP": (AS_OF, Decimal("0.74"))}
     c = _Conn(["BRL", "GBP"], 10, rates)
-    r = check_fx_coverage(c, c, as_of_date=AS_OF)
+    r = check_fx_coverage(c, c, c, as_of_date=AS_OF)
     assert r.status == "pass" and r.failures == 0 and r.warnings == 0

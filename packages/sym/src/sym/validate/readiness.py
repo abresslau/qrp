@@ -31,12 +31,17 @@ def _missing_reason(has_prices: bool, has_calendar: bool) -> str:
 
 
 def check_universe_readiness(
-    conn: psycopg.Connection, u_conn: psycopg.Connection, threshold: float = DEFAULT_THRESHOLD
+    conn: psycopg.Connection,
+    u_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
+    threshold: float = DEFAULT_THRESHOLD,
 ) -> CheckResult:
     """Per universe, gate the % of current members that join ``fact_returns`` (cross-DB).
 
-    ``u_conn`` is the universe DB (the current-member roster); ``conn`` is sym (fact_returns/prices/
-    calendar). Members not in the securities master are excluded (parity with the old INNER JOIN).
+    ``u_conn`` is the universe DB (the current-member roster); ``eq_conn`` is the equity DB
+    (fact_returns/prices); ``conn`` is sym (securities/calendar). The returned/priced figi SETS are
+    roster-fetched from equity and the has-calendar flag from sym, joined locally (no cross-DB
+    join). Members not in the securities master are excluded (parity with the old INNER JOIN).
     """
     universes = [r[0] for r in u_conn.execute("SELECT universe_id FROM universe").fetchall()]
     failures: list[str] = []
@@ -50,18 +55,30 @@ def check_universe_readiness(
                 (uid,),
             ).fetchall()
         ]
-        rows = conn.execute(
-            """
-            SELECT s.composite_figi,
-                   EXISTS (SELECT 1 FROM fact_returns f WHERE f.composite_figi = s.composite_figi),
-                   EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi),
-                   EXISTS (SELECT 1 FROM trading_calendar_version v
-                            WHERE v.is_current AND v.mic = s.mic)
-              FROM securities s
-             WHERE s.composite_figi = ANY(%s)
-            """,
-            (roster,),
-        ).fetchall() if roster else []
+        if roster:
+            returned = {r[0] for r in eq_conn.execute(
+                "SELECT DISTINCT composite_figi FROM fact_returns WHERE composite_figi = ANY(%s)",
+                (roster,),
+            ).fetchall()}
+            priced = {r[0] for r in eq_conn.execute(
+                "SELECT DISTINCT composite_figi FROM prices_raw WHERE composite_figi = ANY(%s)",
+                (roster,),
+            ).fetchall()}
+            rows = [
+                (figi, figi in returned, figi in priced, hc)
+                for figi, hc in conn.execute(
+                    """
+                    SELECT s.composite_figi,
+                           EXISTS (SELECT 1 FROM trading_calendar_version v
+                                    WHERE v.is_current AND v.mic = s.mic)
+                      FROM securities s
+                     WHERE s.composite_figi = ANY(%s)
+                    """,
+                    (roster,),
+                ).fetchall()
+            ]
+        else:
+            rows = []
         total = len(rows)
         if total == 0:
             # An empty universe is not "100% ready" — flag it rather than pass silently.

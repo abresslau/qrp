@@ -134,7 +134,7 @@ def test_unknown_portfolio_is_404_weightless_is_200():
             super().execute(sql, params)
             return _Cur(one=None, rows=[])
 
-    gw = DbAnalyticsGateway(_NoPortfolio(), _NoPortfolio())
+    gw = DbAnalyticsGateway(_NoPortfolio(), _NoPortfolio(), _NoPortfolio())
     with pytest.raises(LookupError):
         gw.analytics(99999, 1, "ALL")
 
@@ -149,6 +149,6 @@ def test_unknown_portfolio_is_404_weightless_is_200():
         def execute(self, sql, params=None):
             return _Cur(one=None, rows=[])
 
-    out = DbAnalyticsGateway(_Weightless(), _SymEmpty()).analytics(7, 1, "ALL")
+    out = DbAnalyticsGateway(_Weightless(), _SymEmpty(), _SymEmpty()).analytics(7, 1, "ALL")
     assert out["warning"] == "no weights stored for this portfolio"
     assert out["metrics"] is None

@@ -50,19 +50,42 @@ def _facts() -> dict[str, tuple]:
 
 
 class _SymConn:
+    """sym conn — the status + fundamentals-recency query (securities + fn CTE)."""
+
     def __init__(self, facts):
         self._facts = facts
         self.seen: list[str] = []
 
     def execute(self, sql, params=None):
         self.seen.append(sql)
-        if "max(session_date) FROM prices_raw" in sql:
+        if "FROM securities s" in sql and "fn AS" in sql:
+            figis = set(params["f"])
+            # (figi, status, fnd) per roster member in the master
+            return _Cur(rows=[(f, v[0], v[3]) for f, v in self._facts.items() if f in figis])
+        return _Cur()
+
+
+class _EqConn:
+    """equity conn — prices/returns recency (split out of the old combined CTE query)."""
+
+    def __init__(self, facts):
+        self._facts = facts
+        self.seen: list[str] = []
+
+    def execute(self, sql, params=None):
+        self.seen.append(sql)
+        if "max(session_date) FROM prices_raw" in sql and "GROUP BY" not in sql:
             return _Cur(one=(LATEST,))
         if "min(window_id) FROM return_window" in sql:
             return _Cur(one=(1,))
-        if "WITH px AS" in sql:  # the per-figi facts query (filtered by the roster list)
+        if "FROM prices_raw" in sql:  # pxd_by: (figi, max session) for priced roster members
             figis = set(params["f"])
-            return _Cur(rows=[(f, *vals) for f, vals in self._facts.items() if f in figis])
+            return _Cur(rows=[(f, v[1]) for f, v in self._facts.items()
+                              if f in figis and v[1] is not None])
+        if "FROM fact_returns" in sql:  # rtd_by: (figi, max as_of) for returned roster members
+            figis = set(params["f"])
+            return _Cur(rows=[(f, v[2]) for f, v in self._facts.items()
+                              if f in figis and v[2] is not None])
         return _Cur()
 
 
@@ -77,7 +100,9 @@ class _UniConn:
 
 
 def _gw():
-    return DbSymGateway(_SymConn(_facts()), universe_conn=_UniConn(_roster()))
+    return DbSymGateway(
+        _SymConn(_facts()), universe_conn=_UniConn(_roster()), equity_conn=_EqConn(_facts())
+    )
 
 
 def test_universe_coverage_maps_layers_and_status():
@@ -97,15 +122,20 @@ def test_universe_coverage_maps_layers_and_status():
 
 
 def test_universe_coverage_query_is_index_bounded_not_full_table():
-    # perf guard (the Overview 125s lesson): the per-figi facts scan must restrict returns to one
-    # window_id and bound by a recent date — NEVER a full-table count(DISTINCT)/group-by-date.
-    conn = _SymConn(_facts())
-    DbSymGateway(conn, universe_conn=_UniConn(_roster())).universe_coverage()
-    facts_sql = next(s for s in conn.seen if "WITH px AS" in s).lower()
-    assert "window_id = %(w)s" in facts_sql  # returns restricted to one window (not 28×)
-    assert "session_date >= %(latest)s" in facts_sql  # bounded recent window
-    assert "composite_figi = any(%(f)s)" in facts_sql  # roster-bounded, not the whole table
-    assert "count(distinct" not in facts_sql  # never the full-table distinct trap
+    # perf guard (the Overview 125s lesson): the equity-side prices/returns recency scans must
+    # restrict returns to one window_id and bound by a recent date — NEVER a full-table
+    # count(DISTINCT)/group-by-date. (These reads moved to the equity DB in the extraction.)
+    eq = _EqConn(_facts())
+    DbSymGateway(
+        _SymConn(_facts()), universe_conn=_UniConn(_roster()), equity_conn=eq
+    ).universe_coverage()
+    rt_sql = next(s for s in eq.seen if "FROM fact_returns" in s).lower()
+    px_sql = next(s for s in eq.seen if "FROM prices_raw" in s and "GROUP BY" in s).lower()
+    assert "window_id = %(w)s" in rt_sql  # returns restricted to one window (not 28×)
+    assert "as_of_date >= %(latest)s" in rt_sql  # bounded recent window
+    assert "composite_figi = any(%(f)s)" in rt_sql  # roster-bounded, not the whole table
+    assert "session_date >= %(latest)s" in px_sql  # bounded recent window
+    assert "count(distinct" not in rt_sql and "count(distinct" not in px_sql
 
 
 def test_universe_coverage_empty_when_no_members():

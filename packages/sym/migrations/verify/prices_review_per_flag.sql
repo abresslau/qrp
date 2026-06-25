@@ -1,6 +1,4 @@
 -- Verify sym:prices_review_per_flag on pg
-
-SELECT 1/count(*) FROM pg_constraint
- WHERE conname = 'prices_review_pk'
-   AND conrelid = 'prices_review'::regclass
-   AND array_length(conkey, 1) = 3;
+-- No-op: the objects this change created were extracted to the `equity` package+database
+-- (sym:equity_extract). The equity DB owns + verifies them now.
+SELECT 1;

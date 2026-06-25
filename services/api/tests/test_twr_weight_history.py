@@ -80,7 +80,7 @@ def _gateway(history_rows, fact_rows, terms=(None, "USD"), bench_dates=()):
         ("FROM instrument", _Cur(one=_BENCH_META)),
         ("FROM fact_index_returns", _Cur(rows=[(d, 0.0) for d in bench_dates])),
     ])
-    return DbAnalyticsGateway(port_conn, sym_conn)
+    return DbAnalyticsGateway(port_conn, sym_conn, equity_conn=sym_conn)
 
 
 _TWO_VECTOR_HISTORY = [

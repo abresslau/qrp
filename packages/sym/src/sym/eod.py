@@ -142,9 +142,10 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
     def source() -> object:
         if not source_box:
+            from equity.sources import get_source
+            from equity.sources.yfinance_adapter import make_yahoo_symbol_resolver
+
             from sym.config import source_key
-            from sym.sources import get_source
-            from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
 
             source_box.append(get_source(source_key(), symbol_for=make_yahoo_symbol_resolver(conn)))
         return source_box[0]
@@ -172,10 +173,14 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                     leavers += s.leavers
             return f"{len(uids)} index universes; joiners={joiners} leavers={leavers}"
         if key == "fill":
-            from sym.ingest.pipeline import FILL, run_load
+            from equity.db import connect as equity_connect
+            from equity.ingest.pipeline import FILL, run_load
 
-            # The daily incremental is a forward fill (gap_aware defaults False).
-            s = run_load(conn, source(), FILL, as_of_date=as_of_date)
+            # Prices live in the equity DB now; the resolver/calendar read sym (`conn`). The daily
+            # incremental is a forward fill (gap_aware defaults False).
+            with equity_connect() as eq_conn:
+                eq_conn.autocommit = True
+                s = run_load(eq_conn, conn, source(), FILL, as_of_date=as_of_date)
             return f"loaded={s.loaded} skipped={s.skipped} errored={s.errored} rows={s.rows}"
         if key == "map":
             from sym.identity.instrument import backfill_equity_instruments
@@ -205,12 +210,12 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 detail += f"; source errors: {', '.join(errored)}"
             return detail
         if key == "indices":
+            from equity.returns.loader import DEFAULT_LOOKBACK
             from universe.db import connect as u_connect
 
             from sym.indices.levels import YahooIndexLevelSource, load_index_levels
             from sym.indices.links import link_universe_indices
             from sym.indices.returns import recompute_index_returns
-            from sym.returns.loader import DEFAULT_LOOKBACK
 
             lv = load_index_levels(conn, YahooIndexLevelSource())
             recompute_index_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
@@ -237,9 +242,14 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 f"market_cap_usd={usd}"
             )
         if key == "recompute":
-            from sym.returns.loader import DEFAULT_LOOKBACK, load_returns
+            from equity.db import connect as equity_connect
+            from equity.returns.loader import DEFAULT_LOOKBACK, load_returns
 
-            s = load_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
+            # fact_returns lives in the equity DB; securities + calendar read sym (`conn`).
+            with equity_connect() as eq_conn:
+                s = load_returns(
+                    eq_conn, conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date
+                )
             return f"securities={s.securities} rows={s.rows}"
         if key == "validate":
             from sym.validate.runner import summarize, validate

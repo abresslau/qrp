@@ -12,8 +12,7 @@ from decimal import Decimal
 import pandas as pd
 import pytest
 
-from sym.sources.contract import ContractViolation
-from sym.sources import (
+from equity.sources import (
     DividendEvent,
     OhlcvBar,
     OhlcvResult,
@@ -27,7 +26,8 @@ from sym.sources import (
     get_source,
     register_source,
 )
-from sym.sources.yfinance_adapter import YFinanceSource, parse_history
+from equity.sources.contract import ContractViolation
+from equity.sources.yfinance_adapter import YFinanceSource, parse_history
 
 FIXED_NOW = datetime(2026, 6, 6, tzinfo=UTC)
 

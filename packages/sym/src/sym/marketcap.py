@@ -68,23 +68,24 @@ def shares_outstanding_asof(
 def market_cap(
     conn: psycopg.Connection,
     fx_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     figi: str,
     as_of_date: date,
     ccy: str | None = None,
 ) -> MarketCap:
     """Derived market cap of ``figi`` on ``as_of_date``: ``close_raw × shares``, in LCY or ``ccy``.
 
-    ``conn`` is the sym DB (prices/securities/fundamentals); ``fx_conn`` is the fx DB (rates), read
-    only when a non-local ``ccy`` conversion is needed. ``ccy=None`` returns LCY (the security's own
-    currency); any other code converts via the FX layer (``value=None`` if the FX leg is missing/
-    stale). ``value=None`` also when the price or the share count is unavailable, or the latest
-    price is older than ``MAX_PRICE_STALE_DAYS``.
+    ``conn`` is the sym DB (securities/fundamentals); ``eq_conn`` is the equity DB (the adjusted
+    price); ``fx_conn`` is the fx DB (rates), read only when a non-local ``ccy`` conversion is
+    needed. ``ccy=None`` returns LCY (the security's own currency); any other code converts via the
+    FX layer (``value=None`` if the FX leg is missing/stale). ``value=None`` also when the price or
+    the share count is unavailable, or the latest price is older than ``MAX_PRICE_STALE_DAYS``.
     """
     sec = conn.execute(
         "SELECT currency_code FROM securities WHERE composite_figi = %s", (figi,)
     ).fetchone()
     local = sec[0].strip() if sec and sec[0] else None
-    px = conn.execute(
+    px = eq_conn.execute(
         "SELECT close_raw, session_date FROM v_prices_adjusted "
         "WHERE composite_figi = %s AND session_date <= %s "
         "ORDER BY session_date DESC LIMIT 1",

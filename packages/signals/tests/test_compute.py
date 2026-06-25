@@ -206,17 +206,17 @@ def test_raw_factor_names_the_missing_module():
 
     with pytest.raises(ValueError, match="macro"):
         raw_factor("fiscal_sens", ["FIGI_A0000000"], date(2026, 6, 5),
-                   sym_conn=_RoutedConn())
+                   sym_conn=_RoutedConn(), eq_conn=_RoutedConn())
     with pytest.raises(ValueError, match="altdata"):
         raw_factor("wiki_attention", ["FIGI_A0000000"], date(2026, 6, 5),
-                   sym_conn=_RoutedConn())
+                   sym_conn=_RoutedConn(), eq_conn=_RoutedConn())
 
 
 def test_raw_factor_dispatches_to_the_single_definition():
     from signals.compute import raw_factor
 
     sym = _RoutedConn([("fundamentals", _Cur(rows=[("FIGI_A0000000", 5e9)]))])
-    out = raw_factor("size", ["FIGI_A0000000"], date(2026, 6, 5), sym_conn=sym)
+    out = raw_factor("size", ["FIGI_A0000000"], date(2026, 6, 5), sym_conn=sym, eq_conn=sym)
     assert out == {"FIGI_A0000000": 5e9}
 
 
@@ -232,7 +232,7 @@ def test_missing_module_connections_skip_factors_with_reasons():
         ("fundamentals", _Cur(rows=[])),
     ])
     sig = _RoutedConn()
-    out = compute_universe(sym, sig, "sp500")
+    out = compute_universe(sym, sig, "sp500", eq_conn=sym)
     assert out["skipped"] == {
         "wiki_attention": "no altdata connection",
         "fiscal_sens": "no macro connection",

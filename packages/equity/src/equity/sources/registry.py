@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from sym.sources.contract import OhlcvSource, SourceError, UnsupportedSourceError
+from equity.sources.contract import OhlcvSource, SourceError, UnsupportedSourceError
 
 
 class UnknownSourceError(SourceError):

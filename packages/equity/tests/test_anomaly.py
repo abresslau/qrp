@@ -8,13 +8,13 @@ from decimal import Decimal
 
 import pytest
 
-from sym.ingest.anomaly import (
+from equity.ingest.anomaly import (
     PRICE_JUMP,
     PRICE_ON_NON_TRADING_DAY,
     detect_anomalies,
 )
-from sym.ingest.prices import ingest_result, resolve_review
-from sym.sources.contract import OhlcvBar, OhlcvResult, SplitEvent
+from equity.ingest.prices import ingest_result, resolve_review
+from equity.sources.contract import OhlcvBar, OhlcvResult, SplitEvent
 
 FIXED = datetime(2026, 6, 6, tzinfo=UTC)
 D1, D2, D3 = date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)

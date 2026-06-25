@@ -22,20 +22,18 @@ READONLY_ROLE = "qrp_readonly"
 # AR-R3: the sym read surface consumers may touch. Extend DELIBERATELY — a new entry here
 # simultaneously widens the discipline gate AND the role's grants (single source of truth).
 SYM_READ_SURFACE = {
-    "fact_returns",
     "fact_index_returns",
     "securities",
     "security_symbology",
     "security_names",
     # universe_membership moved to the `universe` peer package + its own DB (no longer a sym read).
+    # prices_raw / fact_returns / fact_price_extremes / pipeline_run_log moved to the `equity` peer
+    # package + its own DB — consumers read those over the equity connection now, not sym.
     "fundamentals",
-    "return_window",
+    "return_window",  # sym keeps its own copy for the index facts (fact_index_returns FK)
     "instrument",
-    "pipeline_run_log",  # Operate's correlated run history (FR-6/FR-8)
     "gics_scd",  # GICS sector/industry — analytics' live portfolio composition (sector donut)
     "exchange",  # exchange→country — the live composition pivot (explorer-style per-stock columns)
-    "prices_raw",  # latest EOD volume — the live composition pivot (explorer-style per-stock columns)
-    "fact_price_extremes",  # 52-week high/low — the live composition pivot's 52W range bar (Story 3.2-ext)
 }
 
 # The known sym public relations OUTSIDE the read surface (kept current by hand from
@@ -43,16 +41,19 @@ SYM_READ_SURFACE = {
 # newer, so an omission here cannot silently widen the contract). The role is NEVER
 # granted SELECT on these.
 SYM_INTERNAL_RELATIONS = {
-    "prices_review", "trading_calendar",
+    "trading_calendar",
     "trading_calendar_version",
     # The universe membership tables moved to the `universe` peer package + its own database
     # (universe, membership_event, membership_proposal, universe_member_resolution,
     # universe_monitor_log, universe_accuracy_check). universe_benchmark + the sym-side
     # universe_member_completeness validate-output table STAY in sym.
-    "universe_member_completeness", "fx_rate",
-    "fx_rate_review", "securities_review_queue", "pipeline_backfill_progress",
-    "instrument_xref", "corporate_actions", "currency", "index_levels", "price_gaps",
+    # The equity fact tables moved to the `equity` peer package + its own database
+    # (prices_raw, corporate_actions, price_gaps, prices_review, pipeline_backfill_progress,
+    # pipeline_run_log, fact_returns, fact_price_extremes, v_prices_adjusted).
+    "universe_member_completeness",
+    "securities_review_queue",
+    "instrument_xref", "currency", "index_levels",
     "universe_benchmark",
-    "v_fx", "v_fx_daily", "v_prices_adjusted", "validation_run_log",
+    "validation_run_log",
     "fact_index_extremes",  # 52-week index extremes (Story 3.2-ext) — not yet consumed by any API reader
 }

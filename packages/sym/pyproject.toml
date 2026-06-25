@@ -5,6 +5,7 @@ description = "Global Equity Security Master + Market Data + Returns warehouse (
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "equity",
     "exchange-calendars>=4.13.2",
     "financedatabase>=2.4.0",
     "fx",
@@ -20,6 +21,7 @@ dependencies = [
 sym = "sym.cli:main"
 
 [tool.uv.sources]
+equity = { workspace = true }
 fx = { workspace = true }
 universe = { workspace = true }
 
