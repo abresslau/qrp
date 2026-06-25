@@ -1,6 +1,9 @@
 # Story: Extract `equity` (prices · returns · corporate actions) into its own peer package WITH its own database
 
-Status: in-progress
+Status: review  <!-- P1-P7 ALL DONE on feat/equity-package; data migrated; moved tables dropped from
+sym (AC#3 met); full suites + live end-to-end + SM-6 accuracy harness green. Branch NOT merged to
+main — awaiting Andre's adversarial code-review (one-way dep / behavior preservation / cross-DB
+roster-fetch + no-cross-DB-join / the drop). -->
 
 <!-- Created via bmad-create-story 2026-06-25 (Andre: "create a separate package and db for equity so
 everything price, returns and corporate actions are in this database. in sym it should stay things that
@@ -194,8 +197,34 @@ Python merge.
 - [x] **P4a/b/c — Rewire external consumers** (commits): backtest/signals/optimiser/lineage (39/14/21
   green); analytics/portfolios gateways; api sym gateway (all 5 join methods) + router + data_monitor +
   sym_contract. Syntax/import-clean.
-- [~] **P5 — Migrate data**: prices_raw (13.5M), corporate_actions (128k), price_gaps, backfill_progress
-  done; fact_returns (15.9M) + extremes + prices_review + run_log resuming (idempotent script).
-- [ ] **P6 — Verify**: api suite + deploy_all + lineage + live behavior (pending P5).
-- [ ] **P7 — Drop from sym**: STAGED, not executed (the destructive last step) — pending Andre's review
-  of the branch. Until then sym retains a frozen copy (no consumer reads it; all read equity).
+- [x] **P5 — Migrate data** (commit): all 8 tables COPY'd sym→equity (prices_raw 13.5M, fact_returns
+  15.9M, corporate_actions 128k, price_gaps, prices_review, backfill_progress, run_log, extremes);
+  counts verified == sym; run_id identity advanced. (Streaming binary COPY; the first in-memory-buffer
+  attempt was too slow — switched to chunk-by-chunk streaming.)
+- [x] **P6 — Verify** (commit): every api test fixture updated for the cross-DB query shapes; full
+  suites green (equity 112, sym 529, backtest 39, signals 14, optimiser 21, api 175); deploy_all
+  --status clean; lineage.definitions loads. LIVE end-to-end (real DBs, no fakes): all api gateway
+  cross-DB methods + backtest + analytics + portfolio returns + sym validate PASS.
+- [x] **P7 — Drop from sym** (commit): sym:equity_extract migration dropped the 9 objects (deployed +
+  verified via Docker sqitch; faithful revert; 12 stale create-verify scripts no-op'd). AC#3 met. The
+  drop surfaced + I fixed **two fail-loud misses** the live verify hadn't exercised: validate/fx.py
+  check_fx_coverage (priced set now roster-fetched from equity) and test_accuracy / the SM-6 gate (now
+  reads fact_returns from equity — runs + passes). Post-drop: moved tables absent from sym, all suites +
+  live verify + SM-6 accuracy harness green; the 2 validate fails are PRE-EXISTING data gaps (13
+  incomplete / 9 unpriced), not regressions.
+
+### Completion Notes
+Equity is now a full peer package with its own `equity` database; one-way `sym → equity` (import-guard
+clean — equity imports nothing from sym). All ACs met. The single-query cross-DB joins in the API
+gateway (universe_coverage / heatmap / securities gap+enrichment / attention) + analytics' live-pivot
+were split into per-DB reads + Python merge on composite_figi (no cross-DB join anywhere). Index facts
+(index_levels/fact_index_returns/fact_index_extremes/universe_benchmark) + return_window + fundamentals
+deliberately STAY in sym (sym_id-bridge / benchmark plumbing). ~30M rows migrated; sym's copies dropped.
+Index extraction is the documented follow-up.
+
+## Change Log
+- 2026-06-25: Story created + implemented across 7 phases on feat/equity-package (commits): P1 scaffold +
+  equity DB; P2 move engine (sym-import-free, (equity_conn, sym_conn) threading); P3 rewire sym
+  orchestration/consumers + validate cross-DB; P4a/b/c rewire backtest/signals/optimiser/lineage +
+  analytics/portfolios + api gateway/data_monitor/operate/contract; P5 migrate data; P6 verify (suites +
+  live); P7 drop from sym + fix two fail-loud misses. All ACs met; green; live-verified. Status → review.
