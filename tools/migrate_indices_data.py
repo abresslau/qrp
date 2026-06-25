@@ -33,7 +33,7 @@ def _count(conn, table: str) -> int:
 def main() -> int:
     sym = sym_connect()
     ix = indices_connect()
-    ix.rollback()  # clear the SET-search_path txn so per-table commits start clean (default off)
+    ix.autocommit = False  # atomic per-table TRUNCATE+COPY (connect() returns a clean autocommit conn)
 
     for table in TABLES:
         # source tables live in the sym public schema; the indices side resolves via search_path.

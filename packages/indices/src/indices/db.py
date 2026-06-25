@@ -46,7 +46,12 @@ def connect(dbname: str | None = None) -> psycopg.Connection:
     _load_env()
     name = dbname or os.environ.get(f"{_OWN.upper()}_DB_NAME", _OWN)
     target = os.environ.get(f"{name.upper()}_DATABASE_URL") or f"dbname={name}"
-    conn = psycopg.connect(target, connect_timeout=5)
+    # autocommit=True so the SET below doesn't leave the connection in an open transaction — the
+    # write-engine functions (load_index_levels/recompute_index_returns/load_msci_*) set
+    # ``conn.autocommit = True`` as their first line, which would otherwise raise on an INTRANS one.
+    # They still wrap their writes in explicit ``with conn.transaction()`` blocks for per-series
+    # atomicity, and reads are unaffected.
+    conn = psycopg.connect(target, connect_timeout=5, autocommit=True)
     # Resolve the engine's unqualified table names against the `indices` schema (the DB-level
     # search_path already does this for every connection; pinned here too, self-documenting).
     conn.execute("SET search_path TO indices, public")
