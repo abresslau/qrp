@@ -12,6 +12,7 @@ dependencies = [
     "pandas>=3.0.3",
     "psycopg[binary]>=3.3.4",
     "requests>=2.34.2",
+    "universe",
     "yfinance>=1.4.1",
 ]
 
@@ -20,6 +21,7 @@ sym = "sym.cli:main"
 
 [tool.uv.sources]
 fx = { workspace = true }
+universe = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.11.8,<0.12.0"]

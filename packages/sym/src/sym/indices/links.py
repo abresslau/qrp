@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from datetime import date
 
 import psycopg
+from universe.query import members
 
 from sym.identity.instrument import SRC_YAHOO, sym_id_for
-from sym.universe.query import members
 
 # universe_id -> [(yahoo_symbol, role, is_primary)]. The yahoo symbol resolves to
 # the index instrument's sym_id (loaded by `sym indices`).
@@ -45,16 +45,17 @@ class LinkSummary:
     skipped_no_instrument: int = 0
 
 
-def link_universe_indices(conn: psycopg.Connection) -> LinkSummary:
+def link_universe_indices(conn: psycopg.Connection, u_conn: psycopg.Connection) -> LinkSummary:
     """Seed the `universe_benchmark` link table from the mapping (idempotent).
 
-    Skips a mapping whose universe isn't defined or whose index instrument
-    isn't loaded yet (run `sym indices` first to load the level series).
+    ``conn`` is sym (universe_benchmark + the instrument spine); ``u_conn`` is the universe DB
+    (the universe-existence check). Skips a mapping whose universe isn't defined or whose index
+    instrument isn't loaded yet (run `sym indices` first to load the level series).
     """
     conn.autocommit = True
     summary = LinkSummary()
     for universe_id, links in UNIVERSE_INDICES.items():
-        exists = conn.execute(
+        exists = u_conn.execute(
             "SELECT 1 FROM universe WHERE universe_id = %s", (universe_id,)
         ).fetchone()
         if exists is None:
@@ -118,17 +119,15 @@ class UniverseSnapshot:
 
 
 def universe_with_index(
-    conn: psycopg.Connection, universe_id: str, as_of_date: date
+    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str, as_of_date: date
 ) -> UniverseSnapshot:
     """Point-in-time constituents + the primary reference index's level, as-of a date.
 
-    The payoff of the link: who was in the index *and* where the index closed on
-    the same date. The carried-back level's own session is surfaced as
-    ``index_level_date`` so a stale series is visible to the caller (the FX
-    resolver's staleness-cap pattern, applied as transparency rather than a cutoff).
-    (Index returns for any window are in `fact_index_returns`.)
+    ``u_conn`` is the universe DB (point-in-time constituents); ``conn`` is sym (the benchmark link
+    + index level series). The payoff: who was in the index *and* where it closed on the same date.
+    ``index_level_date`` surfaces the carried-back level's own session (transparency).
     """
-    member_figis = members(conn, universe_id, as_of_date)
+    member_figis = members(u_conn, universe_id, as_of_date)
     sym_id = primary_index(conn, universe_id)
     level = None
     level_date = None

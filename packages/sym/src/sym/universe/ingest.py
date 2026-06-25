@@ -1,14 +1,16 @@
-"""Universe-driven ingestion (Epic U4).
+"""Universe-driven ingestion (Epic U4) — the sym-side price-load bridge.
 
-Drives price ingestion from *maintained universe membership* instead of a static
-seed: every tracked, resolved member becomes a priceable security; a joiner's
-prior history is backfilled over its membership window; a leaver stops forward
-fetches but keeps its history (survivorship-safe, Story 3.7); and per-universe
+Drives price ingestion from *maintained universe membership* instead of a static seed: every
+tracked, resolved member becomes a priceable security; a joiner's prior history is backfilled over
+its membership window; a leaver stops forward fetches but keeps its history; and per-universe
 coverage makes a partial load visible rather than hidden.
 
-The bridge (`ensure_universe_securities`) creates `securities` rows for resolved
-members not yet in the master (reusing the identity layer's `write_security`), so
-the existing ingestion + returns + SM-6 machinery then runs unchanged (NFR9).
+This module STAYS in sym (it loads into sym's ``prices_raw`` and writes the securities master).
+Since membership moved to the ``universe`` package's own database, every function takes BOTH
+connections: ``conn`` is the sym DB (securities / prices_raw / pipeline_backfill_progress) and
+``u_conn`` is the universe DB (membership / resolutions). The cross-DB pattern is ROSTER-FETCH —
+read the small member roster from the universe DB, then filter sym data by that ``composite_figi``
+list (NO cross-DB join).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 
 import psycopg
+from universe.registry import InvalidMemberIdentifierError
 
 from sym.identity.symbology import (
     ExchangeLookupError,
@@ -26,8 +29,7 @@ from sym.identity.symbology import (
 )
 from sym.identity.universe import TICKER, SeedSecurity
 from sym.ingest.pipeline import OVERWRITE, LoadSummary, run_load
-from sym.universe.registry import InvalidMemberIdentifierError
-from sym.universe.resolution import _parse_token
+from sym.universe.resolver import _parse_token
 
 
 @dataclass
@@ -40,36 +42,41 @@ class BridgeSummary:
     skipped_collision: int = 0  # recycled identifier / transition refusal (1.10)
 
 
-def ensure_universe_securities(conn: psycopg.Connection, universe_id: str) -> BridgeSummary:
+def ensure_universe_securities(
+    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str
+) -> BridgeSummary:
     """Create `securities` rows for resolved members missing from the master.
 
-    Reconstructs a one-off `SeedSecurity` from each member's frozen
-    ``(ticker, mic)`` token + CompositeFIGI and reuses ``write_security`` (currency
-    and country come from the exchange table). A token without a usable MIC, or a
-    MIC absent from the exchange reference, is skipped and counted (a coverage gap,
-    not a crash). Idempotent: an already-present security is left untouched.
+    Roster-fetch: read the resolved members from the universe DB, find which are absent from sym's
+    ``securities``, and reuse ``write_security`` for those. Idempotent.
     """
     conn.autocommit = True
-    rows = conn.execute(
+    resolved = u_conn.execute(
         """
-        SELECT r.raw_identifier, r.composite_figi, r.share_class_figi
-          FROM universe_member_resolution r
-         WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
-           AND NOT EXISTS (
-               SELECT 1 FROM securities s WHERE s.composite_figi = r.composite_figi
-           )
+        SELECT raw_identifier, composite_figi, share_class_figi
+          FROM universe_member_resolution
+         WHERE universe_id = %s AND resolution_status = 'resolved'
         """,
         (universe_id,),
     ).fetchall()
+    figis = [r[1] for r in resolved]
+    existing = {
+        r[0]
+        for r in conn.execute(
+            "SELECT composite_figi FROM securities WHERE composite_figi = ANY(%s)", (figis,)
+        ).fetchall()
+    } if figis else set()
     summary = BridgeSummary()
-    for raw, figi, share_class_figi in rows:
+    for raw, figi, share_class_figi in resolved:
+        if figi in existing:
+            summary.existed += 1
+            continue
         try:
             symbol_type, value, mic = _parse_token(raw)
         except InvalidMemberIdentifierError:
             summary.skipped_bad_token += 1
             continue
         if symbol_type != TICKER or not mic:
-            # An ISIN-only token has no listing MIC → can't derive currency/country.
             summary.skipped_no_mic += 1
             continue
         seed = SeedSecurity(raw, "universe_member", value, mic, None, None)
@@ -82,9 +89,6 @@ def ensure_universe_securities(conn: psycopg.Connection, universe_id: str) -> Br
             summary.skipped_no_exchange += 1
             continue
         except (SymbologyCollisionError, SymbologyTransitionError):
-            # A recycled identifier or a refused transition is ONE member's
-            # problem — skip-and-count, never abort the bridge run (the per-item
-            # transaction above already rolled this member back).
             summary.skipped_collision += 1
             continue
         if created:
@@ -95,46 +99,67 @@ def ensure_universe_securities(conn: psycopg.Connection, universe_id: str) -> Br
 
 
 def universe_securities(
-    conn: psycopg.Connection, universe_id: str, as_of_date: date, *, backfill: bool
+    conn: psycopg.Connection,
+    u_conn: psycopg.Connection,
+    universe_id: str,
+    as_of_date: date,
+    *,
+    backfill: bool,
 ) -> list[tuple[str, str, date | None, date, date | None]]:
-    """The security set to ingest for a universe.
+    """The security set to ingest for a universe (roster-fetch, joined in Python).
 
-    Returns ``(composite_figi, mic, cursor, member_from, member_to)`` per member
-    that resolves AND exists in ``securities``. ``member_from`` is the earliest
-    membership ``valid_from`` (the backfill floor); ``member_to`` is the exit date
-    (NULL if still a member — the leaver fetch cap). A forward fill takes only
-    members active as-of ``as_of_date``; a gap-aware (backfill) fill or an overwrite
-    takes all (so a name's whole membership window is filled, leavers capped at their exit).
+    Returns ``(composite_figi, mic, cursor, member_from, member_to)`` per member that resolves AND
+    exists in ``securities``. ``member_from`` = earliest membership ``valid_from`` (backfill floor);
+    ``member_to`` = exit date (NULL if still a member — leaver fetch cap). A forward fill takes only
+    members active as-of ``as_of_date``; a backfill/overwrite takes all (whole membership window).
     """
-    rows = conn.execute(
+    # 1. membership roster from the universe DB (no securities join here).
+    roster = u_conn.execute(
         """
-        SELECT um.composite_figi, s.mic, p.cursor_date,
+        SELECT um.composite_figi,
                min(um.valid_from) AS member_from,
                CASE WHEN bool_or(um.valid_to IS NULL) THEN NULL
                     ELSE max(um.valid_to) END AS member_to,
                bool_or(um.valid_from <= %s AND (um.valid_to IS NULL OR um.valid_to > %s))
                    AS active_asof
           FROM universe_membership um
-          JOIN securities s USING (composite_figi)
-          LEFT JOIN pipeline_backfill_progress p ON p.composite_figi = um.composite_figi
          WHERE um.universe_id = %s
-         GROUP BY um.composite_figi, s.mic, p.cursor_date
+         GROUP BY um.composite_figi
          ORDER BY um.composite_figi
         """,
         (as_of_date, as_of_date, universe_id),
     ).fetchall()
+    figis = [r[0] for r in roster]
+    if not figis:
+        return []
+    # 2. mic (only members that EXIST in securities — the original INNER JOIN) + backfill cursor,
+    #    fetched from sym filtered by the roster list.
+    mic_by_figi = {
+        r[0]: (r[1].strip() if isinstance(r[1], str) else r[1])
+        for r in conn.execute(
+            "SELECT composite_figi, mic FROM securities WHERE composite_figi = ANY(%s)", (figis,)
+        ).fetchall()
+    }
+    cursor_by_figi = dict(
+        conn.execute(
+            "SELECT composite_figi, cursor_date FROM pipeline_backfill_progress "
+            "WHERE composite_figi = ANY(%s)",
+            (figis,),
+        ).fetchall()
+    )
     out: list[tuple[str, str, date | None, date, date | None]] = []
-    for figi, mic, cursor, member_from, member_to, active in rows:
+    for figi, member_from, member_to, active in roster:
+        if figi not in mic_by_figi:  # not in the securities master → excluded (INNER JOIN parity)
+            continue
         if not backfill and not active:
             continue  # forward modes skip leavers (stop forward fetch)
-        out.append(
-            (figi, mic.strip() if isinstance(mic, str) else mic, cursor, member_from, member_to)
-        )
+        out.append((figi, mic_by_figi[figi], cursor_by_figi.get(figi), member_from, member_to))
     return out
 
 
 def run_universe_load(
     conn: psycopg.Connection,
+    u_conn: psycopg.Connection,
     source: object,
     universe_id: str,
     mode: str,
@@ -144,36 +169,23 @@ def run_universe_load(
     history_floor: date | None = None,
     **kwargs: object,
 ) -> LoadSummary:
-    """Load prices for a universe's members from maintained membership.
+    """Load prices for a universe's members from maintained membership (cross-DB roster-fetch).
 
-    Bridges resolved members into ``securities`` (so new names are priceable), then
-    runs the standard pipeline over the membership selection with a per-figi backfill
-    floor (joiner window) and end cap (leaver exit).
-
-    Price history is **factual and independent of the membership window**: backfill
-    fetches each member's full available history (down to the pipeline's deep
-    ``DEFAULT_FLOOR``, or ``history_floor`` if given) — the gap-aware backfill then
-    fills any history below what is already stored, even for a name first loaded
-    from its membership-join date. The membership PIT boundary (``pit_valid_from``)
-    is unaffected — it governs *membership* queries, not price coverage. Leaver
-    end-caps still apply (no point fetching past a delisted name's exit).
+    Bridges resolved members into ``securities`` (so new names are priceable), then runs the
+    standard sym pipeline over the membership selection with a per-figi backfill floor (joiner) and
+    an end cap (leaver exit). ``conn`` is sym; ``u_conn`` is the universe DB.
     """
     if ensure_securities:
-        ensure_universe_securities(conn, universe_id)
-        # Map any newly-created securities onto the instrument/sym_id spine immediately — this
-        # is where securities are born, so it closes the bridge at the source (the nightly EOD
-        # `map` step is the safety net). Idempotent. See docs/data-conventions.md §3.
+        ensure_universe_securities(conn, u_conn, universe_id)
+        # Map any newly-created securities onto the instrument/sym_id spine immediately. Idempotent.
         from sym.identity.instrument import backfill_equity_instruments
 
         backfill_equity_instruments(conn)
-    # A forward fill follows current membership and skips leavers. History modes —
-    # a gap-aware (backfill) fill, or an overwrite — must cover every point-in-time
-    # member in the window, or a historical re-fetch silently leaves leavers' bars
-    # untouched (survivorship gap, and invisible to `sym validate`, whose completeness
-    # check only sees current members).
     gap_aware = bool(kwargs.get("gap_aware", False))
     select_all_members = gap_aware or mode == OVERWRITE
-    selection = universe_securities(conn, universe_id, as_of_date, backfill=select_all_members)
+    selection = universe_securities(
+        conn, u_conn, universe_id, as_of_date, backfill=select_all_members
+    )
     securities = [(figi, mic, cursor) for figi, mic, cursor, _f, _t in selection]
     cap_map = {figi: member_to for figi, _m, _c, _f, member_to in selection}
     floor_for = None
@@ -217,11 +229,13 @@ class Coverage:
         return self.current_priced / self.current_members if self.current_members else 0.0
 
 
-def coverage(conn: psycopg.Connection, universe_id: str, as_of_date: date) -> Coverage:
-    """Per-universe coverage so a partial load can't masquerade as complete."""
+def coverage(
+    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str, as_of_date: date
+) -> Coverage:
+    """Per-universe coverage so a partial load can't masquerade as complete (cross-DB)."""
     cov = Coverage(universe_id)
     res = dict(
-        conn.execute(
+        u_conn.execute(
             """
             SELECT resolution_status, count(*) FROM universe_member_resolution
              WHERE universe_id = %s GROUP BY resolution_status
@@ -232,37 +246,36 @@ def coverage(conn: psycopg.Connection, universe_id: str, as_of_date: date) -> Co
     cov.resolved = res.get("resolved", 0)
     cov.unresolved = res.get("unresolved", 0)
     cov.members_total = sum(res.values())
-    cov.in_master = conn.execute(
-        """
-        SELECT count(DISTINCT r.composite_figi)
-          FROM universe_member_resolution r JOIN securities s USING (composite_figi)
-         WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
-        """,
-        (universe_id,),
-    ).fetchone()[0]
-    cov.priced = conn.execute(
-        """
-        SELECT count(DISTINCT r.composite_figi)
-          FROM universe_member_resolution r
-         WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
-           AND EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = r.composite_figi)
-        """,
-        (universe_id,),
-    ).fetchone()[0]
-    cov.current_members = conn.execute(
-        """
-        SELECT count(DISTINCT composite_figi) FROM universe_membership
-         WHERE universe_id = %s AND valid_from <= %s AND (valid_to IS NULL OR valid_to > %s)
-        """,
-        (universe_id, as_of_date, as_of_date),
-    ).fetchone()[0]
-    cov.current_priced = conn.execute(
-        """
-        SELECT count(DISTINCT um.composite_figi) FROM universe_membership um
-         WHERE um.universe_id = %s AND um.valid_from <= %s
-           AND (um.valid_to IS NULL OR um.valid_to > %s)
-           AND EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = um.composite_figi)
-        """,
-        (universe_id, as_of_date, as_of_date),
-    ).fetchone()[0]
+    # resolved-member rosters from the universe DB; existence/pricing checked against sym by list.
+    resolved_figis = [
+        r[0]
+        for r in u_conn.execute(
+            "SELECT DISTINCT composite_figi FROM universe_member_resolution "
+            "WHERE universe_id = %s AND resolution_status = 'resolved' "
+            "AND composite_figi IS NOT NULL",
+            (universe_id,),
+        ).fetchall()
+    ]
+    current_figis = [
+        r[0]
+        for r in u_conn.execute(
+            "SELECT DISTINCT composite_figi FROM universe_membership "
+            "WHERE universe_id = %s AND valid_from <= %s AND (valid_to IS NULL OR valid_to > %s)",
+            (universe_id, as_of_date, as_of_date),
+        ).fetchall()
+    ]
+    cov.current_members = len(current_figis)
+    if resolved_figis:
+        cov.in_master = conn.execute(
+            "SELECT count(*) FROM securities WHERE composite_figi = ANY(%s)", (resolved_figis,)
+        ).fetchone()[0]
+        cov.priced = conn.execute(
+            "SELECT count(DISTINCT composite_figi) FROM prices_raw WHERE composite_figi = ANY(%s)",
+            (resolved_figis,),
+        ).fetchone()[0]
+    if current_figis:
+        cov.current_priced = conn.execute(
+            "SELECT count(DISTINCT composite_figi) FROM prices_raw WHERE composite_figi = ANY(%s)",
+            (current_figis,),
+        ).fetchone()[0]
     return cov

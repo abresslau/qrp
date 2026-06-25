@@ -412,13 +412,18 @@ def _cmd_load(args: argparse.Namespace) -> int:
             source = get_source(source_key(), symbol_for=resolver)
             if universe_id is not None:
                 from sym.universe.ingest import run_universe_load
+                from universe.db import connect as u_connect
 
                 kwargs = {"as_of_date": end_date, "limit": args.limit, "gap_aware": gap_aware}
                 if mode == OVERWRITE:
                     kwargs["overwrite_start_date"] = start_date
                 elif gap_aware:  # explicit-floor backfill
                     kwargs["history_floor"] = start_date
-                summary = run_universe_load(conn, source, universe_id, mode, **kwargs)
+                # membership roster comes from the universe DB; prices load into sym.
+                with u_connect() as u_conn:
+                    summary = run_universe_load(
+                        conn, u_conn, source, universe_id, mode, **kwargs
+                    )
             else:
                 securities = None
                 if figi is not None:
@@ -564,7 +569,7 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
         recompute_market_cap_usd,
         resolved_member_figis,
     )
-    from sym.universe.registry import UniverseError
+    from universe.registry import UniverseError
 
     if not args.all and not args.universe:
         print("specify --universe <id> or --all", file=sys.stderr)
@@ -573,15 +578,17 @@ def _cmd_fundamentals(args: argparse.Namespace) -> int:
         print("--all and --universe are mutually exclusive", file=sys.stderr)
         return 1
     from fx.db import connect as fx_connect
+    from universe.db import connect as u_connect
 
     load_dotenv()
     try:
-        with connect() as conn, fx_connect() as fx_conn:
+        with connect() as conn, fx_connect() as fx_conn, u_connect() as u_conn:
             conn.autocommit = True  # durable per-figi upserts (set before any query)
             fx_conn.autocommit = True
+            # resolved member roster comes from the universe DB; filtered to sym's master.
             figis = (
-                all_resolved_member_figis(conn) if args.all
-                else resolved_member_figis(conn, args.universe)
+                all_resolved_member_figis(conn, u_conn) if args.all
+                else resolved_member_figis(conn, u_conn, args.universe)
             )
             if args.limit:
                 figis = figis[: args.limit]
@@ -713,12 +720,13 @@ def _cmd_indices(args: argparse.Namespace) -> int:
     from sym.indices.links import link_universe_indices
     from sym.indices.returns import recompute_index_returns
     from sym.returns.loader import DEFAULT_LOOKBACK
+    from universe.db import connect as u_connect
 
     load_dotenv()
     end_date = date.today()
     start_date = end_date - DEFAULT_LOOKBACK
     try:
-        with connect() as conn:
+        with connect() as conn, u_connect() as u_conn:
             conn.autocommit = True
             if args.attach_figis:  # standalone: just (re)attach canonical FIGIs
                 attached, missing = attach_index_figis(conn)
@@ -726,7 +734,7 @@ def _cmd_indices(args: argparse.Namespace) -> int:
                 return 0
             summary = load_index_levels(conn, YahooIndexLevelSource())
             rets = recompute_index_returns(conn, start_date=start_date, end_date=end_date)
-            links = link_universe_indices(conn)
+            links = link_universe_indices(conn, u_conn)
             attached, _ = attach_index_figis(conn)
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
@@ -746,7 +754,8 @@ def _cmd_universe_index(args: argparse.Namespace) -> int:
 
     from sym.db import connect
     from sym.indices.links import universe_with_index
-    from sym.universe.registry import UniverseError
+    from universe.db import connect as u_connect
+    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -756,8 +765,8 @@ def _cmd_universe_index(args: argparse.Namespace) -> int:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
-        with connect() as conn:
-            snap = universe_with_index(conn, args.universe_id, as_of_date)
+        with connect() as conn, u_connect() as u_conn:
+            snap = universe_with_index(conn, u_conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -1070,9 +1079,9 @@ def _cmd_universe_add(args: argparse.Namespace) -> int:
 
     import psycopg
 
-    from sym.db import connect
-    from sym.universe.registry import UniverseError
-    from sym.universe.store import add_universe
+    from universe.db import connect
+    from universe.registry import UniverseError
+    from universe.store import add_universe
 
     config = None
     if args.config:
@@ -1128,8 +1137,8 @@ def _cmd_universe_add(args: argparse.Namespace) -> int:
 def _cmd_universe_list(_args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.db import connect
-    from sym.universe.store import list_universes
+    from universe.db import connect
+    from universe.store import list_universes
 
     try:
         with connect() as conn:
@@ -1151,14 +1160,17 @@ def _cmd_universe_refresh(args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.config import load_dotenv
-    from sym.db import connect
-    from sym.universe.refresh import refresh_universe
-    from sym.universe.registry import UniverseError
+    from sym.db import connect as sym_connect
+    from sym.universe.resolver import SymResolver
+    from universe.db import connect as u_connect
+    from universe.refresh import refresh_universe
+    from universe.registry import UniverseError
 
     load_dotenv()
     try:
-        with connect() as conn:
-            summary = refresh_universe(conn, args.universe_id)
+        # universe membership lives in its own DB; sym supplies the identity resolver.
+        with sym_connect() as sym_conn, u_connect() as conn:
+            summary = refresh_universe(conn, args.universe_id, SymResolver(sym_conn))
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -1177,9 +1189,9 @@ def _cmd_universe_refresh(args: argparse.Namespace) -> int:
 def _cmd_universe_members(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.db import connect
-    from sym.universe.query import members
-    from sym.universe.registry import UniverseError
+    from universe.db import connect
+    from universe.query import members
+    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -1211,14 +1223,16 @@ def _cmd_universe_monitor(args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.config import load_dotenv
-    from sym.db import connect
-    from sym.universe.monitor import run_monitor
-    from sym.universe.registry import UniverseError
+    from sym.db import connect as sym_connect
+    from sym.universe.resolver import SymResolver
+    from universe.db import connect as u_connect
+    from universe.monitor import run_monitor
+    from universe.registry import UniverseError
 
     load_dotenv()
     try:
-        with connect() as conn:
-            summary = run_monitor(conn, args.universe_id)
+        with sym_connect() as sym_conn, u_connect() as conn:
+            summary = run_monitor(conn, args.universe_id, SymResolver(sym_conn))
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -1238,9 +1252,10 @@ def _cmd_universe_monitor(args: argparse.Namespace) -> int:
 def _cmd_universe_coverage(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.db import connect
+    from sym.db import connect as sym_connect
     from sym.universe.ingest import coverage
-    from sym.universe.registry import UniverseError
+    from universe.db import connect as u_connect
+    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -1250,8 +1265,8 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
             print(f"invalid --as_of_date {args.as_of_date!r}: {exc}", file=sys.stderr)
             return 1
     try:
-        with connect() as conn:
-            cov = coverage(conn, args.universe_id, as_of_date)
+        with sym_connect() as conn, u_connect() as u_conn:
+            cov = coverage(conn, u_conn, args.universe_id, as_of_date)
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
@@ -1274,12 +1289,14 @@ def _cmd_universe_coverage(args: argparse.Namespace) -> int:
 def _cmd_universe_review(_args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.db import connect
-    from sym.universe.review import build_digest, format_digest
+    from sym.db import connect as sym_connect
+    from sym.validate.completeness import completeness_summary
+    from universe.db import connect as u_connect
+    from universe.review import build_digest, format_digest
 
     try:
-        with connect() as conn:
-            digest = build_digest(conn)
+        with sym_connect() as sym_conn, u_connect() as conn:
+            digest = build_digest(conn, incomplete_members=completeness_summary(sym_conn))
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -1290,14 +1307,20 @@ def _cmd_universe_review(_args: argparse.Namespace) -> int:
 def _cmd_universe_confirm(args: argparse.Namespace) -> int:
     import psycopg
 
-    from sym.db import connect
-    from sym.universe.gating import confirm_proposal, reject_proposal
+    from sym.db import connect as sym_connect
+    from sym.universe.resolver import SymResolver
+    from universe.db import connect as u_connect
+    from universe.gating import confirm_proposal, reject_proposal
 
-    action = reject_proposal if args.reject else confirm_proposal
     try:
-        with connect() as conn:
+        with sym_connect() as sym_conn, u_connect() as conn:
             conn.autocommit = True
-            ok = action(conn, args.proposal_id)
+            if args.reject:
+                ok = reject_proposal(conn, args.proposal_id)
+            else:  # confirm appends + re-projects → needs the local (no-network) resolver
+                ok = confirm_proposal(
+                    conn, args.proposal_id, SymResolver(sym_conn).local_resolve_fn()
+                )
     except psycopg.OperationalError as exc:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 1
@@ -1313,9 +1336,11 @@ def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.config import load_dotenv
-    from sym.db import connect
-    from sym.universe.accuracy import DEFAULT_THRESHOLD, run_configured_accuracy_check
-    from sym.universe.registry import UniverseError
+    from sym.db import connect as sym_connect
+    from sym.universe.resolver import SymResolver
+    from universe.accuracy import DEFAULT_THRESHOLD, run_configured_accuracy_check
+    from universe.db import connect as u_connect
+    from universe.registry import UniverseError
 
     as_of_date = date.today()
     if args.as_of_date:
@@ -1341,10 +1366,11 @@ def _cmd_universe_accuracy(args: argparse.Namespace) -> int:
         return 1
     load_dotenv()
     try:
-        with connect() as conn:
+        with sym_connect() as sym_conn, u_connect() as conn:
             conn.autocommit = True
             result = run_configured_accuracy_check(
-                conn, args.universe_id, as_of_date=as_of_date, threshold=threshold
+                conn, args.universe_id, SymResolver(sym_conn),
+                as_of_date=as_of_date, threshold=threshold,
             )
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
@@ -1367,9 +1393,11 @@ def _cmd_universe_reverse(args: argparse.Namespace) -> int:
     import psycopg
 
     from sym.config import load_dotenv
-    from sym.db import connect
-    from sym.universe.gating import reverse_change
-    from sym.universe.registry import UniverseError
+    from sym.db import connect as sym_connect
+    from sym.universe.resolver import SymResolver
+    from universe.db import connect as u_connect
+    from universe.gating import reverse_change
+    from universe.registry import UniverseError
 
     try:
         effective_date = date.fromisoformat(args.effective_date)
@@ -1378,10 +1406,11 @@ def _cmd_universe_reverse(args: argparse.Namespace) -> int:
         return 1
     load_dotenv()
     try:
-        with connect() as conn:
+        with sym_connect() as sym_conn, u_connect() as conn:
             conn.autocommit = True
             appended = reverse_change(
-                conn, args.universe_id, args.raw_identifier, args.change, effective_date
+                conn, args.universe_id, args.raw_identifier, args.change, effective_date,
+                SymResolver(sym_conn).local_resolve_fn(),
             )
     except UniverseError as exc:
         print(f"{exc}", file=sys.stderr)
@@ -1679,7 +1708,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_fundamentals.add_argument("--limit", type=int, help="Cap the number of securities.")
     p_fundamentals.set_defaults(func=_cmd_fundamentals)
 
-    from sym.universe.registry import VALID_KINDS
+    from universe.registry import VALID_KINDS
 
     p_universe = sub.add_parser(
         "universe", help="Define and inspect research universes (Story U1.1)."

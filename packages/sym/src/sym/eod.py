@@ -151,19 +151,25 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
     def run(key: str) -> str:
         if key == "monitor":
-            from sym.universe.monitor import run_monitor
+            from universe.db import connect as u_connect
+            from universe.monitor import run_monitor
 
-            uids = [
-                r[0]
-                for r in conn.execute(
-                    "SELECT universe_id FROM universe WHERE kind = 'index' ORDER BY universe_id"
-                ).fetchall()
-            ]
-            joiners = leavers = 0
-            for uid in uids:
-                s = run_monitor(conn, uid)
-                joiners += s.joiners
-                leavers += s.leavers
+            from sym.universe.resolver import SymResolver
+
+            # Membership lives in the universe DB now; sym (`conn`) supplies the identity resolver.
+            with u_connect() as u_conn:
+                resolver = SymResolver(conn)
+                uids = [
+                    r[0]
+                    for r in u_conn.execute(
+                        "SELECT universe_id FROM universe WHERE kind = 'index' ORDER BY universe_id"
+                    ).fetchall()
+                ]
+                joiners = leavers = 0
+                for uid in uids:
+                    s = run_monitor(u_conn, uid, resolver)
+                    joiners += s.joiners
+                    leavers += s.leavers
             return f"{len(uids)} index universes; joiners={joiners} leavers={leavers}"
         if key == "fill":
             from sym.ingest.pipeline import FILL, run_load
@@ -199,6 +205,8 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
                 detail += f"; source errors: {', '.join(errored)}"
             return detail
         if key == "indices":
+            from universe.db import connect as u_connect
+
             from sym.indices.levels import YahooIndexLevelSource, load_index_levels
             from sym.indices.links import link_universe_indices
             from sym.indices.returns import recompute_index_returns
@@ -206,7 +214,8 @@ def _default_runner(conn: object, as_of_date: date) -> Callable[[str], str]:
 
             lv = load_index_levels(conn, YahooIndexLevelSource())
             recompute_index_returns(conn, start_date=as_of_date - DEFAULT_LOOKBACK, end_date=as_of_date)
-            link_universe_indices(conn)
+            with u_connect() as u_conn:  # universe-existence check reads the universe DB
+                link_universe_indices(conn, u_conn)
             return f"levels+{lv.levels_written}"
         if key == "fx":
             from fx.db import connect as fx_connect

@@ -1,6 +1,6 @@
 -- Verify sym:universe_monitor_log on pg
-
-SELECT monitor_run_id, universe_id, run_at, source, joiners, leavers, proposed,
-       applied, status, detail, created_at
-  FROM universe_monitor_log
- WHERE FALSE;
+-- NOTE: the universe/membership subsystem was extracted into the `universe` package + database
+-- (migration sym:universe_extract drops these tables from the sym DB). This migration's objects no
+-- longer exist in sym, so the existence check is intentionally a no-op — `universe_extract` is the
+-- authoritative end-state.
+SELECT 1;

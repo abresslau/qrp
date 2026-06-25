@@ -91,66 +91,79 @@ def classify_member(flags: MemberFlags) -> Completeness:
 
 
 def _current_member_flags(
-    conn: psycopg.Connection, universe_id: str | None = None
+    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str | None = None
 ) -> list[tuple[str, str, MemberFlags]]:
-    """Presence flags for every current member of every (or one) universe."""
-    sql = """
-        SELECT um.universe_id, um.composite_figi, s.status,
-               EXISTS (SELECT 1 FROM security_names n
-                        WHERE n.composite_figi = s.composite_figi AND n.valid_to IS NULL),
-               EXISTS (SELECT 1 FROM security_symbology y
-                        WHERE y.composite_figi = s.composite_figi
-                          AND y.symbol_type = 'ticker' AND y.valid_to IS NULL),
-               EXISTS (SELECT 1 FROM gics_scd g
-                        WHERE g.composite_figi = s.composite_figi AND g.valid_to IS NULL),
-               EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi),
-               EXISTS (SELECT 1 FROM fundamentals f WHERE f.composite_figi = s.composite_figi),
-               EXISTS (SELECT 1 FROM trading_calendar_version v
-                        WHERE v.is_current AND v.mic = s.mic)
-          FROM universe_membership um
-          LEFT JOIN securities s USING (composite_figi)
-         WHERE um.valid_to IS NULL
+    """Presence flags for every current member of every (or one) universe (cross-DB roster-fetch).
+
+    The current-member roster comes from the universe DB; the per-figi sym presence flags
+    (securities/names/symbology/gics/prices/fundamentals/calendar) are fetched from sym filtered by
+    the roster figi list, then joined in Python (no cross-DB join).
     """
-    params: list[object] = []
+    rsql = "SELECT universe_id, composite_figi FROM universe_membership WHERE valid_to IS NULL"
+    rparams: list[object] = []
     if universe_id is not None:
-        sql += " AND um.universe_id = %s"
-        params.append(universe_id)
-    rows = conn.execute(sql, params).fetchall()
-    out: list[tuple[str, str, MemberFlags | None]] = []
-    for uid, figi, status, hn, hsy, hg, hp, hf, hc in rows:
-        # LEFT JOIN (not INNER): a member with no securities master row must be
-        # REPORTED as the worst incompleteness, not silently dropped from the check.
-        flags = MemberFlags(hn, hsy, hg, hp, hf, status, hc) if status is not None else None
-        out.append((uid, figi, flags))
-    return out
+        rsql += " AND universe_id = %s"
+        rparams.append(universe_id)
+    roster = u_conn.execute(rsql, rparams).fetchall()
+    figis = list({f for _u, f in roster})
+    flags_by_figi: dict[str, MemberFlags] = {}
+    if figis:
+        rows = conn.execute(
+            """
+            SELECT s.composite_figi, s.status,
+                   EXISTS (SELECT 1 FROM security_names n
+                            WHERE n.composite_figi = s.composite_figi AND n.valid_to IS NULL),
+                   EXISTS (SELECT 1 FROM security_symbology y
+                            WHERE y.composite_figi = s.composite_figi
+                              AND y.symbol_type = 'ticker' AND y.valid_to IS NULL),
+                   EXISTS (SELECT 1 FROM gics_scd g
+                            WHERE g.composite_figi = s.composite_figi AND g.valid_to IS NULL),
+                   EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi),
+                   EXISTS (SELECT 1 FROM fundamentals f WHERE f.composite_figi = s.composite_figi),
+                   EXISTS (SELECT 1 FROM trading_calendar_version v
+                            WHERE v.is_current AND v.mic = s.mic)
+              FROM securities s
+             WHERE s.composite_figi = ANY(%s)
+            """,
+            (figis,),
+        ).fetchall()
+        for figi, status, hn, hsy, hg, hp, hf, hc in rows:
+            if status is not None:
+                flags_by_figi[figi] = MemberFlags(hn, hsy, hg, hp, hf, status, hc)
+    # A member with no securities master row maps to None — REPORTED as the worst
+    # incompleteness (parity with the original LEFT JOIN), never silently dropped.
+    return [(uid, figi, flags_by_figi.get(figi)) for uid, figi in roster]
 
 
 def evaluate_completeness(
-    conn: psycopg.Connection, universe_id: str | None = None
+    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str | None = None
 ) -> CheckResult:
     """Assess + persist completeness for current universe members; return a result.
 
-    Upserts one ``universe_member_completeness`` row per current member (durable
-    log), and rolls up to a :class:`CheckResult` (fail = incomplete priceable /
-    missing metadata; warn = expected gaps).
+    ``conn`` is the sym DB (securities/prices/… presence + the ``universe_member_completeness``
+    durable log); ``u_conn`` is the universe DB (the current-member roster). Upserts one
+    completeness row per current member and rolls up to a :class:`CheckResult`.
     """
     conn.autocommit = True
     if universe_id is not None:
-        known = conn.execute(
+        known = u_conn.execute(
             "SELECT 1 FROM universe WHERE universe_id = %s", (universe_id,)
         ).fetchone()
         if known is None:
             # A typo'd universe id must not yield a vacuous zero-member PASS.
             raise ValueError(f"unknown universe {universe_id!r}")
-    members = _current_member_flags(conn, universe_id)
-    # Purge log rows for ex-members in scope: upsert-only would report departed
-    # members as incomplete forever.
+    members = _current_member_flags(conn, u_conn, universe_id)
+    # Purge log rows for ex-members in scope (cross-DB): the current roster is the unnested
+    # keep-list; a completeness row not in it is a departed member. upsert-only would report
+    # departed members as incomplete forever.
+    keep_uids = [uid for uid, _f, _fl in members]
+    keep_figis = [figi for _u, figi, _fl in members]
     purge_sql = (
         "DELETE FROM universe_member_completeness c WHERE NOT EXISTS ("
-        "SELECT 1 FROM universe_membership um WHERE um.universe_id = c.universe_id "
-        "AND um.composite_figi = c.composite_figi AND um.valid_to IS NULL)"
+        "SELECT 1 FROM unnest(%s::text[], %s::char(12)[]) AS r(uid, figi) "
+        "WHERE r.uid = c.universe_id AND r.figi = c.composite_figi)"
     )
-    purge_params: list[object] = []
+    purge_params: list[object] = [keep_uids, keep_figis]
     if universe_id is not None:
         purge_sql += " AND c.universe_id = %s"
         purge_params.append(universe_id)

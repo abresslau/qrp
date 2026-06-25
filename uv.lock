@@ -27,6 +27,7 @@ members = [
     "rates",
     "signals",
     "sym",
+    "universe",
 ]
 
 [[package]]
@@ -149,6 +150,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "signals" },
+    { name = "universe" },
 ]
 
 [package.dev-dependencies]
@@ -164,6 +166,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "signals", editable = "packages/signals" },
+    { name = "universe", editable = "packages/universe" },
 ]
 
 [package.metadata.requires-dev]
@@ -934,6 +937,7 @@ dependencies = [
     { name = "dagster-webserver" },
     { name = "sqlglot" },
     { name = "sym" },
+    { name = "universe" },
 ]
 
 [package.metadata]
@@ -943,6 +947,7 @@ requires-dist = [
     { name = "dagster-webserver", specifier = ">=1.9" },
     { name = "sqlglot", specifier = ">=25" },
     { name = "sym", editable = "packages/sym" },
+    { name = "universe", editable = "packages/universe" },
 ]
 
 [[package]]
@@ -1819,6 +1824,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "rates" },
     { name = "signals" },
+    { name = "universe" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1843,6 +1849,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "rates", editable = "packages/rates" },
     { name = "signals", editable = "packages/signals" },
+    { name = "universe", editable = "packages/universe" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
 ]
 
@@ -2037,6 +2044,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
+    { name = "universe" },
 ]
 
 [package.dev-dependencies]
@@ -2050,6 +2058,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
+    { name = "universe", editable = "packages/universe" },
 ]
 
 [package.metadata.requires-dev]
@@ -2152,6 +2161,7 @@ dependencies = [
     { name = "pandas" },
     { name = "psycopg", extra = ["binary"] },
     { name = "requests" },
+    { name = "universe" },
     { name = "yfinance" },
 ]
 
@@ -2170,6 +2180,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "requests", specifier = ">=2.34.2" },
+    { name = "universe", editable = "packages/universe" },
     { name = "yfinance", specifier = ">=1.4.1" },
 ]
 
@@ -2322,6 +2333,33 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/3d/6e/d997a70ee8f4c61f9a7e2f4f8af721cf072a3326848fc881b05187e52558/universal_pathlib-0.3.10.tar.gz", hash = "sha256:4487cbc90730a48cfb64f811d99e14b6faed6d738420cd5f93f59f48e6930bfb", size = 261110, upload-time = "2026-02-22T14:40:58.87Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dd/1a/5d9a402b39ec892d856bbdd9db502ff73ce28cdf4aff72eb1ce1d6843506/universal_pathlib-0.3.10-py3-none-any.whl", hash = "sha256:dfaf2fb35683d2eb1287a3ed7b215e4d6016aa6eaf339c607023d22f90821c66", size = 83528, upload-time = "2026-02-22T14:40:57.316Z" },
+]
+
+[[package]]
+name = "universe"
+version = "0.1.0"
+source = { editable = "packages/universe" }
+dependencies = [
+    { name = "psycopg", extra = ["binary"] },
+    { name = "requests" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "requests", specifier = ">=2.34.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.15.16" },
 ]
 
 [[package]]

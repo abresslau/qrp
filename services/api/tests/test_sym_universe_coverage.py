@@ -1,10 +1,16 @@
-"""Per-universe Prices/Returns/Fundamentals coverage — DB-free fake conn + perf guard."""
+"""Per-universe Prices/Returns/Fundamentals coverage — DB-free fake conns + perf guard.
+
+Cross-DB now: the resolved-member roster comes from the universe DB; the per-figi sym facts
+(status + prices/returns/fundamentals recency) from sym, aggregated per universe in Python."""
 
 from __future__ import annotations
 
 from datetime import date
 
 from qrp_api.modules.sym.gateway import DbSymGateway
+
+LATEST = date(2026, 6, 18)
+RECENT = date(2026, 6, 11)  # LATEST - 7
 
 
 class _Cur:
@@ -18,37 +24,67 @@ class _Cur:
         return self._rows
 
 
-class _Conn:
-    def __init__(self, rows):
-        self._rows = rows
+# Synthetic members so the Python aggregation reproduces the documented per-layer outcomes.
+# sp500: 101 resolved (100 active + 1 delisted); 100/100 active priced + with returns; 98 with
+#        fundamentals. ibov: 78 active; 60 priced, 0 returns, 78 fundamentals.
+def _roster() -> list[tuple]:
+    rows = [("sp500", "S&P 500", f"SP{i:010d}") for i in range(101)]
+    rows += [("ibov", "Ibovespa", f"IB{i:010d}") for i in range(78)]
+    return rows
+
+
+def _facts() -> dict[str, tuple]:
+    facts: dict[str, tuple] = {}
+    for i in range(101):  # sp500
+        figi = f"SP{i:010d}"
+        if i == 100:
+            facts[figi] = ("delisted", None, None, None)  # excluded from coverage denominators
+        else:
+            fn = date(2026, 6, 16) if i < 98 else None
+            facts[figi] = ("active", LATEST, LATEST, fn)
+    for i in range(78):  # ibov
+        figi = f"IB{i:010d}"
+        px = date(2026, 6, 17) if i < 60 else None
+        facts[figi] = ("active", px, None, date(2026, 6, 12))
+    return facts
+
+
+class _SymConn:
+    def __init__(self, facts):
+        self._facts = facts
         self.seen: list[str] = []
 
     def execute(self, sql, params=None):
         self.seen.append(sql)
         if "max(session_date) FROM prices_raw" in sql:
-            return _Cur(one=(date(2026, 6, 18),))
+            return _Cur(one=(LATEST,))
         if "min(window_id) FROM return_window" in sql:
             return _Cur(one=(1,))
-        if "WITH members" in sql:
-            return _Cur(rows=self._rows)
+        if "WITH px AS" in sql:  # the per-figi facts query (filtered by the roster list)
+            figis = set(params["f"])
+            return _Cur(rows=[(f, *vals) for f, vals in self._facts.items() if f in figis])
         return _Cur()
 
 
-# (uid, name, members, active, px_cov, px_latest, rt_cov, rt_latest, fn_cov, fn_latest)
-# Coverage denominators are the ACTIVE count: sp500 has 101 members but 100 active (1 delisted),
-# and 100/100 active are priced → "ok" (the delisted name is excluded, not counted "missing").
-_ROWS = [
-    ("sp500", "S&P 500", 101, 100, 100, date(2026, 6, 18), 100, date(2026, 6, 18), 98, date(2026, 6, 16)),
-    ("ibov", "Ibovespa", 78, 78, 60, date(2026, 6, 17), 0, None, 78, date(2026, 6, 12)),
-]
+class _UniConn:
+    def __init__(self, roster):
+        self._roster = roster
+
+    def execute(self, sql, params=None):
+        if "FROM universe_member_resolution m" in sql and "JOIN universe u" in sql:
+            return _Cur(rows=self._roster)
+        return _Cur()
+
+
+def _gw():
+    return DbSymGateway(_SymConn(_facts()), universe_conn=_UniConn(_roster()))
 
 
 def test_universe_coverage_maps_layers_and_status():
-    out = DbSymGateway(_Conn(_ROWS)).universe_coverage()
+    out = _gw().universe_coverage()
     sp = next(u for u in out if u["universe_id"] == "sp500")
     assert sp["members_resolved"] == 101  # total resolved members
     assert sp["active_members"] == 100  # the delisted one is excluded from coverage
-    # 100/100 active priced → ok, NOT partial — delisted name doesn't drag it down.
     assert sp["prices"] == {"covered": 100, "total": 100, "latest_date": "2026-06-18", "status": "ok"}
     assert sp["returns"]["status"] == "ok"
     assert sp["fundamentals"] == {"covered": 98, "total": 100, "latest_date": "2026-06-16", "status": "partial"}
@@ -61,18 +97,17 @@ def test_universe_coverage_maps_layers_and_status():
 
 
 def test_universe_coverage_query_is_index_bounded_not_full_table():
-    # perf guard (the Overview 125s lesson): the coverage scan must restrict returns to one
+    # perf guard (the Overview 125s lesson): the per-figi facts scan must restrict returns to one
     # window_id and bound by a recent date — NEVER a full-table count(DISTINCT)/group-by-date.
-    conn = _Conn(_ROWS)
-    DbSymGateway(conn).universe_coverage()
-    cov_sql = next(s for s in conn.seen if "WITH members" in s).lower()
-    assert "window_id = %(w)s" in cov_sql  # returns restricted to one window (not 28×)
-    assert "session_date >= %(latest)s" in cov_sql  # bounded recent window
-    assert "count(distinct" not in cov_sql  # never the full-table distinct trap
-    assert "group by session_date" not in cov_sql
+    conn = _SymConn(_facts())
+    DbSymGateway(conn, universe_conn=_UniConn(_roster())).universe_coverage()
+    facts_sql = next(s for s in conn.seen if "WITH px AS" in s).lower()
+    assert "window_id = %(w)s" in facts_sql  # returns restricted to one window (not 28×)
+    assert "session_date >= %(latest)s" in facts_sql  # bounded recent window
+    assert "composite_figi = any(%(f)s)" in facts_sql  # roster-bounded, not the whole table
+    assert "count(distinct" not in facts_sql  # never the full-table distinct trap
 
 
-def test_universe_coverage_empty_when_no_prices():
-    out = DbSymGateway(_Conn([])).universe_coverage()
-    # max(session_date) returns a date in the fake, so it proceeds; with no member rows → []
+def test_universe_coverage_empty_when_no_members():
+    out = DbSymGateway(_SymConn({}), universe_conn=_UniConn([])).universe_coverage()
     assert out == []

@@ -3,7 +3,10 @@ name = "signals"  # import name avoids stdlib `signal` collision; DB + API stay 
 version = "0.1.0"
 description = "QRP signal package — derived cross-sectional factors over universes (sym + macro + altdata inputs, own database)."
 requires-python = ">=3.13"
-dependencies = ["fastapi>=0.115", "pydantic>=2", "psycopg[binary]>=3.2"]
+dependencies = ["fastapi>=0.115", "pydantic>=2", "psycopg[binary]>=3.2", "universe"]
+
+[tool.uv.sources]
+universe = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -235,7 +235,8 @@ def test_bridge_isolates_collision_per_member(monkeypatch):
         return True
 
     monkeypatch.setattr(ingest_mod, "write_security", fake_write)
-    summary = ensure_universe_securities(_BridgeConn(), "u")
+    c = _BridgeConn()  # one fake serves both the sym (securities) + universe (resolution) reads
+    summary = ensure_universe_securities(c, c, "u")
     assert calls == ["AAA", "BBB"]          # the collision did not abort the loop
     assert summary.skipped_collision == 1 and summary.created == 1
 

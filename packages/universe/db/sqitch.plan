@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=universe
+%uri=https://github.com/abresslau/qrp-universe
+
+universe_schema 2026-06-24T14:00:00Z Andre <ab@gladstone-management.com> # universe schema: research-universe registry + append-only membership_event log + frozen member_resolution + point-in-time universe_membership projection (GiST no-overlap) + membership_proposal staging + monitor/accuracy run logs, own database

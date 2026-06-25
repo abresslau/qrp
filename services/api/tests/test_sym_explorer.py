@@ -105,13 +105,16 @@ def test_securities_count_query_does_not_carry_enrichment_joins():
 
 def test_securities_universe_filter_adds_member_exists_to_count_and_rows():
     conn = _ListConn(1, [])
-    DbSymGateway(conn).securities(None, 50, 0, universe="sp500")
+    # the universe roster lives in its own DB now — inject it (same fake serves both).
+    DbSymGateway(conn, universe_conn=conn).securities(None, 50, 0, universe="sp500")
     count_sql = next(s for s in conn.seen if "count(*)" in s)
     rows_sql = next(s for s in conn.seen if "px.close" in s)
     for sql in (count_sql, rows_sql):
-        assert "universe_member_resolution" in sql
-        assert "resolution_status = 'resolved'" in sql
-    # the universe id is bound as a param (not interpolated)
+        # the sym filter is now a roster-bounded ANY(...), not a cross-DB member EXISTS.
+        assert "composite_figi = ANY(%s)" in sql
+    # the resolved roster is fetched from the universe DB, with the universe id bound as a param.
+    roster_sql = next(s for s in conn.seen if "universe_member_resolution" in s)
+    assert "resolution_status = 'resolved'" in roster_sql
     assert any("sp500" in (p if isinstance(p, (list, tuple)) else [p]) for p in conn.params)
 
 

@@ -257,28 +257,41 @@ def recompute_market_cap_usd(conn: psycopg.Connection, fx_conn: psycopg.Connecti
     return result.rowcount
 
 
-def resolved_member_figis(conn: psycopg.Connection, universe_id: str) -> list[str]:
-    """Resolved member figis of a universe that exist in the master (screen candidates)."""
+def _filter_to_master(conn: psycopg.Connection, figis: list[str]) -> list[str]:
+    """The subset of ``figis`` present in sym's securities master (sorted)."""
+    if not figis:
+        return []
     rows = conn.execute(
-        """
-        SELECT DISTINCT r.composite_figi
-          FROM universe_member_resolution r JOIN securities s USING (composite_figi)
-         WHERE r.universe_id = %s AND r.resolution_status = 'resolved'
-         ORDER BY r.composite_figi
-        """,
-        (universe_id,),
+        "SELECT composite_figi FROM securities WHERE composite_figi = ANY(%s)", (figis,)
     ).fetchall()
-    return [r[0] for r in rows]
+    return sorted(r[0] for r in rows)
 
 
-def all_resolved_member_figis(conn: psycopg.Connection) -> list[str]:
-    """The deduped union of resolved member figis across **all** universes."""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT r.composite_figi
-          FROM universe_member_resolution r JOIN securities s USING (composite_figi)
-         WHERE r.resolution_status = 'resolved'
-         ORDER BY r.composite_figi
-        """
-    ).fetchall()
-    return [r[0] for r in rows]
+def resolved_member_figis(
+    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str
+) -> list[str]:
+    """Resolved member figis of a universe that exist in the master (cross-DB roster-fetch).
+
+    ``u_conn`` is the universe DB (the resolved roster); ``conn`` is sym (the securities master)."""
+    resolved = [
+        r[0]
+        for r in u_conn.execute(
+            "SELECT DISTINCT composite_figi FROM universe_member_resolution "
+            "WHERE universe_id = %s AND resolution_status = 'resolved' "
+            "AND composite_figi IS NOT NULL",
+            (universe_id,),
+        ).fetchall()
+    ]
+    return _filter_to_master(conn, resolved)
+
+
+def all_resolved_member_figis(conn: psycopg.Connection, u_conn: psycopg.Connection) -> list[str]:
+    """Deduped union of resolved member figis across **all** universes (cross-DB roster-fetch)."""
+    resolved = [
+        r[0]
+        for r in u_conn.execute(
+            "SELECT DISTINCT composite_figi FROM universe_member_resolution "
+            "WHERE resolution_status = 'resolved' AND composite_figi IS NOT NULL"
+        ).fetchall()
+    ]
+    return _filter_to_master(conn, resolved)

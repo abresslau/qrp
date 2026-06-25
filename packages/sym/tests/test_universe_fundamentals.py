@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
+from universe.membership_diff import figi_token
+
 from sym.universe.fundamentals import (
     YFinanceSharesHistorySource,
     dedupe_changes,
 )
-from sym.universe.membership_diff import figi_token
-from sym.universe.resolution import FIGI, _parse_token
+from sym.universe.resolver import FIGI, _parse_token
 
 
 def test_figi_token_and_parse_roundtrip():

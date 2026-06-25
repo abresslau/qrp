@@ -42,6 +42,18 @@ def _fx_coverage(conn: psycopg.Connection) -> CheckResult:
         return check_fx_coverage(conn, fx_conn)
 
 
+def _with_universe(fn):
+    """Run a universe-DB-dependent check with a freshly-opened universe connection, isolated.
+
+    Membership lives in the universe package's own database; open it here so a failure to reach it
+    is isolated as a FAIL by run_all's per-check try/except (not a suite abort). ``fn`` receives the
+    universe connection (cross-DB checks close over the sym ``conn`` separately)."""
+    from universe.db import connect as u_connect
+
+    with u_connect() as u_conn:
+        return fn(u_conn)
+
+
 def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[CheckResult]:
     """Run every validation check (V1 refreshes the completeness log; rest read-only).
 
@@ -50,8 +62,10 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
     cost the run-log row and every downstream check.
     """
     checks: list[tuple[str, object]] = [
-        ("completeness", lambda: evaluate_completeness(conn, universe_id)),     # V1
-        ("referential_integrity", lambda: check_referential_integrity(conn)),  # V2
+        ("completeness",                                                        # V1 (cross-DB)
+         lambda: _with_universe(lambda u: evaluate_completeness(conn, u, universe_id))),
+        ("referential_integrity",                                              # V2 (cross-DB seams)
+         lambda: _with_universe(lambda u: check_referential_integrity(conn, u))),
         ("equity_instrument_bridge",                                            # B7 — 1:1 bridge
          lambda: check_equity_instrument_bridge(conn)),
         ("identity_completeness", lambda: check_identity_completeness(conn)),  # V3
@@ -62,12 +76,13 @@ def run_all(conn: psycopg.Connection, universe_id: str | None = None) -> list[Ch
          lambda: check_price_calendar_consistency(conn)),
         ("calendar_coverage", lambda: check_calendar_coverage(conn)),          # V4
         ("unpriced_securities", lambda: check_unpriced_securities(conn)),      # V4
-        ("projection_reconciliation",                                           # V5
-         lambda: check_projection_reconciliation(conn)),
-        ("universe_readiness", lambda: check_universe_readiness(conn)),        # V6
+        ("projection_reconciliation",                                       # V5 (universe DB)
+         lambda: _with_universe(check_projection_reconciliation)),
+        ("universe_readiness",                                              # V6 (cross-DB)
+         lambda: _with_universe(lambda u: check_universe_readiness(conn, u))),
         ("fx_coverage", lambda: _fx_coverage(conn)),                           # FX4 — SLA (fx DB)
-        ("maintenance_plan_coverage",                                  # U3.6 — the populate gate
-         lambda: check_maintenance_plan_coverage(conn)),
+        ("maintenance_plan_coverage",                              # U3.6 — populate gate (univ DB)
+         lambda: _with_universe(check_maintenance_plan_coverage)),
         ("classification_coverage",                          # multi-source classify — AC6 guardrail
          lambda: check_classification_coverage(conn)),
     ]
