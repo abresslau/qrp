@@ -1,6 +1,6 @@
 # Story: Extract `index` (benchmark levels · index returns · universe-benchmark link) into its own peer package WITH its own database
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-25 (Andre: "remove also index from sym database and packages
 and create a dedicated one index"). FOURTH extraction in the sym-decomposition program, the explicit
