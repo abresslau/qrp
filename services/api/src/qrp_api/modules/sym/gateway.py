@@ -168,11 +168,13 @@ class DbSymGateway:
         fx_conn: psycopg.Connection | None = None,
         universe_conn: psycopg.Connection | None = None,
         equity_conn: psycopg.Connection | None = None,
+        indices_conn: psycopg.Connection | None = None,
     ) -> None:
         self._conn = conn          # the sym database (identity/reference/classification)
         self._fx_conn = fx_conn    # the fx database (FX lives in its own DB now); see _fx()
         self._universe_conn = universe_conn  # the universe database (membership); see _universe()
         self._equity_conn = equity_conn  # the equity database (prices/returns); see _equity()
+        self._indices_conn = indices_conn  # the indices database (index levels/returns); _indices()
 
     def _fx(self) -> tuple[psycopg.Connection, bool]:
         """The fx-DB connection for the FX-matrix reads: the injected one (lifecycle owned by the
@@ -204,6 +206,18 @@ class DbSymGateway:
         from equity.db import connect as eq_connect
 
         return eq_connect(), True
+
+    def _indices(self) -> tuple[psycopg.Connection, bool]:
+        """The indices-DB connection for index reads (the injected one, else freshly opened).
+
+        Returns ``(conn, should_close)`` — index_levels/fact_index_returns/fact_index_extremes/
+        universe_benchmark live in the indices package's own database now; instrument identity is
+        read from the sym ``self._conn`` and merged in Python (no cross-DB join)."""
+        if self._indices_conn is not None:
+            return self._indices_conn, False
+        from indices.db import connect as ix_connect
+
+        return ix_connect(), True
 
     def healthy(self) -> bool:
         try:
@@ -1164,27 +1178,40 @@ class DbSymGateway:
         the `msci` xref `<code>:<VARIANT>`), currency, asset class, level count, first/last/latest
         level. Lists ALL index instruments incl. non-equity (VIX) — the equity-only filter is the
         WEI board's job, not this list."""
-        from sym.indices.levels import category_for
+        from indices.levels import category_for
 
-        rows = self._conn.execute(
+        # Cross-DB: per-index level aggregates from the indices DB; identity (name/ccy/msci xref)
+        # from the sym DB. Roster-fetch the agg keyed by sym_id, resolve identity, merge in Python.
+        ix, close = self._indices()
+        try:
+            agg = {
+                sid: (n, first_d, last_d, last_level)
+                for sid, n, first_d, last_d, last_level in ix.execute(
+                    """
+                    SELECT sym_id, count(*) AS n_levels, min(session_date) AS first_date,
+                           max(session_date) AS last_date,
+                           (array_agg(level ORDER BY session_date DESC))[1] AS last_level
+                      FROM index_levels GROUP BY sym_id
+                    """
+                ).fetchall()
+            }
+        finally:
+            if close:
+                ix.close()
+        if not agg:
+            return []
+        meta = self._conn.execute(
             """
             SELECT i.sym_id, i.name, i.currency_code,
                    (SELECT value FROM instrument_xref x
-                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1) AS msci_xref,
-                   count(l.session_date)                                       AS n_levels,
-                   min(l.session_date)                                         AS first_date,
-                   max(l.session_date)                                         AS last_date,
-                   (SELECT level FROM index_levels ll
-                     WHERE ll.sym_id = i.sym_id ORDER BY ll.session_date DESC LIMIT 1) AS last_level
-              FROM instrument i
-              JOIN index_levels l ON l.sym_id = i.sym_id
-             WHERE i.kind = 'index'
-             GROUP BY i.sym_id, i.name, i.currency_code
-             ORDER BY i.name NULLS LAST, i.sym_id
-            """
+                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1) AS msci_xref
+              FROM instrument i WHERE i.kind = 'index' AND i.sym_id = ANY(%s)
+            """,
+            (list(agg),),
         ).fetchall()
         out: list[dict] = []
-        for sym_id, name, ccy, xref, n, first_d, last_d, last_level in rows:
+        for sym_id, name, ccy, xref in meta:
+            n, first_d, last_d, last_level = agg[sym_id]
             code, _, variant = (xref or "").partition(":")
             out.append(
                 {
@@ -1200,6 +1227,7 @@ class DbSymGateway:
                     "last_level": float(last_level) if last_level is not None else None,
                 }
             )
+        out.sort(key=lambda d: (d["name"] is None, d["name"] or "", d["sym_id"]))
         return out
 
     def index_levels(
@@ -1215,11 +1243,16 @@ class DbSymGateway:
         if end:
             conds.append("session_date <= %s")
             params.append(end)
-        rows = self._conn.execute(
-            f"SELECT session_date, level FROM index_levels WHERE {' AND '.join(conds)} "
-            "ORDER BY session_date",
-            params,
-        ).fetchall()
+        ix, close = self._indices()
+        try:
+            rows = ix.execute(
+                f"SELECT session_date, level FROM index_levels WHERE {' AND '.join(conds)} "
+                "ORDER BY session_date",
+                params,
+            ).fetchall()
+        finally:
+            if close:
+                ix.close()
         meta = self._conn.execute(
             """
             SELECT i.name, i.currency_code,
@@ -1257,11 +1290,12 @@ class DbSymGateway:
         and every window re-bases to that anchor (the trailing helpers anchor on the clipped series'
         last point, so no formula changes). Omitted ⇒ the latest session (unchanged behaviour); an
         index with no session on-or-before the date drops out (inner join), never a fabricated row."""
-        from sym.indices.levels import category_for, country_for, region_for
+        from indices.levels import category_for, country_for, region_for
 
-        c = self._conn
         # The anchor is the latest session per index ≤ as_of_date (or the global latest when omitted).
-        # Both queries stay relative to that anchor so the omitted path is byte-for-byte as before.
+        # Level data lives in the indices DB; instrument identity in sym — fetch each, merge in Python
+        # (no cross-DB join). Both indices queries stay relative to the anchor so the result is
+        # byte-for-byte as before.
         params: dict = {}
         if as_of_date is not None:
             params["as_of_date"] = as_of_date
@@ -1278,36 +1312,51 @@ class DbSymGateway:
                  WHERE session_date >= (SELECT max(session_date) FROM index_levels) - 1900
                  ORDER BY sym_id, session_date
                 """
-        rows = c.execute(
-            f"""
-            WITH ranked AS (
-                SELECT sym_id, session_date, level,
-                       row_number() OVER (PARTITION BY sym_id ORDER BY session_date DESC) AS rn
-                  FROM index_levels
-                 {ranked_filter}
-            )
+        ix, close = self._indices()
+        try:
+            ranked = {
+                sid: (last, last_date, prev)
+                for sid, last, last_date, prev in ix.execute(
+                    f"""
+                    WITH ranked AS (
+                        SELECT sym_id, session_date, level,
+                               row_number() OVER (PARTITION BY sym_id ORDER BY session_date DESC) AS rn
+                          FROM index_levels
+                         {ranked_filter}
+                    )
+                    SELECT sym_id,
+                           max(level) FILTER (WHERE rn = 1)        AS last,
+                           max(session_date) FILTER (WHERE rn = 1) AS last_date,
+                           max(level) FILTER (WHERE rn = 2)        AS prev
+                      FROM ranked GROUP BY sym_id
+                    """,
+                    params,
+                ).fetchall()
+            }
+            # recent levels (one query) for trailing-return bases + sparkline; ~1900d reaches back past
+            # the 5Y window (and the prior year-end for MTD/YTD), so every window resolves from one pull.
+            recent = ix.execute(recent_sql, params).fetchall()
+        finally:
+            if close:
+                ix.close()
+        if not ranked:
+            return []
+        meta = self._conn.execute(
+            """
             SELECT i.sym_id, i.name, i.currency_code,
                    (SELECT value FROM instrument_xref x
-                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1)        AS msci_xref,
-                   max(r.level) FILTER (WHERE r.rn = 1)                              AS last,
-                   max(r.session_date) FILTER (WHERE r.rn = 1)                       AS last_date,
-                   max(r.level) FILTER (WHERE r.rn = 2)                              AS prev
-              FROM instrument i
-              JOIN ranked r ON r.sym_id = i.sym_id AND r.rn <= 2
-             WHERE i.kind = 'index'
-             GROUP BY i.sym_id, i.name, i.currency_code
+                     WHERE x.sym_id = i.sym_id AND x.source = 'msci' LIMIT 1) AS msci_xref
+              FROM instrument i WHERE i.kind = 'index' AND i.sym_id = ANY(%s)
             """,
-            params,
+            (list(ranked),),
         ).fetchall()
-        # recent levels (one query) for trailing-return bases + sparkline; ~1900d reaches back past the
-        # 5Y window (and the prior year-end for MTD/YTD), so every window resolves from one pull.
-        recent = c.execute(recent_sql, params).fetchall()
         series: dict[int, list[tuple[date, float]]] = {}
         for sid, d, lv in recent:
             series.setdefault(sid, []).append((d, float(lv)))
 
         out: list[dict] = []
-        for sym_id, name, ccy, xref, last, last_date, prev in rows:
+        for sym_id, name, ccy, xref in meta:
+            last, last_date, prev = ranked[sym_id]
             if category_for(name) != "equity":
                 continue  # non-equity (e.g. the VIX volatility index) — kept off the equity board
                 # (its up/down colour semantics invert); it still shows on the Indices page.
@@ -1630,10 +1679,16 @@ class DbSymGateway:
         """Live index-close fidelity check: stored latest level vs the source's official close, per
         index. Read-only (SELECTs index_levels/xref + outbound vendor quotes; no writes) —
         the same check `sym index-reconcile` runs. Returns the tri-state result for the console."""
-        from sym.indices.levels import YahooIndexLevelSource
+        from indices.levels import YahooIndexLevelSource
+
         from sym.validate.index_levels import check_index_level_fidelity
 
-        r = check_index_level_fidelity(self._conn, YahooIndexLevelSource())
+        ix, close = self._indices()
+        try:
+            r = check_index_level_fidelity(self._conn, ix, YahooIndexLevelSource())
+        finally:
+            if close:
+                ix.close()
         return {
             "status": r.status,
             "checked": r.checked,

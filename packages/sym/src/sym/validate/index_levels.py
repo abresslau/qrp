@@ -95,37 +95,48 @@ def reconcile_index_levels(
     )
 
 
-def gather_latest_index_levels(conn) -> list[StoredLevel]:
+def gather_latest_index_levels(conn, indices_conn) -> list[StoredLevel]:
     """The latest stored level per Yahoo-sourced index (the reconciliation universe).
 
-    MSCI aggregates carry an ``msci`` xref (different source/endpoint) and are skipped — they'd need
-    their own reconciliation against the MSCI service.
+    Cross-DB: the latest level per index lives in the indices DB (``indices_conn``); the index
+    identity (name + the yahoo xref, kind='index') lives in the sym DB (``conn``). Roster-fetch the
+    latest level per sym_id from indices, resolve the index instruments + yahoo xref from sym, and
+    merge in Python. MSCI aggregates carry an ``msci`` xref (different source/endpoint) and are
+    skipped — they'd need their own reconciliation against the MSCI service.
     """
+    latest = {
+        sid: (d, lv)
+        for sid, d, lv in indices_conn.execute(
+            """
+            SELECT DISTINCT ON (sym_id) sym_id, session_date, level
+              FROM index_levels ORDER BY sym_id, session_date DESC
+            """
+        ).fetchall()
+    }
+    if not latest:
+        return []
     rows = conn.execute(
         """
-        WITH ranked AS (
-            SELECT sym_id, session_date, level,
-                   row_number() OVER (PARTITION BY sym_id ORDER BY session_date DESC) AS rn
-              FROM index_levels
-        )
         SELECT i.sym_id, i.name,
                (SELECT value FROM instrument_xref x
-                 WHERE x.sym_id = i.sym_id AND x.source = 'yahoo' LIMIT 1) AS yahoo,
-               r.session_date, r.level
+                 WHERE x.sym_id = i.sym_id AND x.source = 'yahoo' LIMIT 1) AS yahoo
           FROM instrument i
-          JOIN ranked r ON r.sym_id = i.sym_id AND r.rn = 1
-         WHERE i.kind = 'index'
-        """
+         WHERE i.kind = 'index' AND i.sym_id = ANY(%s)
+        """,
+        (list(latest),),
     ).fetchall()
-    return [
-        StoredLevel(sid, name, sym, d.isoformat(), float(lv))
-        for sid, name, sym, d, lv in rows
-        if sym
-    ]
+    out: list[StoredLevel] = []
+    for sid, name, sym in rows:
+        if not sym:
+            continue
+        d, lv = latest[sid]
+        out.append(StoredLevel(sid, name, sym, d.isoformat(), float(lv)))
+    return out
 
 
 def check_index_level_fidelity(
     conn,
+    indices_conn,
     source,
     *,
     warn_bps: float = DEFAULT_WARN_BPS,
@@ -133,9 +144,10 @@ def check_index_level_fidelity(
 ) -> CheckResult:
     """Gather stored latest levels + the source's official quotes, then reconcile (I/O wrapper).
 
+    ``conn`` is the sym DB (index identity); ``indices_conn`` is the indices DB (the level series).
     A per-symbol fetch failure becomes a missing quote (a warn), never aborting the whole check.
     """
-    stored = gather_latest_index_levels(conn)
+    stored = gather_latest_index_levels(conn, indices_conn)
     quotes: dict[str, OfficialQuote | None] = {}
     for s in stored:
         if s.symbol in quotes:

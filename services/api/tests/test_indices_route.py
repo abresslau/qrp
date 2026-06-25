@@ -1,8 +1,11 @@
 """Index endpoints (MSCI EOD pull story). Route-table + gateway parse, DB-free.
 
-The index level data (e.g. MSCI World NR) is pulled into ``index_levels`` by ``sym msci-pull``;
-these endpoints expose it read-only. The gateway is exercised with a fake conn (no DB) that
-dispatches by SQL, mirroring the project's DB-free API test style.
+The index level data (e.g. MSCI World NR) now lives in the `indices` package's own database
+(``index_levels``/``fact_index_returns``); index identity (instrument/instrument_xref) stays in sym.
+These endpoints expose it read-only. The gateway is exercised with a fake conn (no DB) that
+dispatches by SQL fragment — the SAME fake is injected as both the sym conn and the indices conn
+(``DbSymGateway(c, indices_conn=c)``), since the gateway reads level data via ``_indices()`` and
+identity via the sym ``self._conn`` and merges in Python (no cross-DB join).
 """
 
 from __future__ import annotations
@@ -13,6 +16,11 @@ from fastapi.testclient import TestClient
 
 from qrp_api.main import create_app
 from qrp_api.modules.sym.gateway import DbSymGateway
+
+
+def _gw(conn) -> DbSymGateway:
+    """A gateway whose sym + indices reads both hit the one SQL-dispatching fake."""
+    return DbSymGateway(conn, indices_conn=conn)
 
 
 def _route_paths() -> set[str]:
@@ -78,20 +86,36 @@ def test_index_board_route_accepts_as_of_date_and_rejects_garbage():
     app.dependency_overrides.clear()
 
 
+# Index-instrument identity (name/currency/msci xref) for the board + list tests. The gateway fetches
+# this from sym keyed by the sym_id roster ("FROM instrument i WHERE i.kind = 'index'").
+_META = {
+    1: ("S&P 500", "USD", None),
+    99: ("CBOE Volatility Index (VIX)", "USD", None),
+    2210: ("MSCI World Net (USD)", "USD", "990100:NETR"),
+    2212: ("MSCI World Gross (USD)", "USD", "990100:GRTR"),
+}
+
+
+def _meta_rows(sym_ids):
+    return _Result([(sid, *_META[sid]) for sid in sym_ids if sid in _META])
+
+
 class _BoardConn:
-    """Fake conn for index_board(): the ranked last/prev query + the recent-levels query."""
+    """Fake for index_board(): the (split) ranked last/prev query on indices, the recent-levels query
+    on indices, and the instrument-meta query on sym."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "JOIN ranked r" in s:  # last + prior session per index
+        if "FROM ranked GROUP BY sym_id" in s:  # last + prior session per index (indices DB)
             return _Result([
-                (1, "S&P 500", "USD", None, 5000.0, date(2026, 6, 19), 4950.0),
-                (2210, "MSCI World Net (USD)", "USD", "990100:NETR", 11731.17, date(2026, 6, 19), 11700.0),
-                (2212, "MSCI World Gross (USD)", "USD", "990100:GRTR", 12000.0, date(2026, 6, 19), 11990.0),
+                (1, 5000.0, date(2026, 6, 19), 4950.0),
+                (2210, 11731.17, date(2026, 6, 19), 11700.0),
+                (2212, 12000.0, date(2026, 6, 19), 11990.0),
             ])
+        if "i.kind = 'index'" in s:  # instrument identity from sym
+            return _meta_rows([1, 2210, 2212])
         if "session_date >= (SELECT max(session_date)" in s:  # recent levels (trailing + spark)
             return _Result([
-                # S&P 500: enough history to resolve 5Y..5D/MTD/YTD bases + 52w range
                 (1, date(2021, 6, 19), 3000.0),   # ~5y base
                 (1, date(2023, 6, 19), 3600.0),   # ~3y base
                 (1, date(2024, 6, 19), 4000.0),   # ~2y base
@@ -109,7 +133,7 @@ class _BoardConn:
 
 
 def test_index_board_chg_ytd_region_and_msci_net_only():
-    out = DbSymGateway(_BoardConn()).index_board()
+    out = _gw(_BoardConn()).index_board()
     by = {r["sym_id"]: r for r in out}
     assert set(by) == {1, 2210}  # the GRTR (gross) MSCI variant is filtered out (Net only)
     sp = by[1]
@@ -137,15 +161,17 @@ def test_index_board_chg_ytd_region_and_msci_net_only():
 
 
 class _BoardConnAsOf:
-    """Fake conn for index_board(as_of_date=…): rows are pre-clipped to ≤ the as-of date, so the
-    gateway must anchor on the clipped series' last point and re-base every window to it. The ranked
-    query returns only S&P 500 (the MSCI rows have no session ≤ the date) → MSCI is OMITTED."""
+    """Fake for index_board(as_of_date=…): rows pre-clipped to ≤ the as-of date, so the gateway anchors
+    on the clipped series' last point and re-bases every window to it. The ranked query returns only
+    S&P 500 (the MSCI rows have no session ≤ the date) → MSCI is OMITTED."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "JOIN ranked r" in s:  # anchored = latest session ≤ as_of (and the prior)
+        if "FROM ranked GROUP BY sym_id" in s:  # anchored = latest session ≤ as_of (and the prior)
             assert "session_date <= %(as_of_date)s" in s  # the as-of filter is applied before ranking
-            return _Result([(1, "S&P 500", "USD", None, 4800.0, date(2026, 3, 19), 4750.0)])
+            return _Result([(1, 4800.0, date(2026, 3, 19), 4750.0)])
+        if "i.kind = 'index'" in s:
+            return _meta_rows([1])
         if "session_date <= %(as_of_date)s AND session_date >=" in s:  # recent levels clipped to ≤ as_of
             return _Result([
                 (1, date(2025, 3, 19), 4200.0),   # 52w-window start (~1y before the anchor) + 1Y base
@@ -158,7 +184,7 @@ class _BoardConnAsOf:
 
 
 def test_index_board_as_of_date_rewinds_anchor_and_windows():
-    out = DbSymGateway(_BoardConnAsOf()).index_board(as_of_date=date(2026, 3, 31))
+    out = _gw(_BoardConnAsOf()).index_board(as_of_date=date(2026, 3, 31))
     by = {r["sym_id"]: r for r in out}
     assert set(by) == {1}  # MSCI (no session ≤ the as-of date) is omitted — no fabricated row
     sp = by[1]
@@ -177,18 +203,20 @@ def test_index_board_as_of_date_rewinds_anchor_and_windows():
 
 
 class _LiveBoardConn:
-    """index_board() ranked+recent queries (S&P 500 + MSCI World NETR) plus the yahoo-xref lookup the
-    LIVE board adds. S&P 500 has a `^GSPC` xref (→ quoted); MSCI World has none (→ unavailable)."""
+    """index_board() ranked+recent (indices) + meta (sym) + the yahoo-xref lookup the LIVE board adds.
+    S&P 500 has a `^GSPC` xref (→ quoted); MSCI World has none (→ unavailable)."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
         if "source = 'yahoo' AND sym_id = ANY" in s:
             return _Result([(1, "^GSPC")])  # only S&P 500 has a yahoo xref
-        if "JOIN ranked r" in s:
+        if "FROM ranked GROUP BY sym_id" in s:
             return _Result([
-                (1, "S&P 500", "USD", None, 5000.0, date(2026, 6, 19), 4950.0),
-                (2210, "MSCI World Net (USD)", "USD", "990100:NETR", 11000.0, date(2026, 6, 19), 10900.0),
+                (1, 5000.0, date(2026, 6, 19), 4950.0),
+                (2210, 11000.0, date(2026, 6, 19), 10900.0),
             ])
+        if "i.kind = 'index'" in s:
+            return _meta_rows([1, 2210])
         if "session_date >= (SELECT max(session_date)" in s:
             return _Result([
                 (1, date(2025, 12, 31), 4500.0), (1, date(2026, 6, 19), 5000.0),
@@ -206,7 +234,7 @@ def test_index_board_live_rebases_to_quote_and_marks_freshness(monkeypatch):
         qmod, "fetch_quotes_batch",
         lambda syms, **kw: {"^GSPC": qmod.RawQuote(price=5050.0, prev_close=4990.0, currency="USD", quote_epoch=1000)},
     )
-    out = DbSymGateway(_LiveBoardConn()).index_board_live()
+    out = _gw(_LiveBoardConn()).index_board_live()
     by = {r["sym_id"]: r for r in out["rows"]}
     assert set(by) == {1, 2210}
     sp = by[1]
@@ -222,7 +250,6 @@ def test_index_board_live_rebases_to_quote_and_marks_freshness(monkeypatch):
     assert msci["freshness"] == "unavailable" and msci["last"] == 11000.0
     assert msci["quote_time"] is None
     # board rollup: 1 priced (live) + 1 unavailable → partial coverage degrades the badge to "delayed"
-    # (never reads fully-"live" while a row is stale EOD); as_of tracks the freshest priced quote.
     assert out["priced"] == 1 and out["total"] == 2 and out["freshness"] == "delayed"
     assert out["as_of"] is not None
 
@@ -241,7 +268,8 @@ def test_index_board_live_503_when_provider_unreachable():
     # override the gateway dependency to one whose batch-fetch is wholly unreachable
     class _Gw(DbSymGateway):
         def __init__(self):
-            super().__init__(_LiveBoardConn())
+            c = _LiveBoardConn()
+            super().__init__(c, indices_conn=c)
 
     import qrp_api.modules.sym.quotes as q2
     orig = q2.fetch_quotes_batch
@@ -267,18 +295,17 @@ class _Result:
 
 
 class _FakeConn:
-    """Dispatches execute() by SQL fragment to canned rows (no DB)."""
+    """Dispatches execute() by SQL fragment to canned rows (no DB) — indices() list + index_levels()."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "JOIN index_levels l" in s:  # gateway.indices() list query
-            return _Result(
-                [
-                    (2210, "MSCI World Net (USD)", "USD", "990100:NETR", 6646,
-                     date(2000, 12, 29), date(2026, 6, 19), 11731.17),
-                ]
-            )
-        if "SELECT session_date, level FROM index_levels" in s:  # series (asc by date)
+        if "FROM index_levels GROUP BY sym_id" in s:  # indices() per-index agg (indices DB)
+            return _Result([
+                (2210, 6646, date(2000, 12, 29), date(2026, 6, 19), 11731.17),
+            ])
+        if "i.kind = 'index'" in s:  # indices() identity from sym (kind + sym_id roster)
+            return _Result([(2210, "MSCI World Net (USD)", "USD", "990100:NETR")])
+        if "SELECT session_date, level FROM index_levels" in s:  # index_levels() series (asc by date)
             return _Result([
                 (date(2000, 12, 29), 2487.61),
                 (date(2021, 6, 19), 8000.0),
@@ -286,14 +313,13 @@ class _FakeConn:
                 (date(2025, 6, 19), 10000.0),
                 (date(2026, 6, 19), 11731.17),
             ])
-        if "FROM instrument i WHERE i.sym_id" in s:  # series meta
+        if "FROM instrument i WHERE i.sym_id" in s:  # index_levels() single-instrument meta (sym)
             return _Result([("MSCI World Net (USD)", "USD", "990100:NETR")])
         return _Result([])
 
 
 def test_indices_lists_with_variant_split():
-    gw = DbSymGateway(_FakeConn())
-    out = gw.indices()
+    out = _gw(_FakeConn()).indices()
     assert out == [
         {
             "sym_id": 2210, "name": "MSCI World Net (USD)", "currency": "USD",
@@ -304,36 +330,39 @@ def test_indices_lists_with_variant_split():
 
 
 class _VixListConn:
-    """indices() list query returning the VIX (a volatility index) alongside an equity index."""
+    """indices() agg + meta returning the VIX (a volatility index) alongside an equity index."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "JOIN index_levels l" in s:
+        if "FROM index_levels GROUP BY sym_id" in s:
             return _Result([
-                (1, "S&P 500", "USD", None, 5000, date(2020, 1, 1), date(2026, 6, 19), 5000.0),
-                (99, "CBOE Volatility Index (VIX)", "USD", None, 4000,
-                 date(2010, 1, 1), date(2026, 6, 19), 17.5),
+                (1, 5000, date(2020, 1, 1), date(2026, 6, 19), 5000.0),
+                (99, 4000, date(2010, 1, 1), date(2026, 6, 19), 17.5),
             ])
+        if "i.kind = 'index'" in s:
+            return _meta_rows([1, 99])
         return _Result([])
 
 
 def test_indices_list_includes_vix_tagged_volatility():
-    out = DbSymGateway(_VixListConn()).indices()
+    out = _gw(_VixListConn()).indices()
     by = {r["sym_id"]: r for r in out}
     assert by[1]["category"] == "equity"
     assert by[99]["category"] == "volatility"  # the Indices page list SHOWS the VIX
 
 
 class _VixBoardConn:
-    """index_board() ranked + recent queries returning an equity index and the VIX."""
+    """index_board() ranked (indices) + meta (sym) returning an equity index and the VIX."""
 
     def execute(self, sql, params=()):
         s = " ".join(sql.split())
-        if "JOIN ranked r" in s:
+        if "FROM ranked GROUP BY sym_id" in s:
             return _Result([
-                (1, "S&P 500", "USD", None, 5000.0, date(2026, 6, 19), 4950.0),
-                (99, "CBOE Volatility Index (VIX)", "USD", None, 17.5, date(2026, 6, 19), 18.0),
+                (1, 5000.0, date(2026, 6, 19), 4950.0),
+                (99, 17.5, date(2026, 6, 19), 18.0),
             ])
+        if "i.kind = 'index'" in s:
+            return _meta_rows([1, 99])
         if "session_date >= (SELECT max(session_date)" in s:
             return _Result([
                 (1, date(2025, 12, 31), 4500.0), (1, date(2026, 6, 19), 5000.0),
@@ -343,14 +372,13 @@ class _VixBoardConn:
 
 
 def test_index_board_excludes_volatility_indices():
-    out = DbSymGateway(_VixBoardConn()).index_board()
+    out = _gw(_VixBoardConn()).index_board()
     by = {r["sym_id"]: r for r in out}
     assert set(by) == {1}  # the VIX (volatility) is kept OFF the equity board; only S&P 500 shows
 
 
 def test_index_levels_series_and_since_start_return():
-    gw = DbSymGateway(_FakeConn())
-    out = gw.index_levels(2210)
+    out = _gw(_FakeConn()).index_levels(2210)
     assert out["sym_id"] == 2210
     assert out["msci_code"] == "990100" and out["variant"] == "NETR"
     assert out["n_levels"] == 5
@@ -360,7 +388,7 @@ def test_index_levels_series_and_since_start_return():
 
 
 def test_index_levels_trailing_returns():
-    out = DbSymGateway(_FakeConn()).index_levels(2210)
+    out = _gw(_FakeConn()).index_levels(2210)
     tr = out["trailing"]
     # all 8 windows present
     assert set(tr) == {"mtd", "qtd", "ytd", "1y", "2y", "3y", "5y", "10y"}

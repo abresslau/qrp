@@ -6,7 +6,7 @@ distinguishes price vs total-return.
 
 from __future__ import annotations
 
-from sym.indices.levels import (
+from indices.levels import (
     INDICES,
     Index,
     category_for,
@@ -176,7 +176,7 @@ def test_load_skips_msci_only_and_loads_yahoo():
         Index("MSCI-ish", "USD", msci_code="999"),
     ]
     src = _FakeSource([(date(2024, 1, 2), Decimal("100")), (date(2024, 1, 3), Decimal("101"))])
-    summary = load_index_levels(conn, src, bms, start=date(2024, 1, 1))
+    summary = load_index_levels(conn, conn, src, bms, start=date(2024, 1, 1))
     assert summary.instruments == 2
     assert summary.deferred == 1          # MSCI-only deferred
     assert summary.levels_written == 2    # the yahoo one loaded 2 levels
@@ -237,7 +237,7 @@ def test_load_revises_latest_session_to_official_close():
 
     conn = _CaptureConn()
     bms = [Index("X", "USD", yahoo_symbol="^X")]
-    load_index_levels(conn, _Src(), bms, start=date(2024, 1, 1))
+    load_index_levels(conn, conn, _Src(), bms, start=date(2024, 1, 1))
     by_date = {d: (lv, c) for d, lv, c in conn.writes}
     assert by_date[d_latest] == (Decimal("108.5"), "DO UPDATE")  # official + overwriteable
     assert by_date[d_old] == (Decimal("100"), "DO NOTHING")  # history: candle, append-only
@@ -262,7 +262,7 @@ def test_load_keeps_candle_when_official_date_does_not_match_latest():
 
     conn = _CaptureConn()
     bms = [Index("X", "USD", yahoo_symbol="^X")]
-    load_index_levels(conn, _Src(), bms, start=date(2024, 1, 1))
+    load_index_levels(conn, conn, _Src(), bms, start=date(2024, 1, 1))
     assert {d: lv for d, lv, _ in conn.writes}[d_latest] == Decimal("110")  # candle kept
 
 
@@ -271,7 +271,7 @@ def test_official_quote_parses_meta(monkeypatch):
     import io
     import json
 
-    from sym.indices.levels import YahooIndexLevelSource
+    from indices.levels import YahooIndexLevelSource
 
     payload = {
         "chart": {"result": [{"meta": {

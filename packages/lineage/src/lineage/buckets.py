@@ -31,6 +31,7 @@ COMMODITIES = "commodity"
 FX = "fx"
 UNIVERSE = "universe"
 EQUITY = "equity"
+INDICES = "indices"
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,7 @@ BUCKETS: tuple[Bucket, ...] = (
     ),
     Bucket(
         "index_levels", "Index levels", "provider",
-        (Dataset(SYM, "index_levels", "session_date", "sym.index_levels",
+        (Dataset(INDICES, "index_levels", "session_date", "indices.index_levels",
                  id_column="sym_id", count_label="indices"),),
         run_options=("yahoo", "msci"),  # yahoo = `sym indices`; msci = `sym msci-pull`
     ),

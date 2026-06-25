@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from sym.indices.returns import IndexReturnsSummary, alpha, index_return_rows
+from indices.returns import IndexReturnsSummary, alpha, index_return_rows
 
 
 def test_alpha_excess_return():

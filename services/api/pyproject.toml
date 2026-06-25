@@ -13,6 +13,8 @@ dependencies = [
     "commodity",
     "fx",
     "universe",
+    "equity",   # the sym gateway reads prices/returns over an equity conn (_equity())
+    "indices",  # the sym gateway reads index levels/returns over an indices conn (_indices())
     "portfolio",
     "signals",
     "optimiser",
@@ -29,6 +31,8 @@ rates = { workspace = true }
 commodity = { workspace = true }
 fx = { workspace = true }
 universe = { workspace = true }
+equity = { workspace = true }
+indices = { workspace = true }
 portfolio = { workspace = true }
 signals = { workspace = true }
 optimiser = { workspace = true }

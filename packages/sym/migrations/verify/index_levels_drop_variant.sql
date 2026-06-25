@@ -1,4 +1,4 @@
 -- Verify sym:index_levels_drop_variant on pg
-
-SELECT level FROM index_levels WHERE FALSE;
-SELECT ret FROM fact_index_returns WHERE FALSE;
+-- No-op: the objects this change created were extracted to the `indices` package+database
+-- (sym:index_extract). The indices DB owns + verifies them now.
+SELECT 1;

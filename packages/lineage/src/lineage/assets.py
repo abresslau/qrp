@@ -111,7 +111,7 @@ SCHEMAS = {
         ("as_of_date", "date", "PK"), ("rate", "numeric"), ("source", "text", "PK"),
         ("inserted_at", "timestamptz"),
     ),
-    ("sym", "index_levels"): _cols(
+    ("indices", "index_levels"): _cols(
         ("sym_id", "bigint", "PK"), ("session_date", "date", "PK"),
         ("level", "numeric"), ("source", "text"), ("created_at", "timestamptz"),
     ),
@@ -120,7 +120,7 @@ SCHEMAS = {
         ("as_of_date", "date", "PK"), ("pr", "numeric"), ("tr", "numeric"), ("input_hash", "text"),
         ("created_at", "timestamptz"), ("updated_at", "timestamptz"), ("gated", "boolean"),
     ),
-    ("sym", "fact_index_returns"): _cols(
+    ("indices", "fact_index_returns"): _cols(
         ("sym_id", "bigint", "PK"), ("window_id", "integer", "PK"),
         ("as_of_date", "date", "PK"), ("ret", "numeric"),
         ("created_at", "timestamptz"), ("updated_at", "timestamptz"),
@@ -280,11 +280,11 @@ LINEAGE = {
     ("altdata", "pageview"): _lin(
         composite_figi=[(("altdata", "wiki_map"), "composite_figi")]),
     # sym_id propagation (instrument / index chain)
-    ("sym", "index_levels"): _lin(
+    ("indices", "index_levels"): _lin(
         sym_id=[(("sym", "instrument"), "sym_id")]),
-    ("sym", "fact_index_returns"): _lin(
-        sym_id=[(("sym", "index_levels"), "sym_id")],
-        ret=[(("sym", "index_levels"), "level")],
+    ("indices", "fact_index_returns"): _lin(
+        sym_id=[(("indices", "index_levels"), "sym_id")],
+        ret=[(("indices", "index_levels"), "level")],
     ),
 }
 
@@ -432,9 +432,9 @@ _RUNNABLE_SYM = [
         ["fx", "load"],
     ),
     _sym_asset(
-        "index_levels", ("sym", "index_levels"), [],
+        "index_levels", ("indices", "index_levels"), [],
         "Index level series (keyed by sym_id).",
-        _md(("sym", "index_levels"), "sym", "index_levels",
+        _md(("indices", "index_levels"), "indices", "index_levels",
             "`sym indices` / `sym msci-import`", source="Yahoo indices · MSCI files"),
         ["indices"],
     ),
@@ -534,9 +534,9 @@ _EXTERNAL = [
           "Point-in-time membership intervals, projected from the event log.",
           "sym", "universe_membership", "`sym universe refresh <id>` (rebuild_projection)",
           note="per-universe CLI arg required — not a one-click runnable"),
-    _spec(("sym", "fact_index_returns"), [("sym", "index_levels")], "sym",
+    _spec(("indices", "fact_index_returns"), [("indices", "index_levels")], "indices",
           "Index returns, derived from index_levels (sym_id chain).",
-          "sym", "fact_index_returns", "`sym indices` (recompute_index_returns)"),
+          "indices", "fact_index_returns", "`sym indices` (recompute_index_returns)"),
     _spec(("sym", "pipeline_run_log"), [], "sym",
           "Run-level ingestion provenance (mode, source, rows, status, timing). "
           "The existing what/source/when audit log.",
@@ -594,7 +594,7 @@ _EXTERNAL = [
     # --- analytics (computed, not persisted) ---
     _spec(("analytics", "metrics"),
           [("portfolio", "portfolio_weight"), ("sym", "fact_returns"),
-           ("sym", "fact_index_returns")],
+           ("indices", "fact_index_returns")],
           "analytics",
           "Portfolio risk/return analytics (Sharpe, alpha, beta, tracking error). "
           "Computed on request — not persisted to a table.",

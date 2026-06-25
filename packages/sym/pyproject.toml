@@ -9,6 +9,7 @@ dependencies = [
     "exchange-calendars>=4.13.2",
     "financedatabase>=2.4.0",
     "fx",
+    "indices",
     "openfigi>=0.0.9",
     "pandas>=3.0.3",
     "psycopg[binary]>=3.3.4",
@@ -23,6 +24,7 @@ sym = "sym.cli:main"
 [tool.uv.sources]
 equity = { workspace = true }
 fx = { workspace = true }
+indices = { workspace = true }
 universe = { workspace = true }
 
 [build-system]

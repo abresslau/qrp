@@ -19,7 +19,7 @@ from datetime import date
 import psycopg
 from universe.query import members
 
-from sym.identity.instrument import SRC_YAHOO, sym_id_for
+from indices.identity import SRC_YAHOO, sym_id_for
 
 # universe_id -> [(yahoo_symbol, role, is_primary)]. The yahoo symbol resolves to
 # the index instrument's sym_id (loaded by `sym indices`).
@@ -45,12 +45,15 @@ class LinkSummary:
     skipped_no_instrument: int = 0
 
 
-def link_universe_indices(conn: psycopg.Connection, u_conn: psycopg.Connection) -> LinkSummary:
+def link_universe_indices(
+    conn: psycopg.Connection, sym_conn: psycopg.Connection, u_conn: psycopg.Connection
+) -> LinkSummary:
     """Seed the `universe_benchmark` link table from the mapping (idempotent).
 
-    ``conn`` is sym (universe_benchmark + the instrument spine); ``u_conn`` is the universe DB
-    (the universe-existence check). Skips a mapping whose universe isn't defined or whose index
-    instrument isn't loaded yet (run `sym indices` first to load the level series).
+    ``conn`` is the indices DB (universe_benchmark); ``sym_conn`` is the sym DB (the instrument
+    spine — resolve the index sym_id from its Yahoo xref); ``u_conn`` is the universe DB (the
+    universe-existence check). Skips a mapping whose universe isn't defined or whose index
+    instrument isn't loaded yet (run `indices load` first to load the level series).
     """
     conn.autocommit = True
     summary = LinkSummary()
@@ -62,7 +65,7 @@ def link_universe_indices(conn: psycopg.Connection, u_conn: psycopg.Connection) 
             summary.skipped_no_universe += 1
             continue
         for yahoo_symbol, role, is_primary in links:
-            sym_id = sym_id_for(conn, SRC_YAHOO, yahoo_symbol)
+            sym_id = sym_id_for(sym_conn, SRC_YAHOO, yahoo_symbol)
             if sym_id is None:
                 summary.skipped_no_instrument += 1
                 continue
@@ -83,20 +86,32 @@ def link_universe_indices(conn: psycopg.Connection, u_conn: psycopg.Connection) 
     return summary
 
 
-def universe_indices(conn: psycopg.Connection, universe_id: str) -> list[dict]:
-    """The index instruments linked to a universe (name + role + primary)."""
-    rows = conn.execute(
-        """
-        SELECT b.sym_id, i.name, b.role, b.is_primary
-          FROM universe_benchmark b JOIN instrument i USING (sym_id)
-         WHERE b.universe_id = %s
-         ORDER BY b.is_primary DESC, i.name
-        """,
+def universe_indices(
+    conn: psycopg.Connection, sym_conn: psycopg.Connection, universe_id: str
+) -> list[dict]:
+    """The index instruments linked to a universe (name + role + primary).
+
+    Cross-DB: the links live in the indices DB (``conn``); instrument names live in the sym DB
+    (``sym_conn``). Roster-fetch the linked sym_ids + roles from indices, then resolve names from
+    sym, and merge in Python (no cross-DB join). Order: primary first, then by name.
+    """
+    links = conn.execute(
+        "SELECT sym_id, role, is_primary FROM universe_benchmark WHERE universe_id = %s",
         (universe_id,),
     ).fetchall()
-    return [
-        {"sym_id": s, "name": n, "role": r, "is_primary": p} for s, n, r, p in rows
+    if not links:
+        return []
+    sym_ids = [s for s, _, _ in links]
+    names = dict(
+        sym_conn.execute(
+            "SELECT sym_id, name FROM instrument WHERE sym_id = ANY(%s)", (sym_ids,)
+        ).fetchall()
+    )
+    out = [
+        {"sym_id": s, "name": names.get(s), "role": r, "is_primary": p} for s, r, p in links
     ]
+    out.sort(key=lambda d: (not d["is_primary"], d["name"] or ""))
+    return out
 
 
 def primary_index(conn: psycopg.Connection, universe_id: str) -> int | None:
@@ -123,8 +138,9 @@ def universe_with_index(
 ) -> UniverseSnapshot:
     """Point-in-time constituents + the primary reference index's level, as-of a date.
 
-    ``u_conn`` is the universe DB (point-in-time constituents); ``conn`` is sym (the benchmark link
-    + index level series). The payoff: who was in the index *and* where it closed on the same date.
+    ``u_conn`` is the universe DB (point-in-time constituents); ``conn`` is the indices DB (the
+    benchmark link + index level series). The payoff: who was in the index *and* where it closed on
+    the same date.
     ``index_level_date`` surfaces the carried-back level's own session (transparency).
     """
     member_figis = members(u_conn, universe_id, as_of_date)

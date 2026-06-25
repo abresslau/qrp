@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from sym.indices.levels import INDICES
-from sym.indices.links import UNIVERSE_INDICES
+from indices.levels import INDICES
+from indices.links import UNIVERSE_INDICES
 
 
 def test_every_mapping_has_exactly_one_primary():
