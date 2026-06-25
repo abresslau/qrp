@@ -65,6 +65,13 @@ EQUITY_RELATIONS = {
     "fact_price_extremes", "v_prices_adjusted",
 }
 
+# Relations that moved to the `indices` peer package + its own database — consumers (the API sym
+# gateway's index methods, data_monitor's index_levels bucket) read them as a peer DB (over an
+# indices connection), so they are a KNOWN vocabulary, not a sym read.
+INDEX_RELATIONS = {
+    "index_levels", "fact_index_returns", "fact_index_extremes", "universe_benchmark",
+}
+
 # SYM_READ_SURFACE + SYM_INTERNAL_RELATIONS are imported from qrp_api.sym_contract — the
 # single source shared with the qrp_readonly role provisioner (Story QH.3). Extend the
 # surface THERE, deliberately.
@@ -170,7 +177,7 @@ def test_consumer_sym_reads_are_within_the_vocabulary():
     # (UPPERCASE) keywords only: a lowercase unknown-name read is the guard's stated
     # blind spot (lowercase KNOWN names are still caught by the allowlist above).
     known = (SYM_READ_SURFACE | SYM_INTERNAL_RELATIONS | ALL_PACKAGE_SCHEMAS
-             | UNIVERSE_RELATIONS | EQUITY_RELATIONS)
+             | UNIVERSE_RELATIONS | EQUITY_RELATIONS | INDEX_RELATIONS)
     unknown: list[str] = []
     for pkg in CONSUMER_PACKAGES:
         for src in _consumer_sources(pkg):

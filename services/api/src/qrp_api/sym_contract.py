@@ -22,15 +22,15 @@ READONLY_ROLE = "qrp_readonly"
 # AR-R3: the sym read surface consumers may touch. Extend DELIBERATELY — a new entry here
 # simultaneously widens the discipline gate AND the role's grants (single source of truth).
 SYM_READ_SURFACE = {
-    "fact_index_returns",
     "securities",
     "security_symbology",
     "security_names",
     # universe_membership moved to the `universe` peer package + its own DB (no longer a sym read).
     # prices_raw / fact_returns / fact_price_extremes / pipeline_run_log moved to the `equity` peer
     # package + its own DB — consumers read those over the equity connection now, not sym.
+    # fact_index_returns moved to the `indices` peer package + its own DB (read over the indices conn).
     "fundamentals",
-    "return_window",  # sym keeps its own copy for the index facts (fact_index_returns FK)
+    "return_window",  # sym keeps its own copy (read by the sym API/portfolio/analytics; indices seeds its own)
     "instrument",
     "gics_scd",  # GICS sector/industry — analytics' live portfolio composition (sector donut)
     "exchange",  # exchange→country — the live composition pivot (explorer-style per-stock columns)
@@ -50,10 +50,11 @@ SYM_INTERNAL_RELATIONS = {
     # The equity fact tables moved to the `equity` peer package + its own database
     # (prices_raw, corporate_actions, price_gaps, prices_review, pipeline_backfill_progress,
     # pipeline_run_log, fact_returns, fact_price_extremes, v_prices_adjusted).
+    # The index/benchmark facts moved to the `indices` peer package + its own database
+    # (index_levels, fact_index_returns, fact_index_extremes, universe_benchmark) — read over the
+    # indices connection now, not sym.
     "universe_member_completeness",
     "securities_review_queue",
-    "instrument_xref", "currency", "index_levels",
-    "universe_benchmark",
+    "instrument_xref", "currency",
     "validation_run_log",
-    "fact_index_extremes",  # 52-week index extremes (Story 3.2-ext) — not yet consumed by any API reader
 }
