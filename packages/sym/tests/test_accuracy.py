@@ -41,8 +41,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
-
-from sym.returns.windows import BY_CODE
+from equity.returns.windows import BY_CODE
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures/accuracy_reference.json"
 

@@ -3,7 +3,7 @@
 This module turns seed resolution inputs (``ResolutionInput``) into one of four
 outcomes per security, *without* touching price ingestion — FIGI assignment is a
 separate external dependency, so an OpenFIGI outage raised here never reaches the
-ingest path (the decoupling is structural: see ``sym.ingest``).
+ingest path (the decoupling is structural: see ``equity.ingest``).
 
 Outcomes (``Outcome``):
   * ``assigned``             — exactly one CompositeFIGI; securities row is written.

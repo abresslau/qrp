@@ -91,13 +91,17 @@ def classify_member(flags: MemberFlags) -> Completeness:
 
 
 def _current_member_flags(
-    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str | None = None
+    conn: psycopg.Connection,
+    u_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
+    universe_id: str | None = None,
 ) -> list[tuple[str, str, MemberFlags]]:
     """Presence flags for every current member of every (or one) universe (cross-DB roster-fetch).
 
     The current-member roster comes from the universe DB; the per-figi sym presence flags
-    (securities/names/symbology/gics/prices/fundamentals/calendar) are fetched from sym filtered by
-    the roster figi list, then joined in Python (no cross-DB join).
+    (securities/names/symbology/gics/fundamentals/calendar) are fetched from sym, and the
+    has-prices flag from the equity DB — all filtered by the roster figi list and joined in Python
+    (no cross-DB join).
     """
     rsql = "SELECT universe_id, composite_figi FROM universe_membership WHERE valid_to IS NULL"
     rparams: list[object] = []
@@ -108,6 +112,10 @@ def _current_member_flags(
     figis = list({f for _u, f in roster})
     flags_by_figi: dict[str, MemberFlags] = {}
     if figis:
+        priced = {r[0] for r in eq_conn.execute(
+            "SELECT DISTINCT composite_figi FROM prices_raw WHERE composite_figi = ANY(%s)",
+            (figis,),
+        ).fetchall()}
         rows = conn.execute(
             """
             SELECT s.composite_figi, s.status,
@@ -118,7 +126,6 @@ def _current_member_flags(
                               AND y.symbol_type = 'ticker' AND y.valid_to IS NULL),
                    EXISTS (SELECT 1 FROM gics_scd g
                             WHERE g.composite_figi = s.composite_figi AND g.valid_to IS NULL),
-                   EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi),
                    EXISTS (SELECT 1 FROM fundamentals f WHERE f.composite_figi = s.composite_figi),
                    EXISTS (SELECT 1 FROM trading_calendar_version v
                             WHERE v.is_current AND v.mic = s.mic)
@@ -127,22 +134,28 @@ def _current_member_flags(
             """,
             (figis,),
         ).fetchall()
-        for figi, status, hn, hsy, hg, hp, hf, hc in rows:
+        for figi, status, hn, hsy, hg, hf, hc in rows:
             if status is not None:
-                flags_by_figi[figi] = MemberFlags(hn, hsy, hg, hp, hf, status, hc)
+                flags_by_figi[figi] = MemberFlags(
+                    hn, hsy, hg, figi in priced, hf, status, hc
+                )
     # A member with no securities master row maps to None — REPORTED as the worst
     # incompleteness (parity with the original LEFT JOIN), never silently dropped.
     return [(uid, figi, flags_by_figi.get(figi)) for uid, figi in roster]
 
 
 def evaluate_completeness(
-    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str | None = None
+    conn: psycopg.Connection,
+    u_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
+    universe_id: str | None = None,
 ) -> CheckResult:
     """Assess + persist completeness for current universe members; return a result.
 
-    ``conn`` is the sym DB (securities/prices/… presence + the ``universe_member_completeness``
-    durable log); ``u_conn`` is the universe DB (the current-member roster). Upserts one
-    completeness row per current member and rolls up to a :class:`CheckResult`.
+    ``conn`` is the sym DB (securities/… presence + the ``universe_member_completeness`` durable
+    log); ``u_conn`` is the universe DB (the current-member roster); ``eq_conn`` is the equity DB
+    (the has-prices flag). Upserts one completeness row per current member and rolls up to a
+    :class:`CheckResult`.
     """
     conn.autocommit = True
     if universe_id is not None:
@@ -152,7 +165,7 @@ def evaluate_completeness(
         if known is None:
             # A typo'd universe id must not yield a vacuous zero-member PASS.
             raise ValueError(f"unknown universe {universe_id!r}")
-    members = _current_member_flags(conn, u_conn, universe_id)
+    members = _current_member_flags(conn, u_conn, eq_conn, universe_id)
     # Purge log rows for ex-members in scope (cross-DB): the current roster is the unnested
     # keep-list; a completeness row not in it is a departed member. upsert-only would report
     # departed members as incomplete forever.

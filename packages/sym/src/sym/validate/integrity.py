@@ -38,25 +38,28 @@ def find_orphans(child_figis: set[str], security_figis: set[str]) -> set[str]:
     return {f for f in child_figis if f and f not in security_figis}
 
 
-# The two universe seams live in the universe DB now — orphan-checked cross-DB (roster-fetch).
+# The two universe seams live in the universe DB now; prices/corporate-actions/returns live in the
+# equity DB — both orphan-checked cross-DB (roster-fetch the child figis, diff against securities).
 _UNIVERSE_SEAMS = {"universe_member_resolution", "universe_membership"}
+_EQUITY_SEAMS = {"prices_raw", "corporate_actions", "fact_returns"}
 
 
 def check_referential_integrity(
-    conn: psycopg.Connection, u_conn: psycopg.Connection
+    conn: psycopg.Connection, u_conn: psycopg.Connection, eq_conn: psycopg.Connection
 ) -> CheckResult:
     """Assert every seam's ``composite_figi`` resolves to a real securities row.
 
     ``conn`` is sym (securities + the sym seams); ``u_conn`` is the universe DB (the two membership
-    seams) — for those, fetch the child figis and diff against sym's securities in Python (no
-    cross-DB join)."""
+    seams); ``eq_conn`` is the equity DB (prices/corporate_actions/fact_returns). For the cross-DB
+    seams, fetch the child figis and diff against sym's securities in Python (no cross-DB join)."""
     failures: list[str] = []
     checked = 0
     for label, relation, extra in _SEAMS:
-        if relation in _UNIVERSE_SEAMS:
+        if relation in _UNIVERSE_SEAMS or relation in _EQUITY_SEAMS:
+            child_conn = u_conn if relation in _UNIVERSE_SEAMS else eq_conn
             child = {
                 r[0]
-                for r in u_conn.execute(
+                for r in child_conn.execute(
                     f"SELECT DISTINCT c.composite_figi FROM {relation} c "
                     f"WHERE {extra} c.composite_figi IS NOT NULL"  # noqa: S608 - fixed allow-list
                 ).fetchall()

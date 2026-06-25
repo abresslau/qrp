@@ -15,9 +15,8 @@ from datetime import date
 from decimal import Decimal
 
 import psycopg
-
-from sym.returns.extremes import compute_extreme_rows
-from sym.returns.windows import WINDOWS, base_date, canonical_return, end_date, period_years
+from equity.returns.extremes import compute_extreme_rows
+from equity.returns.windows import WINDOWS, base_date, canonical_return, end_date, period_years
 
 
 def index_return_rows(

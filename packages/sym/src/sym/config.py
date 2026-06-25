@@ -23,7 +23,7 @@ DEFAULT_SOURCE = "yfinance"
 def source_key() -> str:
     """The configured market-data source key (``SYM_SOURCE``), default ``yfinance``.
 
-    Selects the adapter via :func:`sym.sources.registry.get_source` — swapping
+    Selects the adapter via :func:`equity.sources.registry.get_source` — swapping
     vendors is a config flip, never a code change (AR-5).
     """
     load_dotenv()

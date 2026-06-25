@@ -37,9 +37,9 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from sym.db import connect
-from sym.returns.loader import _calendar_sessions
-from sym.returns.windows import WINDOWS, base_date, end_date
-from sym.sources.yfinance_adapter import make_yahoo_symbol_resolver
+from equity.returns.loader import _calendar_sessions
+from equity.returns.windows import WINDOWS, base_date, end_date
+from equity.sources.yfinance_adapter import make_yahoo_symbol_resolver
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = REPO / "tests/fixtures/accuracy_reference.json"

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 
 import psycopg
+from equity.ingest.pipeline import OVERWRITE, LoadSummary, run_load
 from universe.registry import InvalidMemberIdentifierError
 
 from sym.identity.symbology import (
@@ -28,7 +29,6 @@ from sym.identity.symbology import (
     write_security,
 )
 from sym.identity.universe import TICKER, SeedSecurity
-from sym.ingest.pipeline import OVERWRITE, LoadSummary, run_load
 from sym.universe.resolver import _parse_token
 
 
@@ -101,6 +101,7 @@ def ensure_universe_securities(
 def universe_securities(
     conn: psycopg.Connection,
     u_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     universe_id: str,
     as_of_date: date,
     *,
@@ -141,7 +142,7 @@ def universe_securities(
         ).fetchall()
     }
     cursor_by_figi = dict(
-        conn.execute(
+        eq_conn.execute(
             "SELECT composite_figi, cursor_date FROM pipeline_backfill_progress "
             "WHERE composite_figi = ANY(%s)",
             (figis,),
@@ -160,6 +161,7 @@ def universe_securities(
 def run_universe_load(
     conn: psycopg.Connection,
     u_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
     source: object,
     universe_id: str,
     mode: str,
@@ -172,8 +174,9 @@ def run_universe_load(
     """Load prices for a universe's members from maintained membership (cross-DB roster-fetch).
 
     Bridges resolved members into ``securities`` (so new names are priceable), then runs the
-    standard sym pipeline over the membership selection with a per-figi backfill floor (joiner) and
-    an end cap (leaver exit). ``conn`` is sym; ``u_conn`` is the universe DB.
+    standard pipeline over the membership selection with a per-figi backfill floor (joiner) and
+    an end cap (leaver exit). ``conn`` is sym (securities); ``u_conn`` is the universe DB
+    (membership); ``eq_conn`` is the equity DB (prices/returns the load writes into).
     """
     if ensure_securities:
         ensure_universe_securities(conn, u_conn, universe_id)
@@ -184,7 +187,7 @@ def run_universe_load(
     gap_aware = bool(kwargs.get("gap_aware", False))
     select_all_members = gap_aware or mode == OVERWRITE
     selection = universe_securities(
-        conn, u_conn, universe_id, as_of_date, backfill=select_all_members
+        conn, u_conn, eq_conn, universe_id, as_of_date, backfill=select_all_members
     )
     securities = [(figi, mic, cursor) for figi, mic, cursor, _f, _t in selection]
     cap_map = {figi: member_to for figi, _m, _c, _f, member_to in selection}
@@ -193,6 +196,7 @@ def run_universe_load(
         def floor_for(_figi: str) -> date:  # noqa: F811
             return history_floor
     return run_load(
+        eq_conn,
         conn,
         source,
         mode,
@@ -230,7 +234,11 @@ class Coverage:
 
 
 def coverage(
-    conn: psycopg.Connection, u_conn: psycopg.Connection, universe_id: str, as_of_date: date
+    conn: psycopg.Connection,
+    u_conn: psycopg.Connection,
+    eq_conn: psycopg.Connection,
+    universe_id: str,
+    as_of_date: date,
 ) -> Coverage:
     """Per-universe coverage so a partial load can't masquerade as complete (cross-DB)."""
     cov = Coverage(universe_id)
@@ -269,12 +277,12 @@ def coverage(
         cov.in_master = conn.execute(
             "SELECT count(*) FROM securities WHERE composite_figi = ANY(%s)", (resolved_figis,)
         ).fetchone()[0]
-        cov.priced = conn.execute(
+        cov.priced = eq_conn.execute(
             "SELECT count(DISTINCT composite_figi) FROM prices_raw WHERE composite_figi = ANY(%s)",
             (resolved_figis,),
         ).fetchone()[0]
     if current_figis:
-        cov.current_priced = conn.execute(
+        cov.current_priced = eq_conn.execute(
             "SELECT count(DISTINCT composite_figi) FROM prices_raw WHERE composite_figi = ANY(%s)",
             (current_figis,),
         ).fetchone()[0]

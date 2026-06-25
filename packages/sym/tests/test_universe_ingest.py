@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from sym.ingest.pipeline import FILL, compute_window
+from equity.ingest.pipeline import FILL, compute_window
+
 from sym.universe.ingest import Coverage
 
 
