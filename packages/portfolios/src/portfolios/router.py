@@ -16,16 +16,20 @@ router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 def _gateway() -> Iterator[DbPortfolioGateway]:
     conn = connect()  # portfolios owns its own database
+    sym = equity = None
     try:
-        sym = connect("sym")                            # sym package — labels + fact_returns (PnL), in-app
+        sym = connect("sym")        # sym package — securities + labels, read-only
+        equity = connect("equity")  # equity package — fact_returns (PnL), read-only
     except Exception:
-        conn.close()  # don't leak the first connection when the second connect fails
+        for c in (conn, sym, equity):  # don't leak partial connections on a failed connect
+            if c is not None:
+                c.close()
         raise
     try:
-        yield DbPortfolioGateway(conn, sym)
+        yield DbPortfolioGateway(conn, sym, equity)
     finally:
-        conn.close()
-        sym.close()
+        for c in (conn, sym, equity):
+            c.close()
 
 
 # ---- request models ----

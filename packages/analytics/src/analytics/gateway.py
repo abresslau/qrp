@@ -93,9 +93,15 @@ def _ann_return(daily: list[float]) -> float | None:
 
 
 class DbAnalyticsGateway:
-    def __init__(self, conn: psycopg.Connection, sym_conn: psycopg.Connection | None = None) -> None:
+    def __init__(
+        self,
+        conn: psycopg.Connection,
+        sym_conn: psycopg.Connection | None = None,
+        equity_conn: psycopg.Connection | None = None,
+    ) -> None:
         self._conn = conn      # qrp DB — portfolio weights
-        self._sym = sym_conn    # sym package — fact_returns / fact_index_returns / instrument / securities
+        self._sym = sym_conn    # sym package — securities / fact_index_returns / instrument / gics
+        self._equity = equity_conn  # equity package — fact_returns / prices_raw / extremes (read-only)
 
     def benchmarks(self) -> list[dict]:
         """Index instruments that have a daily (1D) return series, for the selector."""
@@ -165,7 +171,7 @@ class DbAnalyticsGateway:
             ).fetchall()
         ]
 
-        rows = self._sym.execute(
+        rows = self._equity.execute(
             "SELECT as_of_date, composite_figi, pr FROM fact_returns "
             "WHERE composite_figi = ANY(%s) AND window_id = %s AND pr IS NOT NULL "
             "AND as_of_date > %s",
@@ -373,10 +379,25 @@ class DbAnalyticsGateway:
         figis = list(weights)
         _MISSING = (None, None, "Unclassified", None, None, None, None, None, None, None, None,
                     None, None, None)
+        # The latest stored volume/close per holding lives in the equity DB now — fetch it as a
+        # small per-figi map (cross-DB roster-fetch, no join) and splice into the sym identity meta.
+        px_by_figi = {
+            r[0]: (r[1], r[2])
+            for r in self._equity.execute(
+                """
+                SELECT DISTINCT ON (composite_figi) composite_figi, volume, close
+                  FROM prices_raw
+                 WHERE composite_figi = ANY(%s)
+                 ORDER BY composite_figi, session_date DESC
+                """,
+                (figis,),
+            ).fetchall()
+        }
         meta = {
-            f: (tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close,
+            f: (tk, mic, sector, industry, name, currency, status, mcap, country,
+                px_by_figi.get(f, (None, None))[0], px_by_figi.get(f, (None, None))[1],
                 country_iso, exch_code, bbg_exchange_code)
-            for f, tk, mic, sector, industry, name, currency, status, mcap, country, volume, last_close,
+            for f, tk, mic, sector, industry, name, currency, status, mcap, country,
                 country_iso, exch_code, bbg_exchange_code
             in self._sym.execute(
                 """
@@ -388,8 +409,6 @@ class DbAnalyticsGateway:
                        s.status,
                        f.market_cap_usd,
                        ex.country,
-                       px.volume,
-                       px.close AS last_close,
                        ex.country_iso, ex.exch_code, ex.bbg_exchange_code
                   FROM securities s
                   LEFT JOIN exchange ex ON ex.mic = s.mic
@@ -413,11 +432,6 @@ class DbAnalyticsGateway:
                        WHERE f2.composite_figi = s.composite_figi AND f2.market_cap_usd IS NOT NULL
                        ORDER BY as_of_date DESC LIMIT 1
                   ) f ON TRUE
-                  LEFT JOIN LATERAL (
-                      SELECT volume, close FROM prices_raw p
-                       WHERE p.composite_figi = s.composite_figi
-                       ORDER BY p.session_date DESC LIMIT 1
-                  ) px ON TRUE
                  WHERE s.composite_figi = ANY(%s)
                 """,
                 (figis,),
@@ -430,7 +444,7 @@ class DbAnalyticsGateway:
         pr_by_figi: dict[str, dict[str, float | None]] = {
             f: {code: None for code in WINDOW_RETURNS} for f in figis
         }
-        for cf, code, pr in self._sym.execute(
+        for cf, code, pr in self._equity.execute(
             """
             SELECT DISTINCT ON (fr.composite_figi, fr.window_id)
                    fr.composite_figi, w.code, fr.pr
@@ -450,7 +464,7 @@ class DbAnalyticsGateway:
         # Latest (non-gated) 52-week adjusted-close low/high per holding — the 52W range bar
         # (Story 3.2-ext). One query for all figis; the loop positions the live/last price within.
         ext_by_figi: dict[str, tuple[float | None, float | None]] = {f: (None, None) for f in figis}
-        for cf, low_52w, high_52w in self._sym.execute(
+        for cf, low_52w, high_52w in self._equity.execute(
             """
             SELECT DISTINCT ON (composite_figi) composite_figi, low_52w, high_52w
               FROM fact_price_extremes
