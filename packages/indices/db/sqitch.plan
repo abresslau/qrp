@@ -1,0 +1,6 @@
+%syntax-version=1.0.0
+%project=indices
+%uri=https://github.com/abresslau/qrp-indices
+
+indices_schema 2026-06-25T16:00:00Z Andre <ab@gladstone-management.com> # indices schema in a dedicated `indices` schema + DB search_path: benchmark index level series (index_levels), the materialized index-returns matrix over the 18 windows (fact_index_returns), 52-week index extremes (fact_index_extremes), and the universe→benchmark link (universe_benchmark). sym_id -> instrument and universe_id -> universe are SOFT references (cross-DB, no FK); window_id -> return_window stays a same-DB FK. own database.
+seed_reference [indices_schema] 2026-06-25T17:00:00Z Andre <ab@gladstone-management.com> # Seed the indices-DB reference table (the 28 canonical return_window defs) so a fresh deploy is functional (fact_index_returns FKs return_window); idempotent.

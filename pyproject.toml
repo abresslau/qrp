@@ -29,6 +29,7 @@ members = [
     "packages/fx",
     "packages/universe",
     "packages/equity",
+    "packages/indices",
 ]
 
 [dependency-groups]
