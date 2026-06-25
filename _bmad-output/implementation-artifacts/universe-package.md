@@ -1,6 +1,6 @@
 # Story: Extract `universe` into its own peer package WITH its own database
 
-Status: review  <!-- P1-P4 ALL DONE + committed (72a8032, 184cfb0, 5b119f2, ee50fa1) on feat/universe-package; extraction complete, all suites green, live cross-DB verified. Ready for code-review. -->>
+Status: done  <!-- P1-P4 done + code-reviewed (6a64a39) + merged to main (b872f1d). Follow-up hotfix fix/sym-router-lazy-conns (2c3b834: lazy fx/universe conns in the sym router so a sibling-DB fault no longer 500s all /api/sym/*) merged to main de41779; 175 API tests green. Extraction arc closed. -->>
 
 <!-- Created via bmad-create-story 2026-06-24 (Andre: "feels like universe should be a separate
 package" → "do it" → "change also to separate database"). FINAL DECISION: approach **B** — a full
@@ -227,6 +227,12 @@ the injected adapter; etc.) all serve AC#2 + behavior preservation.
   universe DB (72a8032); P2 invert circular dep via Resolver + P3 migrate data + rewire core consumers
   (184cfb0); P4a read-only-consumer cutover (5b119f2); P4b drop the 7 tables from sym + cross-DB
   referential check (ee50fa1). All ACs met; suites green; live cross-DB verified. Status → review.
+- 2026-06-25: code-reviewed (6a64a39, conn-leak + self-contained-revert patches), merged to main
+  (b872f1d). Follow-up hotfix fix/sym-router-lazy-conns (2c3b834): the sym router's _gateway eagerly
+  opened the fx + universe DBs for EVERY /api/sym/* request, so a sibling-DB outage/broken import 500'd
+  ALL sym endpoints (incl. the FX matrix, seen live). Fixed to open only the core sym conn eagerly +
+  let the gateway open fx/universe lazily per-method via _fx()/_universe(). 175 API tests green; merged
+  to main (de41779). Status → done; extraction arc closed.
 
 ### Refined design from the coupling map (Explore, 2026-06-24) — READ BEFORE P2
 The map CONFIRMS approach B and sharpens the module split. The inversion is deeper than "inject one
