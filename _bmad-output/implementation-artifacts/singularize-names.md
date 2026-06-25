@@ -1,6 +1,31 @@
 # Story: Singularize all package + database names
 
-Status: in-progress
+Status: review  <!-- commodities→commodity + portfolios→portfolio DONE on feat/singularize-names
+(all 4 identifiers match per package); rates/signals/analytics deliberately kept plural. Live DB+
+schema+sqitch-project renamed; suites + live verify green; deploy_all 13/13 up to date. Branched off
+feat/equity-package → merges AFTER equity. -->
+
+## Dev Agent Record
+- **commodities → commodity** (commit): package + DB + schema + sqitch project all "commodity".
+  Surgical (kept the data-monitor bucket key/count_label, Dagster op/schedule names, /api/commodities
+  route, and the macro/altdata 'commodities' asset-class domain strings). 141,109 price rows intact.
+- **portfolios → portfolio** (commit): all 4 match. Renamed the PLURAL token only (the singular
+  'portfolio' domain word untouched); kept /api/portfolios route + tags, platform module-id, lineage
+  route doc-strings, operate's historical qrp migrations, b3 prose. 4 portfolios / 1249 weights intact.
+- **Recipe for the all-4-match rename** (esp. the sqitch project): git mv dirs → pyproject(name/scripts/
+  hatch) + db.py `_OWN` → import/module/schema-qualified rewrites across pkg + consumers → deploy_all/
+  workspace/dependent-pyprojects/lineage(package-position only) → SQL schema-create + qualified refs →
+  sqitch `%project`+`%uri`+conf → `uv sync` → live `ALTER DATABASE … RENAME` (terminate conns first) +
+  `ALTER SCHEMA … RENAME` (catalog-only, data intact) → **sqitch project rename = DROP the sqitch
+  schema + `sqitch deploy --log-only`** (the change_id hashes the project name, so a registry rename
+  needs re-baselining; --log-only re-registers without re-running DDL) → suites + deploy_all status +
+  ruff + live verify.
+- **rates/signals/analytics kept plural** (Andre): rates deferred; analytics is a mass noun; signals
+  CANNOT be `signal` (Python stdlib module collision — documented in its pyproject) so package+DB kept
+  plural for self-consistency.
+- Verified: commodity 9 / api 175 / backtest 39 / optimiser 21 green; lineage.definitions loads; ruff
+  clean; deploy_all --status 13/13 up to date; live end-to-end ALL PASS (the 2 sym-validate fails are
+  pre-existing data gaps).
 
 <!-- DECISIONS (Andre, 2026-06-25): (1) `rates` STAYS PLURAL — deferred. (2) `analytics` STAYS (mass
 noun). (3) `signals` STAYS PLURAL — the Python package CANNOT be `signal` (stdlib module collision,
