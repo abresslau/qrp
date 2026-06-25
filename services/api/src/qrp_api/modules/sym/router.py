@@ -16,11 +16,11 @@ router = APIRouter(prefix="/api/sym", tags=["sym"])
 
 
 def _gateway() -> Iterator[DbSymGateway]:
-    # sym is the core DB, opened eagerly. FX and universe each live in their OWN database; the
-    # gateway opens those lazily per-method via _fx()/_universe() (closing what it opens). This
-    # isolates sibling-DB faults: a universe- or fx-DB outage (or a broken import of either package)
-    # degrades only the endpoints that touch that DB, not all of /api/sym/* — e.g. the FX matrix no
-    # longer 500s just because the universe DB is unreachable.
+    # sym is the core DB, opened eagerly. FX, universe, and equity (prices/returns) each live in
+    # their OWN database; the gateway opens those lazily per-method via _fx()/_universe()/_equity()
+    # (closing what it opens). This isolates sibling-DB faults: a universe-, fx-, or equity-DB outage
+    # (or a broken import of any package) degrades only the endpoints that touch that DB, not all of
+    # /api/sym/* — e.g. the FX matrix no longer 500s just because the equity DB is unreachable.
     conn = connect()
     try:
         yield DbSymGateway(conn)

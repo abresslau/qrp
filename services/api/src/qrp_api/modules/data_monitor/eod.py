@@ -50,10 +50,12 @@ class EodMonitorGateway:
         today. This is the EOD bar: after the close you expect data through the prior session, not
         today's in-progress one. Using the trading-session calendar (prices_raw) skips weekends and
         holidays for free."""
-        return _as_date(self._scalar(
-            self._sym,
-            "SELECT max(session_date) FROM prices_raw WHERE session_date < CURRENT_DATE",
-        ))
+        # prices_raw lives in the equity DB now — open it read-only (matches the per-package dispatch).
+        with psycopg.connect(package_dsn("equity"), connect_timeout=5) as eq:
+            return _as_date(self._scalar(
+                eq,
+                "SELECT max(session_date) FROM prices_raw WHERE session_date < CURRENT_DATE",
+            ))
 
     def _coverage_session(
         self, conn: psycopg.Connection, ds: Dataset
@@ -345,15 +347,15 @@ class EodMonitorGateway:
 
         with u_connect() as u:  # the universe registry lives in the universe DB now
             universes = self._scalar(u, "SELECT count(*) FROM universe")
-        priced = self._scalar(
-            c,
-            "SELECT count(*) FROM securities s WHERE EXISTS "
-            "(SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi)",
-        )
-        row = c.execute(
-            "SELECT run_id, mode, status, started_at, finished_at, rows_written "
-            "FROM pipeline_run_log ORDER BY started_at DESC NULLS LAST LIMIT 1"
-        ).fetchone()
+        # prices_raw + pipeline_run_log live in the equity DB now (priced = securities with any
+        # price = distinct figis in prices_raw, since composite_figi -> securities). Open equity
+        # read-only for both.
+        with psycopg.connect(package_dsn("equity"), connect_timeout=5) as eq:
+            priced = self._scalar(eq, "SELECT count(DISTINCT composite_figi) FROM prices_raw")
+            row = eq.execute(
+                "SELECT run_id, mode, status, started_at, finished_at, rows_written "
+                "FROM pipeline_run_log ORDER BY started_at DESC NULLS LAST LIMIT 1"
+            ).fetchone()
         last_run = (
             {
                 "run_id": str(row[0]),

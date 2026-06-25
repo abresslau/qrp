@@ -56,6 +56,15 @@ UNIVERSE_RELATIONS = {
     "universe_membership", "universe_monitor_log", "universe_accuracy_check",
 }
 
+# Relations that moved to the `equity` peer package + its own database — consumers
+# (analytics/portfolios/backtest/signals/optimiser) read them as a peer DB (over an equity
+# connection), so they are a KNOWN vocabulary, not a sym read.
+EQUITY_RELATIONS = {
+    "prices_raw", "corporate_actions", "price_gaps", "prices_review",
+    "pipeline_backfill_progress", "pipeline_run_log", "fact_returns",
+    "fact_price_extremes", "v_prices_adjusted",
+}
+
 # SYM_READ_SURFACE + SYM_INTERNAL_RELATIONS are imported from qrp_api.sym_contract — the
 # single source shared with the qrp_readonly role provisioner (Story QH.3). Extend the
 # surface THERE, deliberately.
@@ -160,7 +169,8 @@ def test_consumer_sym_reads_are_within_the_vocabulary():
     # so silently widening the contract requires editing THIS file. House-style
     # (UPPERCASE) keywords only: a lowercase unknown-name read is the guard's stated
     # blind spot (lowercase KNOWN names are still caught by the allowlist above).
-    known = SYM_READ_SURFACE | SYM_INTERNAL_RELATIONS | ALL_PACKAGE_SCHEMAS | UNIVERSE_RELATIONS
+    known = (SYM_READ_SURFACE | SYM_INTERNAL_RELATIONS | ALL_PACKAGE_SCHEMAS
+             | UNIVERSE_RELATIONS | EQUITY_RELATIONS)
     unknown: list[str] = []
     for pkg in CONSUMER_PACKAGES:
         for src in _consumer_sources(pkg):

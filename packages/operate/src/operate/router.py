@@ -176,17 +176,17 @@ async def job_event_stream(request: Request, limit: int) -> AsyncIterator[str]:
 
 @router.get("/history", response_model=list[RunHistoryRow])
 def pipeline_history(limit: int = Query(default=50, ge=1, le=500)) -> list[dict]:
-    """Recent sym pipeline runs (FR-6) with qrp-job correlation via triggered_by."""
+    """Recent equity pipeline runs (FR-6) with qrp-job correlation via triggered_by."""
     try:
-        conn = connect("sym")
+        conn = connect("equity")  # pipeline_run_log moved to the equity DB
     except psycopg.OperationalError as exc:
-        raise HTTPException(status_code=503, detail=f"sym database unreachable: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"equity database unreachable: {exc}") from exc
     try:
         return run_history(conn, limit)
     except psycopg.Error as exc:
         # Mid-query failures (disconnect, missing column on a pre-migration DB)
         # degrade to the same honest 503, never a raw 500.
-        raise HTTPException(status_code=503, detail=f"sym run log unavailable: {exc}") from exc
+        raise HTTPException(status_code=503, detail=f"equity run log unavailable: {exc}") from exc
     finally:
         conn.close()
 

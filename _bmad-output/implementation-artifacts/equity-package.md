@@ -164,4 +164,38 @@ Python merge.
 - Full `sym load`/`recompute` CLI removal — keep `sym` as the orchestration entry (mirrors `sym fx`).
 
 ## Dev Agent Record
-(filled during execution)
+
+### Key decisions / deviations (recorded during dev, 2026-06-25)
+1. **equity DB uses the `public` schema** (not an `equity.` schema like fx/rates) — the engine modules
+   moved verbatim from sym keep unqualified table names, the lowest-churn split for the largest table
+   set. Documented in `equity/db.py` + sqitch.conf.
+2. **No circular dep to invert** (unlike universe): the only `equity → sym` code import was
+   `returns/loader.py`'s `current_calendar_version` — inlined as a 1-line query reading the injected
+   sym_conn. equity is now sym-import-free (guard clean); engine entry points take `(equity_conn,
+   sym_conn)` (fx's restate pattern). One-way `sym → equity`.
+3. **Index facts stay in sym** (deliberate scope): index_levels/fact_index_returns/fact_index_extremes/
+   universe_benchmark ride the `sym_id` bridge; `return_window` is duplicated (master in sym for the
+   index facts, seeded copy in equity for fact_returns) — 28 static rows.
+4. **Latent universe-extraction bug fixed in passing**: `optimiser._select_names` did a
+   `securities × universe_membership` single-query join on the sym conn — broken since the universe
+   extraction dropped universe_membership from sym. Rewritten as roster-fetch (universe + sym caps).
+5. **API gateway single-query cross-DB joins split** (universe_coverage, heatmap, securities
+   gap-filters + enrichment) into per-DB reads + Python merge on composite_figi. Single-figi reads
+   (security_detail/prices) + the data_monitor + analytics/portfolios just route the moved-table
+   reads to an injected/lazy equity connection. live_heatmap is sym-only (live quotes).
+
+### Phase status (2026-06-25)
+- [x] **P1 — Scaffold + equity DB** (commit): package + own `equity` DB, Sqitch trio (equity_schema +
+  seed_reference: currency + return_window), deploy_all registry, workspace + sym dep. Created+deployed.
+- [x] **P2 — Move the engine** (commit): returns/ingest/sources → equity; inlined calendar query;
+  `(equity_conn, sym_conn)` threading; 112 equity tests green; sym-import-free.
+- [x] **P3 — Rewire sym orchestration/consumers** (commit): cli/eod/universe-ingest/fundamentals/
+  marketcap/restate/validate cross-DB; 529 sym tests green.
+- [x] **P4a/b/c — Rewire external consumers** (commits): backtest/signals/optimiser/lineage (39/14/21
+  green); analytics/portfolios gateways; api sym gateway (all 5 join methods) + router + data_monitor +
+  sym_contract. Syntax/import-clean.
+- [~] **P5 — Migrate data**: prices_raw (13.5M), corporate_actions (128k), price_gaps, backfill_progress
+  done; fact_returns (15.9M) + extremes + prices_review + run_log resuming (idempotent script).
+- [ ] **P6 — Verify**: api suite + deploy_all + lineage + live behavior (pending P5).
+- [ ] **P7 — Drop from sym**: STAGED, not executed (the destructive last step) — pending Andre's review
+  of the branch. Until then sym retains a frozen copy (no consumer reads it; all read equity).

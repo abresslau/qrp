@@ -167,10 +167,12 @@ class DbSymGateway:
         conn: psycopg.Connection,
         fx_conn: psycopg.Connection | None = None,
         universe_conn: psycopg.Connection | None = None,
+        equity_conn: psycopg.Connection | None = None,
     ) -> None:
-        self._conn = conn          # the sym database
+        self._conn = conn          # the sym database (identity/reference/classification)
         self._fx_conn = fx_conn    # the fx database (FX lives in its own DB now); see _fx()
         self._universe_conn = universe_conn  # the universe database (membership); see _universe()
+        self._equity_conn = equity_conn  # the equity database (prices/returns); see _equity()
 
     def _fx(self) -> tuple[psycopg.Connection, bool]:
         """The fx-DB connection for the FX-matrix reads: the injected one (lifecycle owned by the
@@ -191,6 +193,17 @@ class DbSymGateway:
         from universe.db import connect as u_connect
 
         return u_connect(), True
+
+    def _equity(self) -> tuple[psycopg.Connection, bool]:
+        """The equity-DB connection for price/returns reads (the injected one, else freshly opened).
+
+        Returns ``(conn, should_close)`` — prices_raw/fact_returns/v_prices_adjusted/extremes live in
+        the equity package's own database now."""
+        if self._equity_conn is not None:
+            return self._equity_conn, False
+        from equity.db import connect as eq_connect
+
+        return eq_connect(), True
 
     def healthy(self) -> bool:
         try:
@@ -227,50 +240,64 @@ class DbSymGateway:
         Returns/fundamentals: returns restricted to ONE window_id (fact_returns has ~28 per
         figi/date); fundamentals judged on a wider window (low cadence — quarterly)."""
         c = self._conn
-        latest = _scalar(c, "SELECT max(session_date) FROM prices_raw")
-        if latest is None:
-            return []
-        one_win = _scalar(c, "SELECT min(window_id) FROM return_window")
-        # 1. resolved-member roster + universe names from the universe DB.
-        u, uclose = self._universe()
+        eq, eqclose = self._equity()
         try:
-            members = u.execute(
-                """
-                SELECT m.universe_id, u.name, m.composite_figi
-                  FROM universe_member_resolution m
-                  JOIN universe u ON u.universe_id = m.universe_id
-                 WHERE m.resolution_status = 'resolved' AND m.composite_figi IS NOT NULL
-                """
-            ).fetchall()
+            latest = _scalar(eq, "SELECT max(session_date) FROM prices_raw")
+            if latest is None:
+                return []
+            one_win = _scalar(eq, "SELECT min(window_id) FROM return_window")
+            # 1. resolved-member roster + universe names from the universe DB.
+            u, uclose = self._universe()
+            try:
+                members = u.execute(
+                    """
+                    SELECT m.universe_id, u.name, m.composite_figi
+                      FROM universe_member_resolution m
+                      JOIN universe u ON u.universe_id = m.universe_id
+                     WHERE m.resolution_status = 'resolved' AND m.composite_figi IS NOT NULL
+                    """
+                ).fetchall()
+            finally:
+                if uclose:
+                    u.close()
+            figis = list({figi for _u, _n, figi in members})
+            # 2. per-figi recency facts — prices/returns from the EQUITY DB, status/fundamentals from
+            #    sym, merged in Python by the roster list (no cross-DB join). Index-bounded per-figi
+            #    max() over a recent window (no full-table scan).
+            facts: dict[str, tuple] = {}
+            if figis:
+                pxd_by = dict(
+                    eq.execute(
+                        "SELECT composite_figi, max(session_date) FROM prices_raw "
+                        "WHERE session_date >= %(latest)s - 14 AND composite_figi = ANY(%(f)s) "
+                        "GROUP BY composite_figi",
+                        {"latest": latest, "f": figis},
+                    ).fetchall()
+                )
+                rtd_by = dict(
+                    eq.execute(
+                        "SELECT composite_figi, max(as_of_date) FROM fact_returns "
+                        "WHERE window_id = %(w)s AND as_of_date >= %(latest)s - 14 "
+                        "AND composite_figi = ANY(%(f)s) GROUP BY composite_figi",
+                        {"latest": latest, "w": one_win, "f": figis},
+                    ).fetchall()
+                )
+                for figi, status, fnd in c.execute(
+                    """
+                    WITH fn AS (SELECT composite_figi, max(as_of_date) d FROM fundamentals
+                                 WHERE as_of_date >= %(latest)s - 180 AND composite_figi = ANY(%(f)s)
+                                 GROUP BY composite_figi)
+                    SELECT s.composite_figi, s.status, fn.d
+                      FROM securities s
+                      LEFT JOIN fn USING (composite_figi)
+                     WHERE s.composite_figi = ANY(%(f)s)
+                    """,
+                    {"latest": latest, "f": figis},
+                ).fetchall():
+                    facts[figi] = (status, pxd_by.get(figi), rtd_by.get(figi), fnd)
         finally:
-            if uclose:
-                u.close()
-        figis = list({figi for _u, _n, figi in members})
-        # 2. per-figi sym facts (status + recency of prices/returns/fundamentals), filtered by the
-        #    roster list — index-bounded per-figi max() over a recent window (no full-table scan).
-        facts: dict[str, tuple] = {}
-        if figis:
-            for figi, status, pxd, rtd, fnd in c.execute(
-                """
-                WITH px AS (SELECT composite_figi, max(session_date) d FROM prices_raw
-                             WHERE session_date >= %(latest)s - 14 AND composite_figi = ANY(%(f)s)
-                             GROUP BY composite_figi),
-                rt AS (SELECT composite_figi, max(as_of_date) d FROM fact_returns
-                        WHERE window_id = %(w)s AND as_of_date >= %(latest)s - 14
-                          AND composite_figi = ANY(%(f)s) GROUP BY composite_figi),
-                fn AS (SELECT composite_figi, max(as_of_date) d FROM fundamentals
-                        WHERE as_of_date >= %(latest)s - 180 AND composite_figi = ANY(%(f)s)
-                        GROUP BY composite_figi)
-                SELECT s.composite_figi, s.status, px.d, rt.d, fn.d
-                  FROM securities s
-                  LEFT JOIN px USING (composite_figi)
-                  LEFT JOIN rt USING (composite_figi)
-                  LEFT JOIN fn USING (composite_figi)
-                 WHERE s.composite_figi = ANY(%(f)s)
-                """,
-                {"latest": latest, "w": one_win, "f": figis},
-            ).fetchall():
-                facts[figi] = (status, pxd, rtd, fnd)
+            if eqclose:
+                eq.close()
         # 3. aggregate per universe in Python (member not in securities → excluded, INNER-JOIN parity).
         from collections import defaultdict
 
@@ -398,6 +425,28 @@ class DbSymGateway:
             raise ValueError(f"unknown return window {window_code!r}")
         window_id, window = wrow
 
+        # Latest close + window return per figi come from the EQUITY DB now — fetch as small
+        # per-figi maps (roster-scoped) and splice into the sym identity rows (no cross-DB join).
+        eq, eqclose = self._equity()
+        try:
+            price_by = dict(
+                eq.execute(
+                    "SELECT DISTINCT ON (composite_figi) composite_figi, close FROM prices_raw "
+                    "WHERE composite_figi = ANY(%s) ORDER BY composite_figi, session_date DESC",
+                    (roster,),
+                ).fetchall()
+            )
+            ret_by = dict(
+                eq.execute(
+                    "SELECT DISTINCT ON (composite_figi) composite_figi, pr FROM fact_returns "
+                    "WHERE composite_figi = ANY(%s) AND window_id = %s "
+                    "ORDER BY composite_figi, as_of_date DESC",
+                    (roster, window_id),
+                ).fetchall()
+            )
+        finally:
+            if eqclose:
+                eq.close()
         rows = c.execute(
             """
             SELECT s.composite_figi AS figi,
@@ -408,8 +457,6 @@ class DbSymGateway:
                    f.market_cap_usd,
                    f.market_cap_lcy,
                    f.currency_code,
-                   px.close AS price,
-                   fr.pr AS ret,
                    isin.symbol_value AS isin
               FROM securities s
               LEFT JOIN LATERAL (
@@ -417,16 +464,6 @@ class DbSymGateway:
                    WHERE f2.composite_figi = s.composite_figi AND f2.market_cap_usd IS NOT NULL
                    ORDER BY as_of_date DESC LIMIT 1
               ) f ON TRUE
-              LEFT JOIN LATERAL (
-                  SELECT close FROM prices_raw p2
-                   WHERE p2.composite_figi = s.composite_figi
-                   ORDER BY session_date DESC LIMIT 1
-              ) px ON TRUE
-              LEFT JOIN LATERAL (
-                  SELECT pr FROM fact_returns x
-                   WHERE x.composite_figi = s.composite_figi AND x.window_id = %s
-                   ORDER BY as_of_date DESC LIMIT 1
-              ) fr ON TRUE
               LEFT JOIN LATERAL (
                   SELECT sector_name, industry_name FROM gics_scd g2
                    WHERE g2.composite_figi = s.composite_figi
@@ -449,7 +486,7 @@ class DbSymGateway:
               ) isin ON TRUE
              WHERE s.composite_figi = ANY(%s)
             """,
-            (window_id, roster),
+            (roster,),
         ).fetchall()
 
         # Collapse share classes to one tile per issuer (ISIN CUSIP-issuer prefix, chars 3-8;
@@ -459,11 +496,13 @@ class DbSymGateway:
         groups: dict[str, dict] = {}
         missing_mcap = 0
         with_mcap = 0
-        for figi, ticker, name, sector, industry, mcap, mcap_lcy, currency, price, ret, isin in rows:
+        for figi, ticker, name, sector, industry, mcap, mcap_lcy, currency, isin in rows:
             if mcap is None:
                 missing_mcap += 1
                 continue
             with_mcap += 1
+            price = price_by.get(figi)
+            ret = ret_by.get(figi)
             issuer = isin[2:8] if isin and len(isin) >= 8 else f"figi:{figi}"
             cell = {
                 "ticker": ticker,
@@ -698,22 +737,40 @@ class DbSymGateway:
             params.append(roster)
         # Gap drill-down (only within a universe): members NOT covered in a layer — the inverse
         # of the coverage "covered" test, using the SAME cutoffs so it matches the pill count.
+        # prices/returns gaps are now cross-DB: roster-fetch the COVERED figis from the equity DB,
+        # then restrict to the roster's uncovered remainder (no cross-DB NOT EXISTS). fundamentals
+        # stays a sym NOT EXISTS (fundamentals is a sym table).
         if gap and universe:
-            latest = _scalar(c, "SELECT max(session_date) FROM prices_raw")
-            if gap == "prices":
-                conds.append(
-                    "NOT EXISTS (SELECT 1 FROM prices_raw p WHERE p.composite_figi = s.composite_figi "
-                    "AND p.session_date >= %s - 7)"
-                )
-                params.append(latest)
-            elif gap == "returns":
-                one_win = _scalar(c, "SELECT min(window_id) FROM return_window")
-                conds.append(
-                    "NOT EXISTS (SELECT 1 FROM fact_returns fr WHERE fr.composite_figi = s.composite_figi "
-                    "AND fr.window_id = %s AND fr.as_of_date >= %s - 7)"
-                )
-                params += [one_win, latest]
+            if gap in ("prices", "returns"):
+                eq, eqclose = self._equity()
+                try:
+                    latest = _scalar(eq, "SELECT max(session_date) FROM prices_raw")
+                    if gap == "prices":
+                        covered = {
+                            r[0] for r in eq.execute(
+                                "SELECT DISTINCT composite_figi FROM prices_raw "
+                                "WHERE composite_figi = ANY(%s) AND session_date >= %s - 7",
+                                (roster, latest),
+                            ).fetchall()
+                        }
+                    else:
+                        one_win = _scalar(eq, "SELECT min(window_id) FROM return_window")
+                        covered = {
+                            r[0] for r in eq.execute(
+                                "SELECT DISTINCT composite_figi FROM fact_returns "
+                                "WHERE composite_figi = ANY(%s) AND window_id = %s "
+                                "AND as_of_date >= %s - 7",
+                                (roster, one_win, latest),
+                            ).fetchall()
+                        }
+                finally:
+                    if eqclose:
+                        eq.close()
+                uncovered = [f for f in roster if f not in covered]
+                conds.append("s.composite_figi = ANY(%s)")
+                params.append(uncovered)
             elif gap == "fundamentals":
+                latest = _scalar(c, "SELECT max(as_of_date) FROM fundamentals")
                 conds.append(
                     "NOT EXISTS (SELECT 1 FROM fundamentals f WHERE f.composite_figi = s.composite_figi "
                     "AND f.as_of_date >= %s - 180)"
@@ -731,16 +788,10 @@ class DbSymGateway:
             SELECT s.composite_figi,
                    coalesce(tk.symbol_value, s.composite_figi) AS ticker,
                    sn.name, s.mic, s.currency_code, s.status,
-                   px.close, px.volume, px.session_date,
                    fu.market_cap_usd, ex.country, ex.country_iso, gx.sector_name,
                    ex.exch_code, ex.bbg_exchange_code
             {self._SEC_FROM}
             LEFT JOIN exchange ex ON ex.mic = s.mic
-            LEFT JOIN LATERAL (
-                SELECT close, volume, session_date FROM prices_raw p
-                 WHERE p.composite_figi = s.composite_figi
-                 ORDER BY p.session_date DESC LIMIT 1
-            ) px ON TRUE
             LEFT JOIN LATERAL (
                 SELECT market_cap_usd FROM fundamentals f
                  WHERE f.composite_figi = s.composite_figi
@@ -757,34 +808,48 @@ class DbSymGateway:
             """,
             [*params, limit, offset],
         ).fetchall()
+        # Latest price/volume/session for the LIMITed page — from the equity DB, scoped to the page
+        # figis (cross-DB roster-fetch, no join).
+        page_figis = [r[0] for r in rows]
+        px_by: dict[str, tuple] = {}
+        if page_figis:
+            eq, eqclose = self._equity()
+            try:
+                px_by = {
+                    r[0]: (r[1], r[2], r[3])
+                    for r in eq.execute(
+                        "SELECT DISTINCT ON (composite_figi) composite_figi, close, volume, "
+                        "session_date FROM prices_raw WHERE composite_figi = ANY(%s) "
+                        "ORDER BY composite_figi, session_date DESC",
+                        (page_figis,),
+                    ).fetchall()
+                }
+            finally:
+                if eqclose:
+                    eq.close()
+
+        def _row(figi, ticker, name, mic, currency, status, mcap, country,
+                 country_iso, sector, exch_code, bbg_exchange_code):
+            close, volume, session_date = px_by.get(figi, (None, None, None))
+            return {
+                "figi": figi, "ticker": ticker, "name": name, "mic": mic,
+                "currency": currency, "status": status,
+                "price": float(close) if close is not None else None,
+                "volume": int(volume) if volume is not None else None,
+                "session_date": session_date.isoformat() if session_date else None,
+                "market_cap_usd": float(mcap) if mcap is not None else None,
+                "country": country,
+                "country_iso": country_iso,  # FactSet region (ADS-DE)
+                "sector": sector,
+                "exch_code": exch_code,  # Bloomberg composite/region (ADS GR)
+                "bbg_exchange_code": bbg_exchange_code,  # Bloomberg primary venue (ADS GY)
+            }
+
         return {
             "total": total,
             "limit": limit,
             "offset": offset,
-            "rows": [
-                {
-                    "figi": figi,
-                    "ticker": ticker,
-                    "name": name,
-                    "mic": mic,
-                    "currency": currency,
-                    "status": status,
-                    "price": float(close) if close is not None else None,
-                    "volume": int(volume) if volume is not None else None,
-                    "session_date": session_date.isoformat() if session_date else None,
-                    "market_cap_usd": float(mcap) if mcap is not None else None,
-                    "country": country,
-                    "country_iso": country_iso,  # FactSet region (ADS-DE)
-                    "sector": sector,
-                    "exch_code": exch_code,  # Bloomberg composite/region (ADS GR)
-                    "bbg_exchange_code": bbg_exchange_code,  # Bloomberg primary venue (ADS GY)
-                }
-                for (
-                    figi, ticker, name, mic, currency, status,
-                    close, volume, session_date, mcap, country, country_iso, sector,
-                    exch_code, bbg_exchange_code,
-                ) in rows
-            ],
+            "rows": [_row(*r) for r in rows],
         }
 
     def quotes(self, figis: list[str], *, now: float | None = None) -> list[dict]:
@@ -902,25 +967,32 @@ class DbSymGateway:
             "SELECT country, country_iso, exch_code, bbg_exchange_code FROM exchange WHERE mic = %s",
             (master[1],),
         ).fetchone()
-        px = c.execute(
-            "SELECT close, volume, session_date FROM prices_raw WHERE composite_figi = %s "
-            "ORDER BY session_date DESC LIMIT 1",
-            (figi,),
-        ).fetchone()
         fund = c.execute(
             "SELECT market_cap_lcy, market_cap_usd, shares_outstanding, currency_code, as_of_date "
             "FROM fundamentals WHERE composite_figi = %s ORDER BY as_of_date DESC LIMIT 1",
             (figi,),
         ).fetchone()
-        rets = c.execute(
-            """
-            SELECT DISTINCT ON (fr.window_id) fr.window_id, w.code, w.label, fr.pr, fr.tr, fr.as_of_date
-              FROM fact_returns fr JOIN return_window w USING (window_id)
-             WHERE fr.composite_figi = %s
-             ORDER BY fr.window_id, fr.as_of_date DESC
-            """,
-            (figi,),
-        ).fetchall()
+        # Price + returns live in the equity DB now (single-figi reads).
+        eq, eqclose = self._equity()
+        try:
+            px = eq.execute(
+                "SELECT close, volume, session_date FROM prices_raw WHERE composite_figi = %s "
+                "ORDER BY session_date DESC LIMIT 1",
+                (figi,),
+            ).fetchone()
+            rets = eq.execute(
+                """
+                SELECT DISTINCT ON (fr.window_id)
+                       fr.window_id, w.code, w.label, fr.pr, fr.tr, fr.as_of_date
+                  FROM fact_returns fr JOIN return_window w USING (window_id)
+                 WHERE fr.composite_figi = %s
+                 ORDER BY fr.window_id, fr.as_of_date DESC
+                """,
+                (figi,),
+            ).fetchall()
+        finally:
+            if eqclose:
+                eq.close()
         return {
             "figi": master[0],
             "ticker": ticker or master[0],
@@ -978,16 +1050,21 @@ class DbSymGateway:
         candle), most-recent `days` calendar days, oldest-first. Index-bounded by
         session_date + composite_figi (rides the prices_raw PK) — bounded scan, not a
         full-table read."""
-        rows = self._conn.execute(
-            """
-            SELECT session_date, open, high, low, close, volume FROM prices_raw
-             WHERE composite_figi = %s
-               AND session_date >= (SELECT max(session_date) FROM prices_raw
-                                     WHERE composite_figi = %s) - %s
-             ORDER BY session_date
-            """,
-            (figi, figi, days),
-        ).fetchall()
+        eq, eqclose = self._equity()
+        try:
+            rows = eq.execute(
+                """
+                SELECT session_date, open, high, low, close, volume FROM prices_raw
+                 WHERE composite_figi = %s
+                   AND session_date >= (SELECT max(session_date) FROM prices_raw
+                                         WHERE composite_figi = %s) - %s
+                 ORDER BY session_date
+                """,
+                (figi, figi, days),
+            ).fetchall()
+        finally:
+            if eqclose:
+                eq.close()
         return [
             {
                 "session_date": d.isoformat(),
@@ -1008,19 +1085,34 @@ class DbSymGateway:
             "SELECT review_id, source_key, source_input, status, created_at "
             "FROM securities_review_queue ORDER BY created_at DESC LIMIT 200"
         ).fetchall()
-        gaps_total = c.execute("SELECT count(*) FROM price_gaps").fetchone()[0]
-        gaps_recent = c.execute(
-            """
-            SELECT pg.composite_figi, tk.symbol_value, pg.session_date, pg.source, pg.detected_at
-              FROM price_gaps pg
-              LEFT JOIN LATERAL (
-                  SELECT symbol_value FROM security_symbology y
-                   WHERE y.composite_figi = pg.composite_figi AND y.symbol_type = 'ticker'
-                   ORDER BY (y.valid_to IS NULL) DESC, y.valid_from DESC LIMIT 1
-              ) tk ON TRUE
-             ORDER BY pg.detected_at DESC LIMIT 30
-            """
-        ).fetchall()
+        # price_gaps lives in the equity DB now — fetch the recent gaps there, then resolve tickers
+        # from sym for just those figis (cross-DB roster-fetch, no join).
+        eq, eqclose = self._equity()
+        try:
+            gaps_total = eq.execute("SELECT count(*) FROM price_gaps").fetchone()[0]
+            gap_rows = eq.execute(
+                "SELECT composite_figi, session_date, source, detected_at FROM price_gaps "
+                "ORDER BY detected_at DESC LIMIT 30"
+            ).fetchall()
+        finally:
+            if eqclose:
+                eq.close()
+        gap_figis = [r[0] for r in gap_rows]
+        ticker_by = {
+            r[0]: r[1]
+            for r in c.execute(
+                """
+                SELECT DISTINCT ON (composite_figi) composite_figi, symbol_value
+                  FROM security_symbology
+                 WHERE composite_figi = ANY(%s) AND symbol_type = 'ticker'
+                 ORDER BY composite_figi, (valid_to IS NULL) DESC, valid_from DESC
+                """,
+                (gap_figis,),
+            ).fetchall()
+        } if gap_figis else {}
+        gaps_recent = [
+            (figi, ticker_by.get(figi), sd, src, da) for figi, sd, src, da in gap_rows
+        ]
         u, uclose = self._universe()  # membership proposals live in the universe DB
         try:
             props = u.execute(
