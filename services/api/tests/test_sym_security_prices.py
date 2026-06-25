@@ -36,7 +36,7 @@ _ROWS = [
 
 
 def test_security_prices_maps_ohlcv_oldest_first():
-    out = DbSymGateway(_Conn(_ROWS)).security_prices("F1", days=90)
+    out = DbSymGateway(_Conn(_ROWS), equity_conn=_Conn(_ROWS)).security_prices("F1", days=90)
     assert [b["session_date"] for b in out] == ["2026-06-16", "2026-06-17", "2026-06-18"]
     assert out[0] == {
         "session_date": "2026-06-16",
@@ -52,7 +52,7 @@ def test_security_prices_maps_ohlcv_oldest_first():
 
 def test_security_prices_is_index_bounded():
     conn = _Conn(_ROWS)
-    DbSymGateway(conn).security_prices("F1", days=30)
+    DbSymGateway(conn, equity_conn=conn).security_prices("F1", days=30)
     sql = conn.seen[0].lower()
     assert "from prices_raw" in sql
     assert "composite_figi = %s" in sql  # rides the PK, per-figi

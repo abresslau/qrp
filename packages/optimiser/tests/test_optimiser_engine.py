@@ -155,19 +155,21 @@ def test_shrinkage_grows_when_data_is_scarcer():
 
 def test_solve_rejects_unknown_cov_method():
     sym, opt = _RoutedConn(), _RoutedConn()
-    assert "unknown cov_method" in solve(sym, opt, u_conn=sym, eq_conn=sym, cov_method="kalman")["error"]
+    assert "unknown cov_method" in solve(
+        sym, opt, u_conn=sym, eq_conn=sym, cov_method="kalman"
+    )["error"]
 
 
 def test_solve_shrinkage_is_the_default_and_is_recorded(monkeypatch):
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
     opt = _RoutedConn([("INSERT INTO optimiser.solution", _Cur(one=(77,)))])
-    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200)  # no cov_method given → default
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200)  # default cov_method
     assert out.get("solution_id") == 77, out.get("error")
     assert out["spec"]["cov_method"] == "shrinkage"
     assert out["summary"]["shrink_delta"] is not None
@@ -238,7 +240,7 @@ def test_solve_holdout_split_excludes_tail_from_training_and_scores_it(monkeypat
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -270,13 +272,13 @@ def test_solve_persists_the_full_spec_to_sql():
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
     opt = _RoutedConn([("INSERT INTO optimiser.solution", _Cur(one=(7,)))])
-    out = solve(sym, opt, u_conn=sym, eq_conn=sym, universe_id="sp500", method="min_variance", n=6, lookback=200,
-                max_weight=0.3)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, universe_id="sp500", method="min_variance",
+                n=6, lookback=200, max_weight=0.3)
     assert out.get("solution_id") == 7, out.get("error")
     insert = next(p for sql, p in opt.calls
                   if not isinstance(p, tuple) or "INSERT INTO optimiser.solution" in sql)
@@ -293,11 +295,12 @@ def test_solve_holdout_too_large_is_a_named_error():
     figis, ret_rows = _market_fixture(n_days=80)
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
     ])
     opt = _RoutedConn()
-    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200, holdout_days=70)  # 80 - 70 < 30
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, n=6, lookback=200,
+                holdout_days=70)  # 80 - 70 < 30
     assert "leaves <30 training days" in out["error"]
 
 
@@ -305,7 +308,7 @@ def test_solve_saves_portfolio_via_the_owning_writer(monkeypatch):
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -341,7 +344,7 @@ def test_cap_revalidated_against_surviving_names(monkeypatch):
     figis, ret_rows = _market_fixture(n_names=6)
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
     ])
     opt = _RoutedConn()
@@ -355,7 +358,7 @@ def test_tilt_that_cannot_apply_is_an_error_not_a_silent_noop(monkeypatch):
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
     ])
     opt = _RoutedConn()
@@ -371,7 +374,7 @@ def test_save_portfolio_failure_is_attributed_not_fatal():
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])
@@ -391,7 +394,7 @@ def test_saved_portfolio_weights_are_renormalised():
     figis, ret_rows = _market_fixture()
     sym = _RoutedConn([
         ("universe_membership", _Cur(rows=[(f,) for f in figis])),
-        ("fundamentals", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
         ("fact_returns", _Cur(rows=ret_rows)),
         ("security_symbology", _Cur(rows=[])),
     ])

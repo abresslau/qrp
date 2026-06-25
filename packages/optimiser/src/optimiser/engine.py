@@ -58,21 +58,19 @@ def _select_names(u_conn, sym_conn, universe_id: str, n: int) -> list[str]:
     ]
     if not roster:
         return []
+    # Latest market cap per roster member (sym fundamentals), then top-n by cap in Python — a
+    # roster-bounded ANY(...) read (no set-returning-function scan, no cross-DB join).
     caps = sym_conn.execute(
         """
-        SELECT um.composite_figi, fc.market_cap_usd
-          FROM unnest(%s::char(12)[]) AS um(composite_figi)
-          JOIN LATERAL (
-              SELECT market_cap_usd FROM fundamentals f
-               WHERE f.composite_figi = um.composite_figi AND f.market_cap_usd IS NOT NULL
-               ORDER BY f.as_of_date DESC LIMIT 1
-          ) fc ON TRUE
-         ORDER BY fc.market_cap_usd DESC
-         LIMIT %s
+        SELECT DISTINCT ON (composite_figi) composite_figi, market_cap_usd
+          FROM fundamentals
+         WHERE composite_figi = ANY(%s) AND market_cap_usd IS NOT NULL
+         ORDER BY composite_figi, as_of_date DESC
         """,
-        (roster, n),
+        (roster,),
     ).fetchall()
-    return [r[0] for r in caps]
+    caps.sort(key=lambda r: r[1], reverse=True)
+    return [r[0] for r in caps[:n]]
 
 
 def _return_matrix(

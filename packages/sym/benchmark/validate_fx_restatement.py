@@ -23,13 +23,13 @@ import argparse
 import bisect
 from datetime import date
 
+from equity.returns.windows import BY_CODE, base_date
 from fx.convert import convert
 from fx.db import connect as fx_connect
 
 from sym.config import load_dotenv
 from sym.db import connect
 from sym.fx.restate import restate_return
-from equity.returns.windows import BY_CODE, base_date
 
 DEFAULT_WINDOWS = ["YTD", "1Y", "3Y", "5Y", "10Y"]
 TOLERANCE_PP = 1.5  # percentage points; residual above this is worth investigating
