@@ -11,7 +11,6 @@ Run:  uv run python tools/migrate_equity_data.py
 
 from __future__ import annotations
 
-import io
 import sys
 
 from equity.db import connect as eq_connect
@@ -53,25 +52,24 @@ def main() -> int:
         src_n = _count(sym, table)
         dst_n = _count(eq, table)
         if dst_n and dst_n == src_n:
-            print(f"{table}: equity already has {dst_n:,} (== sym) — skip")
+            print(f"{table}: equity already has {dst_n:,} (== sym) — skip", flush=True)
             continue
         with eq.cursor() as cur:
             cur.execute(f"TRUNCATE {table} CASCADE")  # noqa: S608 (static list)
-        # COPY FROM loads a GENERATED ALWAYS identity column (run_id) directly — no OVERRIDING needed
-        # (that clause is an INSERT-only modifier and is a syntax error on COPY).
-        buf = io.BytesIO()
-        with sym.cursor() as scur, scur.copy(f"COPY {table} TO STDOUT (FORMAT binary)") as cp:
-            for data in cp:
-                buf.write(data)
-        buf.seek(0)
-        with eq.cursor() as dcur, dcur.copy(
-            f"COPY {table} FROM STDIN (FORMAT binary)"  # noqa: S608 (static list)
-        ) as cp:
-            cp.write(buf.read())
+        # Stream chunk-by-chunk (interleaved read/write) — no full in-memory buffer (15.9M-row
+        # fact_returns would otherwise be GBs). COPY FROM loads a GENERATED ALWAYS identity column
+        # (run_id) directly — no OVERRIDING (that's INSERT-only; a syntax error on COPY).
+        with eq.cursor() as dcur, sym.cursor() as scur:
+            with (
+                scur.copy(f"COPY {table} TO STDOUT (FORMAT binary)") as src,  # noqa: S608
+                dcur.copy(f"COPY {table} FROM STDIN (FORMAT binary)") as dst,  # noqa: S608
+            ):
+                for chunk in src:
+                    dst.write(chunk)
         eq.commit()
         got = _count(eq, table)
         status = "OK" if got == src_n else "MISMATCH"
-        print(f"{table}: {src_n:,} -> {got:,} [{status}]")
+        print(f"{table}: {src_n:,} -> {got:,} [{status}]", flush=True)
         if got != src_n:
             print("  ABORT: row-count mismatch", file=sys.stderr)
             return 1

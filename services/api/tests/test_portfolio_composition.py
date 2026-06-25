@@ -46,12 +46,14 @@ class _SymConn:
             return _Cur(self._ext_rows)
         if "fact_returns" in sql:
             return _Cur(self._ret_rows)
-        # The meta SELECT now also returns country_iso/exch_code/bbg_exchange_code (the qualified-ticker
-        # codes). These fixtures only care about weights/returns/sectors, so right-pad each row with None
-        # for the trailing code columns rather than restate all of them. (Column-count drift is guarded by
-        # the explorer/securities + ticker unit tests; these composition tests assert logic, not shape.)
-        meta_cols = 15
-        return _Cur([tuple(r) + (None,) * (meta_cols - len(r)) if len(r) < meta_cols else r for r in self._rows])
+        if "prices_raw" in sql:
+            # equity split: latest volume/close per figi come from the equity DB now — derive from
+            # the fixture rows' volume(10)/last_close(11) columns: (figi, volume, close).
+            return _Cur([(r[0], r[10], r[11]) for r in self._rows])
+        # The meta SELECT no longer carries volume/last_close (they moved to the prices_raw query
+        # above) and ends with country_iso/exch_code/bbg_exchange_code: 13 cols. Strip the two price
+        # columns (10,11) and right-pad the three trailing code columns with None.
+        return _Cur([tuple(r[:10]) + (None, None, None) for r in self._rows])
 
 
 def _wire(monkeypatch, *, weights, exists=True):
@@ -78,7 +80,7 @@ def test_composition_assembly_signed_weight_and_sector_rollup(monkeypatch):
         }
 
     monkeypatch.setattr(quotes, "fetch_quotes_batch", fake_batch)
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH + 10)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH + 10)
 
     assert out["n_holdings"] == 2 and out["n_priced"] == 1
     assert out["total_weight"] == pytest.approx(0.8)   # |0.6| + |-0.2|
@@ -119,7 +121,7 @@ def test_composition_sector_return_is_weight_weighted(monkeypatch):
         "AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH),   # +10%
         "MSFT": RawQuote(120.0, 100.0, "USD", _EPOCH),   # +20%
     })
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     tech = next(s for s in out["sectors"] if s["sector"] == "Tech")
     # (0.6*0.10 + 0.4*0.20) / (0.6 + 0.4) = 0.14
     assert tech["live_return"] == pytest.approx(0.14)
@@ -149,7 +151,7 @@ def test_composition_window_returns_rebased_to_live(monkeypatch):
         "MSFT": RawQuote(120.0, 100.0, "USD", _EPOCH),   # priced (F3)
         # ZZZ absent -> F2 unpriced
     })
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     by = {h["figi"]: h for h in out["holdings"]}
 
     # F1 priced -> each window re-based to the live price: price*(1+pr)/last_close - 1
@@ -193,7 +195,7 @@ def test_composition_52w_range_positions_the_current_price(monkeypatch):
         "AAPL": RawQuote(125.0, 100.0, "USD", _EPOCH),  # F1 priced live at 125
         # MSFT absent -> F2 unpriced (falls back to last_close 60)
     })
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     by = {h["figi"]: h for h in out["holdings"]}
 
     # F1: live price 125 in [50, 150] -> (125-50)/100 = 0.75
@@ -217,7 +219,7 @@ def test_composition_52w_range_clamps_a_fresh_live_high(monkeypatch):
     monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {
         "AAPL": RawQuote(130.0, 100.0, "USD", _EPOCH),  # 130 > 120 high -> clamp to 1.0
     })
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     assert out["holdings"][0]["range_pct"] == pytest.approx(1.0)
 
 
@@ -241,7 +243,7 @@ def test_composition_window_returns_guard_nonfinite_base(monkeypatch):
         "MSFT": RawQuote(120.0, 100.0, "USD", _EPOCH),
         "GOOG": RawQuote(130.0, 100.0, "USD", _EPOCH),
     })
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     by = {h["figi"]: h for h in out["holdings"]}
     assert by["F1"]["window_returns"]["1M"] is None   # negative base -> null
     assert by["F2"]["window_returns"]["1M"] is None   # NaN base -> null
@@ -257,7 +259,7 @@ def test_composition_unmapped_mic_is_unavailable(monkeypatch):
     _wire(monkeypatch, weights={"F1": Decimal("1.0")})
     sym = _SymConn([("F1", "FOO", "XZZZ", "Unclassified", None, "Foo Co", None, None, None, None, None, None)])  # XZZZ unmapped
     monkeypatch.setattr(quotes, "fetch_quotes_batch", lambda s, **kw: {})
-    out = DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     assert out["n_priced"] == 0 and out["freshness"] == "unavailable"
     assert out["holdings"][0]["live_return"] is None
     assert out["holdings"][0]["freshness"] == "unavailable"
@@ -275,12 +277,12 @@ def test_composition_all_unreachable_raises(monkeypatch):
 
     monkeypatch.setattr(quotes, "fetch_quotes_batch", boom)
     with pytest.raises(QuoteSourceUnreachable):
-        DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+        DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
 
 
 def test_composition_no_weights_is_empty(monkeypatch):
     _wire(monkeypatch, weights={})
-    out = DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([])).composition(1, now=_EPOCH)
+    out = DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([]), equity_conn=_SymConn([])).composition(1, now=_EPOCH)
     assert out["n_holdings"] == 0 and out["n_priced"] == 0
     assert out["holdings"] == [] and out["sectors"] == []
     assert out["freshness"] == "unavailable" and out["total_weight"] == 0.0
@@ -290,7 +292,7 @@ def test_composition_over_cap_raises_value_error(monkeypatch):
     big = {f"F{i}": Decimal("0.001") for i in range(gw_mod.COMPOSITION_MAX + 1)}
     _wire(monkeypatch, weights=big)
     with pytest.raises(ValueError):
-        DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([])).composition(1, now=_EPOCH)
+        DbAnalyticsGateway(conn=object(), sym_conn=_SymConn([]), equity_conn=_SymConn([])).composition(1, now=_EPOCH)
 
 
 def test_composition_writes_nothing(monkeypatch):
@@ -298,7 +300,7 @@ def test_composition_writes_nothing(monkeypatch):
     sym = _SymConn([("F1", "AAPL", "XNAS", "Tech", None, "Apple", "USD", None, None, None, None, 100.0)])
     monkeypatch.setattr(quotes, "fetch_quotes_batch",
                         lambda s, **kw: {"AAPL": RawQuote(110.0, 100.0, "USD", _EPOCH)})
-    DbAnalyticsGateway(conn=object(), sym_conn=sym).composition(1, now=_EPOCH)
+    DbAnalyticsGateway(conn=object(), sym_conn=sym, equity_conn=sym).composition(1, now=_EPOCH)
     joined = " ".join(sym.seen).upper()
     assert "INSERT" not in joined and "UPDATE" not in joined and "DELETE" not in joined
 
