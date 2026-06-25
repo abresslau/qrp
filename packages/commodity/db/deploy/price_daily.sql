@@ -1,4 +1,4 @@
--- Deploy commodities:price_daily to pg
+-- Deploy commodity:price_daily to pg
 
 BEGIN;
 
@@ -6,10 +6,10 @@ BEGIN;
 -- per commodity (raw OHLCV + volume), stored verbatim; period changes / returns / vol are derived
 -- on read. Two vintages in one row: `settle` (restated latest) + `first_settle` (immutable / PIT).
 -- as_of_date = the trading date from the vendor, never the ingest date. Idempotent.
-CREATE SCHEMA IF NOT EXISTS commodities;
+CREATE SCHEMA IF NOT EXISTS commodity;
 
-CREATE TABLE IF NOT EXISTS commodities.price_daily (
-    commodity_code     TEXT        NOT NULL,   -- canonical internal code (see commodities.universe)
+CREATE TABLE IF NOT EXISTS commodity.price_daily (
+    commodity_code     TEXT        NOT NULL,   -- canonical internal code (see commodity.universe)
     series_type        TEXT        NOT NULL DEFAULT 'continuous_front',
     as_of_date         DATE        NOT NULL,   -- trading date (canonical as_of_date)
     open               NUMERIC,
@@ -29,17 +29,17 @@ CREATE TABLE IF NOT EXISTS commodities.price_daily (
 );
 
 CREATE INDEX IF NOT EXISTS idx_price_daily_code_date
-    ON commodities.price_daily (commodity_code, series_type, as_of_date);
+    ON commodity.price_daily (commodity_code, series_type, as_of_date);
 CREATE INDEX IF NOT EXISTS idx_price_daily_date
-    ON commodities.price_daily (as_of_date);
+    ON commodity.price_daily (as_of_date);
 
-COMMENT ON TABLE commodities.price_daily IS
+COMMENT ON TABLE commodity.price_daily IS
     'Daily commodity prices — Tier-A vendor continuous front-month series, stored raw (immutable '
     'first_settle + restated settle). Derive period returns / vol / continuity on read.';
 
 -- Stewardship queue: an implausible day-over-day move (when banding is enabled on load) lands here
 -- instead of in price_daily. Never a silent bad print.
-CREATE TABLE IF NOT EXISTS commodities.price_review (
+CREATE TABLE IF NOT EXISTS commodity.price_review (
     commodity_code TEXT        NOT NULL,
     series_type    TEXT        NOT NULL,
     as_of_date     DATE        NOT NULL,

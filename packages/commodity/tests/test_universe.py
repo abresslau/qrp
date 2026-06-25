@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from commodities.universe import BY_CODE, SECTORS, UNIVERSE, sector_rank
+from commodity.universe import BY_CODE, SECTORS, UNIVERSE, sector_rank
 
 
 def test_codes_unique_and_indexed():

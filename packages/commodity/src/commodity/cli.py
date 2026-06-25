@@ -1,8 +1,8 @@
 """commodities CLI — load daily commodity prices, inspect coverage, validate.
 
-  commodities price load [--start_date YYYY-MM-DD] [--end_date ...] [--codes WTI,GOLD]
-  commodities price coverage
-  commodities validate
+  commodity price load [--start_date YYYY-MM-DD] [--end_date ...] [--codes WTI,GOLD]
+  commodity price coverage
+  commodity validate
 
 Mirrors the `rates` CLI: ``load`` with no ``--start_date`` is a tail-since-latest; with one it's a
 windowed backfill. Connection uses autocommit so each per-day transaction commits durably.
@@ -81,7 +81,7 @@ def _cmd_price_coverage(args: argparse.Namespace) -> int:
         print(f"database connection failed: {exc}", file=sys.stderr)
         return 2
     if not rows:
-        print("commodities.price_daily is empty — run `commodities price load`")
+        print("commodity.price_daily is empty — run `commodity price load`")
         return 0
     for r in rows:
         print(f"  {r['code']:12} {r['sector']:16} days={r['days']:6} "
@@ -108,7 +108,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="commodities", description="QRP commodities — daily prices")
+    p = argparse.ArgumentParser(prog="commodity", description="QRP commodities — daily prices")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     price = sub.add_parser("price", help="price loads").add_subparsers(

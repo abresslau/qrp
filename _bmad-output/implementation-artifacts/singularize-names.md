@@ -2,12 +2,18 @@
 
 Status: in-progress
 
-<!-- DECISIONS (Andre, 2026-06-25): (1) `rates` STAYS PLURAL for now — deferred, out of this story.
-(2) `analytics` STAYS (mass noun). (3) Route URLs (/api/portfolios etc.) KEPT PLURAL — scope is
-"database and package names" only; the router prefix is a decoupled string, so zero frontend churn
-(singularize routes later if wanted). Rename set this story: commodities→commodity, portfolios→
-portfolio, signals→signal (package + DB + schema + sqitch project + all code refs). Branched off
-feat/equity-package (heavy file overlap with equity in signals/portfolios) → merges AFTER equity. -->>
+<!-- DECISIONS (Andre, 2026-06-25): (1) `rates` STAYS PLURAL — deferred. (2) `analytics` STAYS (mass
+noun). (3) `signals` STAYS PLURAL — the Python package CANNOT be `signal` (stdlib module collision,
+documented in its pyproject), so keep package AND DB plural for consistency (Andre: "keep signals for
+consistency"). (4) Route URLs / platform module-ids / data-monitor bucket keys / asset-class domain
+strings KEPT PLURAL — scope is "database and package names" only (decoupled from the package name;
+zero frontend churn). RENAME SET this story: **commodities→commodity, portfolios→portfolio**. (5) Andre: "all 4 — package +
+DB + schema + sqitch project — to match", so ALSO rename the sqitch %project (+ %uri) AND reconcile
+the deployed registry (`UPDATE sqitch.projects/changes/tags/events SET project=<singular>` in the
+renamed DB) so deploy/verify/status still match. Each renamed package: all four identifiers singular.
+rates/signals/analytics already have all four consistent (plural) → untouched. KEEP plural (decoupled,
+not a DB/package name): route URLs, platform module-ids, data-monitor bucket keys, asset-class domain
+strings. Branched off feat/equity-package (file overlap in portfolios) → merges AFTER equity. -->>
 
 <!-- Created via bmad-create-story 2026-06-25 (Andre: "make all database and package names singular").
 A cross-cutting naming-consistency normalization: four packages/DBs are plural and should be singular,

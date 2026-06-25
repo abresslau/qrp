@@ -1,4 +1,4 @@
-"""Read layer over ``commodities.price_daily`` — board snapshot + history. Derive-on-read.
+"""Read layer over ``commodity.price_daily`` — board snapshot + history. Derive-on-read.
 
 The board returns, per commodity, the latest settle plus period changes (1D/1W/1M/YTD/1Y) and a
 short sparkline — all computed in Python from a bounded recent window (the table is small: ~25
@@ -44,7 +44,7 @@ class DbCommoditiesGateway:
     # ---- board: one row per commodity with latest + period changes + spark -------------------
     def board(self, *, spark_n: int = 120) -> list[dict]:
         max_row = self._conn.execute(
-            "SELECT max(as_of_date) FROM commodities.price_daily WHERE series_type=%s", (SERIES,)
+            "SELECT max(as_of_date) FROM commodity.price_daily WHERE series_type=%s", (SERIES,)
         ).fetchone()
         if not max_row or max_row[0] is None:
             return []
@@ -52,7 +52,7 @@ class DbCommoditiesGateway:
         rows = self._conn.execute(
             """
             SELECT commodity_code, as_of_date, settle, volume
-              FROM commodities.price_daily
+              FROM commodity.price_daily
              WHERE series_type=%s AND as_of_date >= %s
              ORDER BY commodity_code, as_of_date
             """,
@@ -102,7 +102,7 @@ class DbCommoditiesGateway:
         cutoff: date | None = None
         if window in ("1Y", "5Y"):
             mx = self._conn.execute(
-                "SELECT max(as_of_date) FROM commodities.price_daily "
+                "SELECT max(as_of_date) FROM commodity.price_daily "
                 "WHERE commodity_code=%s AND series_type=%s",
                 (code, SERIES),
             ).fetchone()
@@ -112,7 +112,7 @@ class DbCommoditiesGateway:
         rows = self._conn.execute(
             """
             SELECT as_of_date, settle, open, high, low, volume
-              FROM commodities.price_daily
+              FROM commodity.price_daily
              WHERE commodity_code=%s AND series_type=%s
                AND (%s::date IS NULL OR as_of_date >= %s::date)
              ORDER BY as_of_date
@@ -142,7 +142,7 @@ class DbCommoditiesGateway:
             """
             SELECT commodity_code, count(*) AS days, min(as_of_date) AS first,
                    max(as_of_date) AS last, max(source) AS source
-              FROM commodities.price_daily WHERE series_type=%s
+              FROM commodity.price_daily WHERE series_type=%s
              GROUP BY commodity_code
             """,
             (SERIES,),

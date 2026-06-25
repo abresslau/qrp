@@ -13,7 +13,7 @@ from pathlib import Path
 
 import psycopg
 
-_OWN = "commodities"
+_OWN = "commodity"
 
 
 def _load_env() -> None:

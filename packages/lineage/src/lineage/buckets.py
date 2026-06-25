@@ -27,7 +27,7 @@ SYM = "sym"
 RATES = "rates"
 MACRO = "macro"
 ALTDATA = "altdata"
-COMMODITIES = "commodities"
+COMMODITIES = "commodity"
 FX = "fx"
 UNIVERSE = "universe"
 EQUITY = "equity"
@@ -88,7 +88,7 @@ BUCKETS: tuple[Bucket, ...] = (
     ),
     Bucket(
         "commodities", "Commodities", "commodity",
-        (Dataset(COMMODITIES, "commodities.price_daily", "as_of_date", "commodities.price_daily",
+        (Dataset(COMMODITIES, "commodity.price_daily", "as_of_date", "commodity.price_daily",
                  wide=True, id_column="commodity_code", count_label="commodities"),),
     ),
     Bucket(

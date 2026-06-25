@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from commodities.ingest import fill_prices
-from commodities.sources.base import PricePoint
+from commodity.ingest import fill_prices
+from commodity.sources.base import PricePoint
 
 
 class _Txn:
@@ -37,7 +37,7 @@ class _Conn:
         return _Txn()
 
     def execute(self, sql, params=None):
-        if "INSERT INTO commodities.price_daily" in sql:
+        if "INSERT INTO commodity.price_daily" in sql:
             self.inserts.append(params)
             return _Cur(one=(True,))
         if "DISTINCT ON" in sql:  # plausibility seed (only when band enabled)
@@ -76,7 +76,7 @@ def test_band_routes_outlier_to_review(monkeypatch):
         def execute(self, sql, params=None):
             if "DISTINCT ON" in sql:
                 return _Cur(all_=[("WTI", "continuous_front", 100.0)])
-            if "INSERT INTO commodities.price_review" in sql:
+            if "INSERT INTO commodity.price_review" in sql:
                 self.inserts.append({"review": params})
                 return _Cur(one=None)
             return super().execute(sql, params)

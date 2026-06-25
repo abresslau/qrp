@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from commodities.gateway import DbCommoditiesGateway
+from commodity.gateway import DbCommoditiesGateway
 
 
 class _Cur:

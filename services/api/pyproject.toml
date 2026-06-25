@@ -10,7 +10,7 @@ dependencies = [
     # the standalone packages (workspace members) — the gateway mounts each one's router
     "macro",
     "rates",
-    "commodities",
+    "commodity",
     "fx",
     "universe",
     "portfolios",
@@ -26,7 +26,7 @@ dependencies = [
 [tool.uv.sources]
 macro = { workspace = true }
 rates = { workspace = true }
-commodities = { workspace = true }
+commodity = { workspace = true }
 fx = { workspace = true }
 universe = { workspace = true }
 portfolios = { workspace = true }

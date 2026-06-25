@@ -1,4 +1,4 @@
-"""Data-quality checks over commodities.price_daily. Each returns {check, status, detail}.
+"""Data-quality checks over commodity.price_daily. Each returns {check, status, detail}.
 
 PASS/WARN/FAIL, kept deliberately light for v1 (vendor continuous series): coverage of the
 universe, recency, monotonic first_settle immutability sanity, and no duplicate keys.
@@ -26,7 +26,7 @@ def run_checks(conn: psycopg.Connection) -> list[dict]:
     present = {
         r[0]
         for r in conn.execute(
-            "SELECT DISTINCT commodity_code FROM commodities.price_daily WHERE series_type=%s",
+            "SELECT DISTINCT commodity_code FROM commodity.price_daily WHERE series_type=%s",
             (SERIES,),
         ).fetchall()
     }
@@ -41,7 +41,7 @@ def run_checks(conn: psycopg.Connection) -> list[dict]:
 
     # 2. recency — the freshest row is within the last ~7 days (markets close on weekends/holidays).
     mx = conn.execute(
-        "SELECT max(as_of_date) FROM commodities.price_daily WHERE series_type=%s", (SERIES,)
+        "SELECT max(as_of_date) FROM commodity.price_daily WHERE series_type=%s", (SERIES,)
     ).fetchone()
     last = mx[0] if mx else None
     if last is None:
@@ -56,7 +56,7 @@ def run_checks(conn: psycopg.Connection) -> list[dict]:
 
     # 3. settle sanity — no NULL/zero settles slipped past the CHECK.
     bad = conn.execute(
-        "SELECT count(*) FROM commodities.price_daily "
+        "SELECT count(*) FROM commodity.price_daily "
         "WHERE series_type=%s AND (settle IS NULL OR settle = 0)",
         (SERIES,),
     ).fetchone()[0]
@@ -69,7 +69,7 @@ def run_checks(conn: psycopg.Connection) -> list[dict]:
     # 4. staleness per commodity — flag any commodity whose own last print is > 10 days old.
     rows = conn.execute(
         """
-        SELECT commodity_code, max(as_of_date) FROM commodities.price_daily
+        SELECT commodity_code, max(as_of_date) FROM commodity.price_daily
          WHERE series_type=%s GROUP BY commodity_code
         """,
         (SERIES,),

@@ -1,4 +1,4 @@
-"""Load commodity price points into ``commodities.price_daily``.
+"""Load commodity price points into ``commodity.price_daily``.
 
 Mirrors ``rates.ingest.fill_curve``: two immutable+restated vintages in one row (``first_settle``
 immutable / PIT, ``settle`` restated), per-day atomic upsert. Unlike rates there is NO plausibility
@@ -56,7 +56,7 @@ def fill_prices(
             """
             SELECT DISTINCT ON (commodity_code, series_type)
                    commodity_code, series_type, settle
-              FROM commodities.price_daily
+              FROM commodity.price_daily
              WHERE as_of_date < %s AND commodity_code = ANY(%s)
              ORDER BY commodity_code, series_type, as_of_date DESC
             """,
@@ -80,7 +80,7 @@ def fill_prices(
                 ):
                     conn.execute(
                         """
-                        INSERT INTO commodities.price_review
+                        INSERT INTO commodity.price_review
                             (commodity_code, series_type, as_of_date, settle,
                              prev_settle, reason, source)
                         VALUES (%s,%s,%s,%s,%s,%s,%s)
@@ -99,7 +99,7 @@ def fill_prices(
                     continue
                 cur = conn.execute(
                     """
-                    INSERT INTO commodities.price_daily
+                    INSERT INTO commodity.price_daily
                         (commodity_code, series_type, as_of_date, open, high, low, settle, volume,
                          first_settle, source)
                     VALUES (%(c)s,%(st)s,%(d)s,%(o)s,%(h)s,%(l)s,%(s)s,%(v)s,%(s)s,%(src)s)
@@ -107,9 +107,9 @@ def fill_prices(
                        SET open = EXCLUDED.open, high = EXCLUDED.high, low = EXCLUDED.low,
                            settle = EXCLUDED.settle, volume = EXCLUDED.volume,
                            last_changed_at = now(), source = EXCLUDED.source
-                     WHERE (commodities.price_daily.open, commodities.price_daily.high,
-                            commodities.price_daily.low, commodities.price_daily.settle,
-                            commodities.price_daily.volume)
+                     WHERE (commodity.price_daily.open, commodity.price_daily.high,
+                            commodity.price_daily.low, commodity.price_daily.settle,
+                            commodity.price_daily.volume)
                            IS DISTINCT FROM
                            (EXCLUDED.open, EXCLUDED.high, EXCLUDED.low, EXCLUDED.settle,
                             EXCLUDED.volume)

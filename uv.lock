@@ -15,7 +15,7 @@ members = [
     "altdata",
     "analytics",
     "backtest",
-    "commodities",
+    "commodity",
     "equity",
     "fx",
     "lineage",
@@ -334,9 +334,9 @@ wheels = [
 ]
 
 [[package]]
-name = "commodities"
+name = "commodity"
 version = "0.1.0"
-source = { editable = "packages/commodities" }
+source = { editable = "packages/commodity" }
 dependencies = [
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
@@ -1843,7 +1843,7 @@ dependencies = [
     { name = "altdata" },
     { name = "analytics" },
     { name = "backtest" },
-    { name = "commodities" },
+    { name = "commodity" },
     { name = "fastapi" },
     { name = "fx" },
     { name = "lineage" },
@@ -1868,7 +1868,7 @@ requires-dist = [
     { name = "altdata", editable = "packages/altdata" },
     { name = "analytics", editable = "packages/analytics" },
     { name = "backtest", editable = "packages/backtest" },
-    { name = "commodities", editable = "packages/commodities" },
+    { name = "commodity", editable = "packages/commodity" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "fx", editable = "packages/fx" },
     { name = "lineage", editable = "packages/lineage" },

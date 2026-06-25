@@ -3,7 +3,7 @@
 A ``PricePoint`` is one daily observation of one commodity's continuous series. The store keys on
 ``(commodity_code, series_type, as_of_date)``. ``settle`` is the daily settlement proxy (the
 vendor's close); OHLC + volume are stored where the source provides them. A ``PriceSource`` fetches
-a window of points; ``commodities.ingest.fill_prices`` is commodity-agnostic.
+a window of points; ``commodity.ingest.fill_prices`` is commodity-agnostic.
 """
 
 from __future__ import annotations

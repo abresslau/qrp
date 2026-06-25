@@ -7,14 +7,14 @@ from collections.abc import Iterator
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from commodities.db import connect
-from commodities.gateway import DbCommoditiesGateway
+from commodity.db import connect
+from commodity.gateway import DbCommoditiesGateway
 
 router = APIRouter(prefix="/api/commodities", tags=["commodities"])
 
 
 def _gateway() -> Iterator[DbCommoditiesGateway]:
-    conn = connect()  # commodities owns its own database (DSN resolved by commodities.db)
+    conn = connect()  # commodities owns its own database (DSN resolved by commodity.db)
     try:
         yield DbCommoditiesGateway(conn)
     finally:
