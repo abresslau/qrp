@@ -1,0 +1,5 @@
+%syntax-version=1.0.0
+%project=commodity
+%uri=https://github.com/abresslau/qrp-commodity
+
+price_daily 2026-06-24T00:00:00Z Andre <ab@gladstone-management.com> # commodities schema: Tier-A vendor continuous front-month daily prices (raw OHLCV+volume, immutable first_settle + restated settle) + review queue, own database

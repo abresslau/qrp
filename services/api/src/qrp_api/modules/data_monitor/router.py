@@ -81,10 +81,17 @@ class EodSummary(BaseModel):
     last_pipeline_run: EodPipelineRun | None = None
 
 
+class EodDagster(BaseModel):
+    reachable: bool
+    ui_url: str
+    jobs_with_runs: int
+
+
 class EodMonitor(BaseModel):
     expected_date: str | None = None
     expected_basis: str
     dagster_runs_available: bool
+    dagster: EodDagster
     summary: EodSummary
     buckets: list[EodBucketRow]
 

@@ -1,0 +1,7 @@
+%syntax-version=1.0.0
+%project=portfolio
+%uri=https://github.com/abresslau/qrp-portfolio
+
+portfolios 2026-06-08T19:00:00Z Andre <ab@gladstone-management.com> # portfolios schema: portfolio + effective-dated weights (own database, split from qrp)
+client_entity [portfolios] 2026-06-08T20:00:00Z Andre <ab@gladstone-management.com> # FR-13: first-class Client entity + portfolio.client_id (was a free-text column)
+portfolio_notional [portfolios] 2026-06-11T18:00:00Z Andre <ab@gladstone-management.com> # FR-15 PnL: optional reference notional (pnl = notional * cumulative TWR)

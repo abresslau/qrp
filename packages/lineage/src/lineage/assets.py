@@ -207,11 +207,11 @@ SCHEMAS = {
         ("ticker", "text"), ("weight", "double precision"),
     ),
     # --- portfolios ---
-    ("portfolios", "portfolio"): _cols(
+    ("portfolio", "portfolio"): _cols(
         ("portfolio_id", "bigint", "PK"), ("client", "text"), ("name", "text"),
         ("base_currency", "char(3)"), ("created_at", "timestamptz"),
     ),
-    ("portfolios", "portfolio_weight"): _cols(
+    ("portfolio", "portfolio_weight"): _cols(
         ("portfolio_id", "bigint", "PK"), ("as_of_date", "date", "PK"),
         ("composite_figi", "char(12)", "PK"), ("weight", "numeric"),
     ),
@@ -273,7 +273,7 @@ LINEAGE = {
                         (("sym", "universe_membership"), "composite_figi")],
         weight=[(("sym", "fact_returns"), "pr")],
     ),
-    ("portfolios", "portfolio_weight"): _lin(
+    ("portfolio", "portfolio_weight"): _lin(
         composite_figi=[(("sym", "securities"), "composite_figi")]),
     ("altdata", "wiki_map"): _lin(
         composite_figi=[(("sym", "security_symbology"), "composite_figi")]),
@@ -576,12 +576,12 @@ _EXTERNAL = [
           "optimiser", "weight", "optimiser.compute_solution()",
           note="reads sym fact_returns + fundamentals + security_symbology + membership"),
     # --- portfolios ---
-    _spec(("portfolios", "portfolio"), [], "portfolios", "Client portfolio definitions.",
-          "portfolios", "portfolio", "API POST /api/portfolios", source="user input"),
-    _spec(("portfolios", "portfolio_weight"),
-          [("portfolios", "portfolio"), ("sym", "securities")],
-          "portfolios", "Portfolio holdings/weights (tickers resolved via sym).",
-          "portfolios", "portfolio_weight", "API POST /api/portfolios/{id}/weights"),
+    _spec(("portfolio", "portfolio"), [], "portfolio", "Client portfolio definitions.",
+          "portfolio", "portfolio", "API POST /api/portfolios", source="user input"),
+    _spec(("portfolio", "portfolio_weight"),
+          [("portfolio", "portfolio"), ("sym", "securities")],
+          "portfolio", "Portfolio holdings/weights (tickers resolved via sym).",
+          "portfolio", "portfolio_weight", "API POST /api/portfolios/{id}/weights"),
     # --- altdata ---
     _spec(("altdata", "wiki_map"), [("sym", "security_symbology")], "altdata",
           "Composite-FIGI ↔ Wikipedia article mapping.",
@@ -593,7 +593,7 @@ _EXTERNAL = [
           source="Wikimedia pageviews API"),
     # --- analytics (computed, not persisted) ---
     _spec(("analytics", "metrics"),
-          [("portfolios", "portfolio_weight"), ("sym", "fact_returns"),
+          [("portfolio", "portfolio_weight"), ("sym", "fact_returns"),
            ("sym", "fact_index_returns")],
           "analytics",
           "Portfolio risk/return analytics (Sharpe, alpha, beta, tracking error). "

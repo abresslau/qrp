@@ -3,10 +3,10 @@ name = "analytics"
 version = "0.1.0"
 description = "QRP analytics package — risk/return metrics over portfolios + the sym package (read-only upstream; no own database)."
 requires-python = ">=3.13"
-dependencies = ["fastapi>=0.115", "pydantic>=2", "psycopg[binary]>=3.2", "portfolios"]
+dependencies = ["fastapi>=0.115", "pydantic>=2", "psycopg[binary]>=3.2", "portfolio"]
 
 [tool.uv.sources]
-portfolios = { workspace = true }
+portfolio = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

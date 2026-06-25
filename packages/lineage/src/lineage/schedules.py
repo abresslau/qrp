@@ -114,7 +114,7 @@ def commodities_load(context) -> None:
     end = (tick or "")[:10] or date.today().isoformat()
     start = (date.fromisoformat(end) - timedelta(days=12)).isoformat()
     load = subprocess.run(
-        [sys.executable, "-m", "commodities.cli", "price", "load",
+        [sys.executable, "-m", "commodity.cli", "price", "load",
          "--start_date", start, "--end_date", end],
         cwd=root, capture_output=True, text=True, timeout=3600,
     )
@@ -124,7 +124,7 @@ def commodities_load(context) -> None:
             f"commodities price load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
         raise RuntimeError(f"`commodities price load` exited {load.returncode}")
     val = subprocess.run(
-        [sys.executable, "-m", "commodities.cli", "validate"],
+        [sys.executable, "-m", "commodity.cli", "validate"],
         cwd=root, capture_output=True, text=True, timeout=600,
     )
     context.log.info((val.stdout or "")[-4000:])
@@ -191,7 +191,7 @@ def eod_data(context, config: EodConfig) -> str:
         ("rates_uk", ["rates.cli", "curve", "load"]),
         ("rates_world", ["rates.cli", "curve", "load-world", "--start_date", win_start,
                          "--end_date", as_of]),
-        ("commodities", ["commodities.cli", "price", "load", "--start_date", win_start,
+        ("commodities", ["commodity.cli", "price", "load", "--start_date", win_start,
                          "--end_date", as_of]),
     ):
         p = subprocess.run([sys.executable, "-m", *cmd], cwd=root,

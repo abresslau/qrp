@@ -2,9 +2,11 @@
 
 Streams each moved table from the sym DB into the equity DB via psycopg binary COPY (the fx-split
 playbook). FK-safe order; currency is upserted first so prices_raw/corporate_actions FKs resolve;
-pipeline_run_log's GENERATED-ALWAYS identity is copied with OVERRIDING SYSTEM VALUE and its sequence
-reset afterwards. Idempotent-ish: skips a table if the equity side already has >= the sym row count
-(so a re-run after a partial copy is safe to resume per-table by TRUNCATE+recopy).
+pipeline_run_log's GENERATED-ALWAYS identity values copy straight through (COPY writes an identity
+column directly — OVERRIDING is INSERT-only syntax and a syntax error on COPY), and its sequence is
+advanced past the migrated max afterwards so new loads don't collide. Idempotent-ish: skips a table
+if the equity side already has == the sym row count (so a re-run after a partial copy is safe to
+resume per-table by TRUNCATE+recopy).
 
 Run:  uv run python tools/migrate_equity_data.py
 """

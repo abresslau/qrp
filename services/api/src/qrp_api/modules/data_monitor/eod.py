@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 import psycopg
 from lineage.buckets import BUCKETS, SYM, Bucket, Dataset, job_name
 
-from qrp_api.config import dagster_job_url, package_dsn
+from qrp_api.config import dagster_job_url, dagster_ui_base, package_dsn
 from qrp_api.modules.data_monitor.dagster_runs import latest_runs_by_job
 from qrp_api.modules.sym.freshness import classify
 
@@ -47,15 +47,20 @@ class EodMonitorGateway:
 
     def _expected_business_date(self) -> date | None:
         """The PREVIOUS business date — the last completed equity trading session STRICTLY before
-        today. This is the EOD bar: after the close you expect data through the prior session, not
-        today's in-progress one. Using the trading-session calendar (prices_raw) skips weekends and
-        holidays for free."""
-        # prices_raw lives in the equity DB now — open it read-only (matches the per-package dispatch).
-        with psycopg.connect(package_dsn("equity"), connect_timeout=5) as eq:
-            return _as_date(self._scalar(
-                eq,
-                "SELECT max(session_date) FROM prices_raw WHERE session_date < CURRENT_DATE",
-            ))
+        today, from the AUTHORITATIVE ``trading_calendar`` (sym), NOT the price data.
+
+        Deriving "expected" from ``max(prices_raw.session_date)`` is circular: if the latest session
+        simply wasn't LOADED, the proxy slides back to the last loaded day and the board can no
+        longer flag the missing load — defeating the monitor's whole purpose. The calendar knows the
+        session happened regardless of whether data landed, so a not-yet-loaded latest session shows
+        up honestly as a behind-by-one (or more) bucket. The current calendar version already encodes
+        weekends + holidays; max() over all current-calendar MICs is the last weekday markets traded."""
+        return _as_date(self._scalar(
+            self._sym,
+            "SELECT max(tc.session_date) FROM trading_calendar tc "
+            "JOIN trading_calendar_version v USING (calendar_version) "
+            "WHERE v.is_current AND tc.session_date < CURRENT_DATE",
+        ))
 
     def _coverage_session(
         self, conn: psycopg.Connection, ds: Dataset
@@ -388,9 +393,12 @@ class EodMonitorGateway:
         except Exception:  # noqa: BLE001 — resilience contract: degrade, don't 500
             expected = None
         try:
-            true_latest = self._max_date(
-                self._sym, Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw")
-            )
+            # prices_raw lives in the equity DB now — read the true latest session there (NOT on the
+            # shared sym conn: a failing query would poison it for the summary + every sym bucket).
+            with psycopg.connect(package_dsn("equity"), connect_timeout=5) as eq:
+                true_latest = self._max_date(
+                    eq, Dataset("equity", "prices_raw", "session_date", "equity.prices_raw")
+                )
         except Exception:  # noqa: BLE001
             true_latest = None
         dagster_reachable, runs = latest_runs_by_job()
@@ -406,6 +414,12 @@ class EodMonitorGateway:
             "expected_date": expected.isoformat() if expected else None,
             "expected_basis": "previous business date (last completed equity trading session)",
             "dagster_runs_available": dagster_reachable,
+            "dagster": {
+                "reachable": dagster_reachable,
+                "ui_url": dagster_ui_base(),
+                # how many bucket jobs Dagster reported a run for (health signal beyond "daemon up").
+                "jobs_with_runs": sum(1 for r in runs.values() if r),
+            },
             "summary": summary,
             "buckets": [self._row(b, expected, runs) for b in BUCKETS],
         }

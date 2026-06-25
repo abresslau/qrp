@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from portfolios.gateway import DbPortfolioGateway
+from portfolio.gateway import DbPortfolioGateway
 
 
 class _Cur:
@@ -29,7 +29,7 @@ class _Conn:
         self._dates = list(dates)
 
     def execute(self, sql, params=None):
-        if "FROM portfolios.portfolio p" in sql:
+        if "FROM portfolio.portfolio p" in sql:
             return _Cur(one=(7, "Book", "Acme", "USD", None, None))
         if "DISTINCT as_of_date" in sql:
             return _Cur(rows=[(d,) for d in self._dates])

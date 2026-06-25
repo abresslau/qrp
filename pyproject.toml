@@ -15,7 +15,7 @@ package = false
 members = [
     "services/api",
     "packages/macro",
-    "packages/portfolios",
+    "packages/portfolio",
     "packages/signals",
     "packages/optimiser",
     "packages/backtest",
@@ -25,7 +25,7 @@ members = [
     "packages/sym",
     "packages/lineage",
     "packages/rates",
-    "packages/commodities",
+    "packages/commodity",
     "packages/fx",
     "packages/universe",
     "packages/equity",
