@@ -47,15 +47,20 @@ class EodMonitorGateway:
 
     def _expected_business_date(self) -> date | None:
         """The PREVIOUS business date — the last completed equity trading session STRICTLY before
-        today. This is the EOD bar: after the close you expect data through the prior session, not
-        today's in-progress one. Using the trading-session calendar (prices_raw) skips weekends and
-        holidays for free."""
-        # prices_raw lives in the equity DB now — open it read-only (matches the per-package dispatch).
-        with psycopg.connect(package_dsn("equity"), connect_timeout=5) as eq:
-            return _as_date(self._scalar(
-                eq,
-                "SELECT max(session_date) FROM prices_raw WHERE session_date < CURRENT_DATE",
-            ))
+        today, from the AUTHORITATIVE ``trading_calendar`` (sym), NOT the price data.
+
+        Deriving "expected" from ``max(prices_raw.session_date)`` is circular: if the latest session
+        simply wasn't LOADED, the proxy slides back to the last loaded day and the board can no
+        longer flag the missing load — defeating the monitor's whole purpose. The calendar knows the
+        session happened regardless of whether data landed, so a not-yet-loaded latest session shows
+        up honestly as a behind-by-one (or more) bucket. The current calendar version already encodes
+        weekends + holidays; max() over all current-calendar MICs is the last weekday markets traded."""
+        return _as_date(self._scalar(
+            self._sym,
+            "SELECT max(tc.session_date) FROM trading_calendar tc "
+            "JOIN trading_calendar_version v USING (calendar_version) "
+            "WHERE v.is_current AND tc.session_date < CURRENT_DATE",
+        ))
 
     def _coverage_session(
         self, conn: psycopg.Connection, ds: Dataset
