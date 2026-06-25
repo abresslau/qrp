@@ -22,7 +22,7 @@ members = [
     "macro",
     "operate",
     "optimiser",
-    "portfolios",
+    "portfolio",
     "qrp",
     "qrp-api",
     "rates",
@@ -80,7 +80,7 @@ version = "0.1.0"
 source = { editable = "packages/analytics" }
 dependencies = [
     { name = "fastapi" },
-    { name = "portfolios" },
+    { name = "portfolio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
 ]
@@ -88,7 +88,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "portfolios", editable = "packages/portfolios" },
+    { name = "portfolio", editable = "packages/portfolio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
 ]
@@ -147,7 +147,7 @@ version = "0.1.0"
 source = { editable = "packages/backtest" }
 dependencies = [
     { name = "fastapi" },
-    { name = "portfolios" },
+    { name = "portfolio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "signals" },
@@ -163,7 +163,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "portfolios", editable = "packages/portfolios" },
+    { name = "portfolio", editable = "packages/portfolio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "signals", editable = "packages/signals" },
@@ -1295,7 +1295,7 @@ source = { editable = "packages/optimiser" }
 dependencies = [
     { name = "backtest" },
     { name = "fastapi" },
-    { name = "portfolios" },
+    { name = "portfolio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "signals" },
@@ -1311,7 +1311,7 @@ dev = [
 requires-dist = [
     { name = "backtest", editable = "packages/backtest" },
     { name = "fastapi", specifier = ">=0.115" },
-    { name = "portfolios", editable = "packages/portfolios" },
+    { name = "portfolio", editable = "packages/portfolio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },
     { name = "signals", editable = "packages/signals" },
@@ -1413,9 +1413,9 @@ wheels = [
 ]
 
 [[package]]
-name = "portfolios"
+name = "portfolio"
 version = "0.1.0"
-source = { editable = "packages/portfolios" }
+source = { editable = "packages/portfolio" }
 dependencies = [
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary"] },
@@ -1850,7 +1850,7 @@ dependencies = [
     { name = "macro" },
     { name = "operate" },
     { name = "optimiser" },
-    { name = "portfolios" },
+    { name = "portfolio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "rates" },
     { name = "signals" },
@@ -1875,7 +1875,7 @@ requires-dist = [
     { name = "macro", editable = "packages/macro" },
     { name = "operate", editable = "packages/operate" },
     { name = "optimiser", editable = "packages/optimiser" },
-    { name = "portfolios", editable = "packages/portfolios" },
+    { name = "portfolio", editable = "packages/portfolio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "rates", editable = "packages/rates" },
     { name = "signals", editable = "packages/signals" },

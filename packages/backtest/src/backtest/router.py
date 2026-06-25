@@ -183,9 +183,9 @@ def run_backtest_ep(
     extra_conns: list = []
     module_conns: dict = {}
     if body.save_portfolio:
-        from portfolios.gateway import DbPortfolioGateway
+        from portfolio.gateway import DbPortfolioGateway
 
-        pconn = connect("portfolios")   # write the paper portfolio to its own DB
+        pconn = connect("portfolio")   # write the paper portfolio to its own DB
         pgw = DbPortfolioGateway(pconn, gw._sym)      # reuse the sym package for figi resolution
     try:
         # AR-R2: a cross-module factor's input modules are read over their OWN

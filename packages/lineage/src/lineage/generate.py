@@ -72,7 +72,7 @@ RECIPES = [
 ]
 
 # DBs whose schemas/FKs we introspect (read sources live in sym; targets in each pkg DB).
-_DBS = ["sym", "macro", "signals", "backtest", "optimiser", "altdata", "portfolios", "qrp"]
+_DBS = ["sym", "macro", "signals", "backtest", "optimiser", "altdata", "portfolio", "qrp"]
 
 # Sqitch's own registry tables — never part of the data model.
 _SQITCH = {"projects", "changes", "tags", "dependencies", "events", "releases"}

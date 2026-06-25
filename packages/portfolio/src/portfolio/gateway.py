@@ -29,9 +29,9 @@ def read_latest_weights(
     concurrent weight write can't yield a torn vector.
     """
     rows = conn.execute(
-        "SELECT as_of_date, composite_figi, weight FROM portfolios.portfolio_weight "
+        "SELECT as_of_date, composite_figi, weight FROM portfolio.portfolio_weight "
         "WHERE portfolio_id = %s AND as_of_date = ("
-        "  SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s"
+        "  SELECT max(as_of_date) FROM portfolio.portfolio_weight WHERE portfolio_id = %s"
         ")",
         (portfolio_id, portfolio_id),
     ).fetchall()
@@ -53,7 +53,7 @@ def read_weight_history(
     concurrent write can't yield a torn vector.
     """
     rows = conn.execute(
-        "SELECT as_of_date, composite_figi, weight FROM portfolios.portfolio_weight "
+        "SELECT as_of_date, composite_figi, weight FROM portfolio.portfolio_weight "
         "WHERE portfolio_id = %s ORDER BY as_of_date",
         (portfolio_id,),
     ).fetchall()
@@ -75,7 +75,7 @@ def read_portfolio_terms(
     return space only (FR-15 definition, Story Q5.2).
     """
     row = conn.execute(
-        "SELECT notional, base_currency FROM portfolios.portfolio WHERE portfolio_id = %s",
+        "SELECT notional, base_currency FROM portfolio.portfolio WHERE portfolio_id = %s",
         (portfolio_id,),
     ).fetchone()
     if row is None:
@@ -87,7 +87,7 @@ def portfolio_exists(conn: psycopg.Connection, portfolio_id: int) -> bool:
     """Whether the portfolio row exists — lets consumers tell a nonexistent
     portfolio (404) apart from an existing one with no weights yet (empty)."""
     row = conn.execute(
-        "SELECT 1 FROM portfolios.portfolio WHERE portfolio_id = %s",
+        "SELECT 1 FROM portfolio.portfolio WHERE portfolio_id = %s",
         (portfolio_id,),
     ).fetchone()
     return row is not None
@@ -134,7 +134,7 @@ class DbPortfolioGateway:
         if not name:
             return None
         row = self._conn.execute(
-            "INSERT INTO portfolios.client (name) VALUES (%s) "
+            "INSERT INTO portfolio.client (name) VALUES (%s) "
             "ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING client_id",
             (name,),
         ).fetchone()
@@ -150,8 +150,8 @@ class DbPortfolioGateway:
         rows = self._conn.execute(
             """
             SELECT c.client_id, c.name, c.created_at, count(p.portfolio_id) AS n_portfolios
-              FROM portfolios.client c
-              LEFT JOIN portfolios.portfolio p USING (client_id)
+              FROM portfolio.client c
+              LEFT JOIN portfolio.portfolio p USING (client_id)
              GROUP BY c.client_id, c.name, c.created_at
              ORDER BY c.name
             """
@@ -169,7 +169,7 @@ class DbPortfolioGateway:
     ) -> int:
         client_id = self._resolve_client(client)  # FR-13: link to a first-class Client
         row = self._conn.execute(
-            "INSERT INTO portfolios.portfolio (name, client_id, base_currency, notional) "
+            "INSERT INTO portfolio.portfolio (name, client_id, base_currency, notional) "
             "VALUES (%s, %s, %s, %s) RETURNING portfolio_id",
             (name, client_id, base_currency, notional),
         ).fetchone()
@@ -178,7 +178,7 @@ class DbPortfolioGateway:
     def set_notional(self, pid: int, notional: float | None) -> bool:
         """Set or clear the PnL reference notional. Returns False for an unknown portfolio."""
         row = self._conn.execute(
-            "UPDATE portfolios.portfolio SET notional = %s WHERE portfolio_id = %s "
+            "UPDATE portfolio.portfolio SET notional = %s WHERE portfolio_id = %s "
             "RETURNING portfolio_id",
             (notional, pid),
         ).fetchone()
@@ -193,14 +193,14 @@ class DbPortfolioGateway:
                    count(DISTINCT w.as_of_date) AS n_snapshots,
                    count(w.composite_figi) FILTER (
                        WHERE w.as_of_date = (
-                           SELECT max(as_of_date) FROM portfolios.portfolio_weight w2
+                           SELECT max(as_of_date) FROM portfolio.portfolio_weight w2
                             WHERE w2.portfolio_id = p.portfolio_id
                        )
                    ) AS n_holdings,
                    max(w.as_of_date) AS latest_as_of_date
-              FROM portfolios.portfolio p
-              LEFT JOIN portfolios.client c ON c.client_id = p.client_id
-              LEFT JOIN portfolios.portfolio_weight w USING (portfolio_id)
+              FROM portfolio.portfolio p
+              LEFT JOIN portfolio.client c ON c.client_id = p.client_id
+              LEFT JOIN portfolio.portfolio_weight w USING (portfolio_id)
              GROUP BY p.portfolio_id, p.name, c.name, p.base_currency, p.created_at
              ORDER BY p.created_at DESC
             """
@@ -229,8 +229,8 @@ class DbPortfolioGateway:
         the caller asked for a vector that does not exist, not an empty portfolio."""
         meta = self._conn.execute(
             "SELECT p.portfolio_id, p.name, coalesce(c.name, '') AS client, p.base_currency, "
-            "p.notional, p.created_at FROM portfolios.portfolio p "
-            "LEFT JOIN portfolios.client c ON c.client_id = p.client_id "
+            "p.notional, p.created_at FROM portfolio.portfolio p "
+            "LEFT JOIN portfolio.client c ON c.client_id = p.client_id "
             "WHERE p.portfolio_id = %s",
             (pid,),
         ).fetchone()
@@ -239,7 +239,7 @@ class DbPortfolioGateway:
         dates = [
             d.isoformat()
             for (d,) in self._conn.execute(
-                "SELECT DISTINCT as_of_date FROM portfolios.portfolio_weight "
+                "SELECT DISTINCT as_of_date FROM portfolio.portfolio_weight "
                 "WHERE portfolio_id = %s ORDER BY as_of_date DESC",
                 (pid,),
             ).fetchall()
@@ -253,7 +253,7 @@ class DbPortfolioGateway:
         weights: list[dict] = []
         if shown:
             wrows = self._conn.execute(
-                "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
+                "SELECT composite_figi, weight FROM portfolio.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s ORDER BY weight DESC",
                 (pid, shown),
             ).fetchall()
@@ -329,13 +329,13 @@ class DbPortfolioGateway:
             return {"stored": 0, "unresolved": unresolved, "as_of_date": as_of_date.isoformat()}
         with self._conn.transaction():  # autocommit=True -> this is a real transaction
             self._conn.execute(
-                "DELETE FROM portfolios.portfolio_weight "
+                "DELETE FROM portfolio.portfolio_weight "
                 "WHERE portfolio_id = %s AND as_of_date = %s",
                 (pid, as_of_date),
             )
             for figi, weight in resolved:
                 self._conn.execute(
-                    "INSERT INTO portfolios.portfolio_weight "
+                    "INSERT INTO portfolio.portfolio_weight "
                     "(portfolio_id, as_of_date, composite_figi, weight) "
                     "VALUES (%s, %s, %s, %s) "
                     "ON CONFLICT (portfolio_id, as_of_date, composite_figi) "
@@ -360,7 +360,7 @@ class DbPortfolioGateway:
         ``semantics`` response field states this.
         """
         as_of_date = self._conn.execute(
-            "SELECT max(as_of_date) FROM portfolios.portfolio_weight WHERE portfolio_id = %s", (pid,)
+            "SELECT max(as_of_date) FROM portfolio.portfolio_weight WHERE portfolio_id = %s", (pid,)
         ).fetchone()[0]
         # return_window is a sym reference table; resolve the window id from the sym package.
         # An unknown code is the caller's error — no silent YTD fallback.
@@ -379,7 +379,7 @@ class DbPortfolioGateway:
             return empty
 
         wrows = self._conn.execute(
-            "SELECT composite_figi, weight FROM portfolios.portfolio_weight "
+            "SELECT composite_figi, weight FROM portfolio.portfolio_weight "
             "WHERE portfolio_id = %s AND as_of_date = %s",
             (pid, as_of_date),
         ).fetchall()

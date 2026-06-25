@@ -8,8 +8,8 @@ from datetime import date
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from portfolios.db import connect
-from portfolios.gateway import DbPortfolioGateway
+from portfolio.db import connect
+from portfolio.gateway import DbPortfolioGateway
 
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 

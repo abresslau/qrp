@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from portfolios.gateway import DbPortfolioGateway
+from portfolio.gateway import DbPortfolioGateway
 
 
 class _Cur:
@@ -31,9 +31,9 @@ class _QrpConn:
         self._weights = weights  # [(figi, weight)]
 
     def execute(self, sql, params=None):
-        if "max(as_of_date) FROM portfolios.portfolio_weight" in sql:
+        if "max(as_of_date) FROM portfolio.portfolio_weight" in sql:
             return _Cur(one=(date(2026, 6, 1),))
-        if "composite_figi, weight FROM portfolios.portfolio_weight" in sql:
+        if "composite_figi, weight FROM portfolio.portfolio_weight" in sql:
             return _Cur(rows=list(self._weights))
         return _Cur()
 

@@ -9,13 +9,13 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "signals",    # tilt scores via the factor seam (Q9.4)
     "backtest",   # candidate scoring via score_weights (Q7.4)
-    "portfolios", # save-solution-as-Portfolio via the owning writer (Q7.4)
+    "portfolio", # save-solution-as-Portfolio via the owning writer (Q7.4)
 ]
 
 [tool.uv.sources]
 signals = { workspace = true }
 backtest = { workspace = true }
-portfolios = { workspace = true }
+portfolio = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -238,7 +238,7 @@ def create_app() -> FastAPI:
 
         app.include_router(sym_router)
     if "portfolios" in enabled:
-        from portfolios.router import router as portfolios_router
+        from portfolio.router import router as portfolios_router
 
         app.include_router(portfolios_router)
     if "analytics" in enabled:

@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/analytics", tags=["analytics"])
 
 
 def _gateway() -> Iterator[DbAnalyticsGateway]:
-    conn = connect("portfolios")  # portfolios DB — portfolio weights
+    conn = connect("portfolio")  # portfolios DB — portfolio weights
     sym = equity = None
     try:
         sym = connect("sym")        # sym package — securities / index returns / instrument / gics

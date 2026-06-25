@@ -21,7 +21,7 @@ from bisect import bisect_left
 from datetime import date, datetime, timezone
 
 import psycopg
-from portfolios.gateway import (
+from portfolio.gateway import (
     portfolio_exists,
     read_latest_weights,
     read_portfolio_terms,

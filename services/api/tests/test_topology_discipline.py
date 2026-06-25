@@ -43,10 +43,10 @@ PROJECT_SCHEMAS = {
     "packages/backtest/db": {"backtest"},
     "packages/macro/db": {"macro"},
     "packages/optimiser/db": {"optimiser"},
-    "packages/portfolios/db": {"portfolios"},
+    "packages/portfolio/db": {"portfolio"},
     "packages/signals/db": {"signals"},
 }
-ALL_PACKAGE_SCHEMAS = {"qrp", "altdata", "backtest", "macro", "optimiser", "portfolios",
+ALL_PACKAGE_SCHEMAS = {"qrp", "altdata", "backtest", "macro", "optimiser", "portfolio",
                        "signals"}
 
 # Relations that moved to the `universe` peer package + its own database — consumers
@@ -70,7 +70,7 @@ EQUITY_RELATIONS = {
 # surface THERE, deliberately.
 
 CONSUMER_PACKAGES = ("altdata", "analytics", "backtest", "macro", "optimiser",
-                     "portfolios", "signals", "operate")
+                     "portfolio", "signals", "operate")
 
 # relation token after FROM/JOIN, optionally schema-qualified (qualification is
 # captured so `public.prices_raw` / `sym.public.prices_raw` cannot slip past).

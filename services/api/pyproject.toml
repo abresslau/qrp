@@ -13,7 +13,7 @@ dependencies = [
     "commodity",
     "fx",
     "universe",
-    "portfolios",
+    "portfolio",
     "signals",
     "optimiser",
     "backtest",
@@ -29,7 +29,7 @@ rates = { workspace = true }
 commodity = { workspace = true }
 fx = { workspace = true }
 universe = { workspace = true }
-portfolios = { workspace = true }
+portfolio = { workspace = true }
 signals = { workspace = true }
 optimiser = { workspace = true }
 backtest = { workspace = true }

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import psycopg
 
-_OWN = "portfolios"
+_OWN = "portfolio"
 
 
 def _load_env() -> None:

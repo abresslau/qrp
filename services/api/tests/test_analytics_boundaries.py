@@ -83,7 +83,7 @@ class _Conn:
 
 
 def test_read_latest_weights_contract():
-    from portfolios.gateway import read_latest_weights
+    from portfolio.gateway import read_latest_weights
 
     conn = _Conn()
     as_of_date, weights = read_latest_weights(conn, 7)
@@ -104,7 +104,7 @@ def test_read_latest_weights_contract():
 
 
 def test_portfolio_exists_contract():
-    from portfolios.gateway import portfolio_exists
+    from portfolio.gateway import portfolio_exists
 
     class _Found(_Conn):
         def execute(self, sql, params=None):
@@ -141,7 +141,7 @@ def test_unknown_portfolio_is_404_weightless_is_200():
     class _Weightless(_Conn):
         def execute(self, sql, params=None):
             super().execute(sql, params)
-            if "FROM portfolios.portfolio WHERE" in sql:  # existence probe
+            if "FROM portfolio.portfolio WHERE" in sql:  # existence probe
                 return _Cur(one=(1,))
             return _Cur(rows=[])  # portfolio_weight: nothing stored yet
 

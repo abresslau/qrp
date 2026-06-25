@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 from analytics.gateway import DbAnalyticsGateway
-from portfolios.gateway import read_weight_history
+from portfolio.gateway import read_weight_history
 
 
 class _Cur:
@@ -70,9 +70,9 @@ _BENCH_META = (101, "Test Index", "USD")
 
 def _gateway(history_rows, fact_rows, terms=(None, "USD"), bench_dates=()):
     port_conn = _RoutedConn([
-        ("FROM portfolios.portfolio_weight", _Cur(rows=history_rows)),
+        ("FROM portfolio.portfolio_weight", _Cur(rows=history_rows)),
         ("notional, base_currency", _Cur(one=terms)),
-        ("FROM portfolios.portfolio WHERE", _Cur(one=(1,))),  # existence
+        ("FROM portfolio.portfolio WHERE", _Cur(one=(1,))),  # existence
     ])
     sym_conn = _RoutedConn([
         ("currency_code FROM securities", _Cur(rows=[("USD",)])),
@@ -264,7 +264,7 @@ def test_returns_is_benchmark_independent():
 
 def test_patch_omitted_notional_is_a_no_op_explicit_null_clears():
     # merge-patch semantics: `{}` must NOT wipe a stored notional; `notional: null` must
-    from portfolios.router import PatchPortfolio, patch_portfolio
+    from portfolio.router import PatchPortfolio, patch_portfolio
 
     class _GwSpy:
         def __init__(self):
@@ -293,7 +293,7 @@ def test_upload_weights_replaces_the_dates_whole_vector():
     # silently corrupt the TWR series): transactional DELETE-then-INSERT
     from contextlib import contextmanager
 
-    from portfolios.gateway import DbPortfolioGateway
+    from portfolio.gateway import DbPortfolioGateway
 
     class _WriteConn(_RoutedConn):
         def __init__(self):
@@ -316,15 +316,15 @@ def test_upload_weights_replaces_the_dates_whole_vector():
     assert out["stored"] == 1
     assert conn.txn_entered == 1
     sqls = [sql for sql, _ in conn.calls]
-    delete_pos = next(i for i, s in enumerate(sqls) if "DELETE FROM portfolios.portfolio_weight" in s)
-    insert_pos = next(i for i, s in enumerate(sqls) if "INSERT INTO portfolios.portfolio_weight" in s)
+    delete_pos = next(i for i, s in enumerate(sqls) if "DELETE FROM portfolio.portfolio_weight" in s)
+    insert_pos = next(i for i, s in enumerate(sqls) if "INSERT INTO portfolio.portfolio_weight" in s)
     assert delete_pos < insert_pos  # replace, not merge
 
 
 def test_upload_with_nothing_resolved_leaves_the_existing_vector_untouched():
     from contextlib import contextmanager
 
-    from portfolios.gateway import DbPortfolioGateway
+    from portfolio.gateway import DbPortfolioGateway
 
     class _WriteConn(_RoutedConn):
         def __init__(self):
@@ -346,12 +346,12 @@ def test_upload_with_nothing_resolved_leaves_the_existing_vector_untouched():
 
 
 def test_get_with_as_of_date_serves_that_vector_or_422s():
-    from portfolios.gateway import DbPortfolioGateway
+    from portfolio.gateway import DbPortfolioGateway
 
     class _DetailConn(_RoutedConn):
         def __init__(self):
             super().__init__([
-                ("FROM portfolios.portfolio p", _Cur(
+                ("FROM portfolio.portfolio p", _Cur(
                     one=(7, "P", "C", "USD", Decimal("5000"), None)
                 )),
                 ("DISTINCT as_of_date", _Cur(rows=[(date(2026, 1, 3),), (date(2026, 1, 1),)])),
