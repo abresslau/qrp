@@ -182,6 +182,21 @@ def _stats(daily: list[float], curve: list[float]) -> dict:
 
 
 def run_backtest(
+    *args,
+    universe_conn: psycopg.Connection | None = None,
+    **kwargs,
+) -> dict:
+    """Public entry: guarantee a universe-membership connection (its own DB), closing it
+    iff we opened it. All other args pass straight through to :func:`_run_backtest`."""
+    if universe_conn is not None:
+        return _run_backtest(*args, universe_conn=universe_conn, **kwargs)
+    from universe.db import connect as _u_connect
+
+    with _u_connect() as owned:  # psycopg3: closed on block exit (no leak on early returns)
+        return _run_backtest(*args, universe_conn=owned, **kwargs)
+
+
+def _run_backtest(
     sym_conn: psycopg.Connection,
     bt_conn: psycopg.Connection,
     factor: str = "mom_12_1",
@@ -207,11 +222,7 @@ def run_backtest(
     membership from the universe package's own DB (defaults to opening one).
     """
     conn = sym_conn  # all sym reads below
-    if universe_conn is None:
-        from universe.db import connect as _u_connect
-
-        universe_conn = _u_connect()
-    u_conn = universe_conn  # membership reads (its own DB)
+    u_conn = universe_conn  # membership reads (its own DB; the public wrapper guarantees one)
     bt_conn.autocommit = True
     try:
         direction = factor_direction(factor)

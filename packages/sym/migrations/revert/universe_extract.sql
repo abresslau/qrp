@@ -4,6 +4,11 @@
 
 BEGIN;
 
+-- Self-contained: universe_membership's no-overlap EXCLUDE needs btree_gist for the
+-- `universe_id WITH =` / `composite_figi WITH =` equality operators. The extract deploy
+-- leaves the extension in place, but don't depend on that — re-assert it here.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
 CREATE TABLE universe (
     universe_id     TEXT        PRIMARY KEY,
     name            TEXT        NOT NULL,

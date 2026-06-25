@@ -340,6 +340,21 @@ def _store(conn, universe_id, as_of_date, factor_key, direction, raw: dict[str, 
 
 
 def compute_universe(
+    *args,
+    universe_conn: psycopg.Connection | None = None,
+    **kwargs,
+) -> dict:
+    """Public entry: guarantee a universe-membership connection (its own DB), closing it
+    iff we opened it. All other args pass straight through to :func:`_compute_universe`."""
+    if universe_conn is not None:
+        return _compute_universe(*args, universe_conn=universe_conn, **kwargs)
+    from universe.db import connect as _u_connect
+
+    with _u_connect() as owned:  # psycopg3: closed on block exit (no leak on early returns)
+        return _compute_universe(*args, universe_conn=owned, **kwargs)
+
+
+def _compute_universe(
     sym_conn: psycopg.Connection,
     sig_conn: psycopg.Connection,
     universe_id: str,
@@ -357,10 +372,6 @@ def compute_universe(
     """
     sig_conn.autocommit = True
     _ensure_catalog(sig_conn)
-    if universe_conn is None:
-        from universe.db import connect as _u_connect
-
-        universe_conn = _u_connect()
     if as_of_date is None:
         as_of_date = sym_conn.execute("SELECT max(as_of_date) FROM fact_returns").fetchone()[0]
         if as_of_date is None:
