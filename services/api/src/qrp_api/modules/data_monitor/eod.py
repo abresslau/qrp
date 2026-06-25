@@ -388,9 +388,12 @@ class EodMonitorGateway:
         except Exception:  # noqa: BLE001 — resilience contract: degrade, don't 500
             expected = None
         try:
-            true_latest = self._max_date(
-                self._sym, Dataset(SYM, "prices_raw", "session_date", "sym.prices_raw")
-            )
+            # prices_raw lives in the equity DB now — read the true latest session there (NOT on the
+            # shared sym conn: a failing query would poison it for the summary + every sym bucket).
+            with psycopg.connect(package_dsn("equity"), connect_timeout=5) as eq:
+                true_latest = self._max_date(
+                    eq, Dataset("equity", "prices_raw", "session_date", "equity.prices_raw")
+                )
         except Exception:  # noqa: BLE001
             true_latest = None
         dagster_reachable, runs = latest_runs_by_job()
