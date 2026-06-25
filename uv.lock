@@ -16,6 +16,7 @@ members = [
     "analytics",
     "backtest",
     "commodities",
+    "equity",
     "fx",
     "lineage",
     "macro",
@@ -535,6 +536,35 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/56/8f/65fc623b51448f2bfba1a9ec6ab3debb4664c0876c0113a5e782600b53ac/duckdb-1.5.3-cp314-cp314-manylinux_2_26_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d0405eae18ec6e8210a471c97dbfe87a7e4d605274b7fe572a1f276e92158f13", size = 21455828, upload-time = "2026-05-20T11:55:23.847Z" },
     { url = "https://files.pythonhosted.org/packages/2b/db/d0274cbe9f5fe219f77c0bdf900ac77103569e83c102a4225ce04cbc607d/duckdb-1.5.3-cp314-cp314-win_amd64.whl", hash = "sha256:33ae08b3e818d7613d8936744b67718c2062c2f530376895bfd89efb51b81538", size = 13640011, upload-time = "2026-05-20T11:55:26.276Z" },
     { url = "https://files.pythonhosted.org/packages/07/5d/8f1899b8bef291caf953992fcd6c24df9f29387a35645e58c2504a5ca473/duckdb-1.5.3-cp314-cp314-win_arm64.whl", hash = "sha256:746433e49bbc667b4df283153415fbe37e9083e0eff6c3cd6e54de7536869cd4", size = 14411554, upload-time = "2026-05-20T11:55:29.037Z" },
+]
+
+[[package]]
+name = "equity"
+version = "0.1.0"
+source = { editable = "packages/equity" }
+dependencies = [
+    { name = "pandas" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "yfinance" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pandas", specifier = ">=2.2" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "yfinance", specifier = ">=0.2.40" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.15.16" },
 ]
 
 [[package]]
@@ -2154,6 +2184,7 @@ name = "sym"
 version = "0.1.0"
 source = { editable = "packages/sym" }
 dependencies = [
+    { name = "equity" },
     { name = "exchange-calendars" },
     { name = "financedatabase" },
     { name = "fx" },
@@ -2173,6 +2204,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "equity", editable = "packages/equity" },
     { name = "exchange-calendars", specifier = ">=4.13.2" },
     { name = "financedatabase", specifier = ">=2.4.0" },
     { name = "fx", editable = "packages/fx" },

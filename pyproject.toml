@@ -28,6 +28,7 @@ members = [
     "packages/commodities",
     "packages/fx",
     "packages/universe",
+    "packages/equity",
 ]
 
 [dependency-groups]

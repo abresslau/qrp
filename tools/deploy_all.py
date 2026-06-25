@@ -46,6 +46,7 @@ REGISTRY: dict[str, tuple[Path, str]] = {
     "commodities": (REPO / "packages/commodities/db", "commodities"),
     "fx": (REPO / "packages/fx/db", "fx"),
     "universe": (REPO / "packages/universe/db", "universe"),
+    "equity": (REPO / "packages/equity/db", "equity"),
     "optimiser": (REPO / "packages/optimiser/db", "optimiser"),
     "portfolios": (REPO / "packages/portfolios/db", "portfolios"),
     "signals": (REPO / "packages/signals/db", "signals"),

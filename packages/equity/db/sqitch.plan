@@ -1,0 +1,6 @@
+%syntax-version=1.0.0
+%project=equity
+%uri=https://github.com/abresslau/qrp-equity
+
+equity_schema 2026-06-25T12:00:00Z Andre <ab@gladstone-management.com> # equity schema: raw OHLCV (prices_raw) + explicit corporate-action factors (corporate_actions) + gap/anomaly logs (price_gaps/prices_review) + per-figi ingest cursor + run log + deterministic v_prices_adjusted view + materialized PR/TR matrix (fact_returns) + 52w extremes; seeded currency + return_window reference; own database. composite_figi -> securities is a SOFT reference (sym DB).
+seed_reference [equity_schema] 2026-06-25T13:00:00Z Andre <ab@gladstone-management.com> # Seed the equity-DB reference tables (currency ISO list + the 28 return_window defs) so a fresh deploy is functional (prices_raw/corporate_actions FK currency; fact_returns FK return_window); idempotent.
