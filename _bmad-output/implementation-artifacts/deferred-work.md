@@ -1,4 +1,8 @@
 
+## Deferred from: code review of portfolios-live-autorefresh-parity (2026-06-29) — RESOLVED same day
+
+- **[RESOLVED 2026-06-29] Non-finite auto-refresh interval drives a zero-delay poll loop — shared across all live boards** (`apps/web/app/monitor/fx/page.tsx`, `apps/web/app/monitor/wei/page.tsx`, `apps/web/components/heatmap-view.tsx`) — the `onChange` handler computed `Math.max(0, Math.floor(Number(e.target.value) || 0))`; an over-large numeric literal (e.g. `1e400`) overflowed to `Infinity`, so `setInterval(…, Math.max(3, Infinity)*1000)` passed a non-finite delay that browsers clamp to 0 → a max-rate fetch loop. The portfolio live cockpit copy was patched during the review; the three sibling boards were swept with the identical `Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0` guard immediately after (same branch/commit). No remaining occurrences.
+
 ## Deferred from: code review of the Monitor arc (2026-06-22)
 
 Adversarial 3-layer review (Blind / Edge / Acceptance) of the 4 Monitor stories (wei-world-equity-indices, wei-backdate-as-of-date, monitor-fx-cross-matrix, portfolios-live-header-pnl-declutter). 4 patches applied (FX `ccys` dedupe, WEI stale-tooltip honesty, canonical `as_of_date` SQL placeholder, live-page test-masking). Deferred:

@@ -1,6 +1,6 @@
 # Story: Portfolio live cockpit — auto-refresh parity with the WEI / FX live boards
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-22 (Andre: "review the portfolio live page so it's like
 wei and fx pages"). The WEI (`/monitor/wei`) and FX (`/monitor/fx`) live boards both poll-auto-refresh
@@ -99,6 +99,15 @@ and I get a visible "refreshed" confirmation each tick.
   off-by-default + 3s floor + `refreshed` suffix + manual ↻ re-fetch). tsc/eslint clean; web 138 green
   (5 in this file). Real-Chrome CDP on `/portfolios/5/live`: auto=3s → "every 3s", the `refreshed` stamp
   advanced 15:29:04 → 15:29:14 over ~2 ticks; control + badge + cockpit render correctly (screenshot).
+
+### Review Findings
+
+<!-- bmad-code-review 2026-06-29 (3 adversarial layers: Blind Hunter / Edge Case Hunter / Acceptance Auditor) on commit 847959b. Acceptance Auditor: PASS, all 7 ACs satisfied. -->
+
+- [x] [Review][Patch] Non-finite auto-refresh interval drives a zero-delay poll loop [apps/web/app/portfolios/[id]/live/page.tsx:160] — `Number(e.target.value)` overflows to `Infinity` on an over-large numeric literal (e.g. `1e400`); `Math.max(0, Math.floor(Infinity))` = `Infinity`, so `setInterval(…, Math.max(3, Infinity)*1000)` passes a non-finite delay that browsers clamp to 0 → a max-rate composition fetch loop. FIXED: `onChange` now guards with `Number.isFinite(v)` (non-finite → 0/off); NaN and negatives still resolve to off via the existing clamp.
+- [x] [Review][Defer→Resolved] Same non-finite-interval expression in the sibling boards [apps/web/app/monitor/fx/page.tsx, apps/web/app/monitor/wei/page.tsx, apps/web/components/heatmap-view.tsx] — pre-existing shared pattern, not introduced by this change. SWEPT same day (2026-06-29) with the identical `Number.isFinite` guard.
+
+<!-- Dismissed as noise/parity (5): "stuck refreshing under slow backend" (refuted — each effect run sets compLoading=true and the newest non-aborted run clears it; newest-wins AbortController prevents pile-up; identical to heatmap-view); timer not reset on manual ↻ (by design, deps exclude nonce, matches siblings); silent 1-2s→3s floor (intentional, test encodes it, matches siblings); locale-coupled /refreshed \d/ test (deterministic in project locale); AC2 offline-branch + timer effect untested (within AC7 scope, matches sibling precedent). -->
 
 ## Dev Notes
 
