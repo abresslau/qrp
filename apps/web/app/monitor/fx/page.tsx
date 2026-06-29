@@ -679,7 +679,10 @@ export default function FxMatrixPage() {
                   type="number"
                   min={0}
                   value={autoSec || ""}
-                  onChange={(e) => setAutoSec(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setAutoSec(Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+                  }}
                   placeholder="off"
                   aria-label="Auto-refresh interval in seconds"
                   className="w-12 rounded border border-border bg-bg px-1 py-0.5 text-xs text-fg"
