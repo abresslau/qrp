@@ -116,9 +116,11 @@ export default function PortfolioLive() {
     <div className="w-full space-y-3 2xl:space-y-4">
       {/* Header — title + live P&L strip (left) and nav buttons (right) on one row */}
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-fg">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-6 gap-y-2">
+          <div className="min-w-0">
+            {/* min-w-0 on the flex ancestors + break-words lets a pathological long/unbroken portfolio
+                name break instead of forcing horizontal header overflow; normal names still wrap. */}
+            <h1 className="break-words text-2xl font-semibold tracking-tight text-fg">
               {p?.name ?? "Portfolio"} <span className="text-muted">· Live</span>
             </h1>
             <p className="mt-1 text-sm text-muted">

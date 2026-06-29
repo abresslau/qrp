@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { PortfolioPnlStrip } from "@/components/portfolio-pnl-strip";
@@ -58,5 +58,15 @@ describe("PortfolioPnlStrip", () => {
     render(<PortfolioPnlStrip portfolio={portfolio()} {...RETURNS} />);
     expect(screen.getByText("+1.64%")).toBeInTheDocument();
     expect(screen.queryByText(/USD/)).not.toBeInTheDocument();
+  });
+
+  it("renders the — placeholder for each P&L stat when returns are null (pre-composition-load)", () => {
+    // The cockpit renders the strip with null Daily/MTD/YTD on every load before the composition
+    // settles — pct(null) must show "—", not a "0.00%" or a crash.
+    render(<PortfolioPnlStrip portfolio={portfolio()} dailyReturn={null} mtdReturn={null} ytdReturn={null} />);
+    for (const label of ["Daily P&L", "MTD P&L", "YTD P&L"]) {
+      const stat = screen.getByText(label).parentElement as HTMLElement;
+      expect(within(stat).getByText("—")).toBeInTheDocument();
+    }
   });
 });
