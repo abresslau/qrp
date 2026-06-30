@@ -338,6 +338,10 @@ development_status:
   #   the `review` column so finished stories don't drift (autorefresh-parity sat in review 06-22->06-29); (3) make the
   #   gated-returns skip-null rule a shared convention (re-derived on 3 surfaces, misdiagnosed once); (4) polish the small
   #   carried defers (header title truncate + null-placeholder test). Arc functionally complete + CDP-verified; board otherwise closed.
+  #   ACTION STATUS: #4 DONE 2026-06-30 (header overflow guard + null-placeholder test). #1 DONE 2026-06-30 — turned out a
+  #   misdiagnosis, NOT a broken toolchain: the web tsc/eslint/vitest gate runs (binaries hoisted to ROOT node_modules/.bin;
+  #   `npm --workspace web run typecheck|test|lint`). Proven: tsc clean + vitest 154/154 after fixing rates-page test rot.
+  #   Surfaced 8 pre-existing set-state-in-effect lint errors in app/rates/page.tsx -> deferred (see deferred-work.md). #2/#3 open.
   portfolios-exposure-and-layout: done
   portfolios-live-heatmap-and-pizza: done
   portfolios-live-grid-eod-returns: done  # created + implemented + reviewed 2026-06-20 (live-rebased trailing returns in the grid; 2 review patches applied)
