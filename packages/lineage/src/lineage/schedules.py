@@ -164,18 +164,20 @@ commodities_daily = ScheduleDefinition(
 # here is that each calculation runs as soon as ITS OWN data is in). The window resolves once
 # (`date_range`) and threads to every node as "start/end". Topology:
 #
-#   date_range ─► equity_prices ──► equity_returns ──┐
-#                 ├─► index_levels ──► index_returns ─┤
-#                 ├─► equity_gics ────────────────────┤
-#                 ├─► fx ─────────────────────────────┤─► validate   (cross-layer gate)
-#                 ├─► commodities, rates, macro, ─────┘
-#                 └─► alt_data, fundamental, universe
+#   date_range ─► equity_prices ──► equity_returns ─────┐
+#                 ├─► index_levels ──► index_returns ────┤
+#                 ├─► commodities ──► commodity_returns ─┤
+#                 ├─► equity_gics ───────────────────────┤─► validate   (cross-layer gate)
+#                 ├─► fx ────────────────────────────────┤
+#                 └─► rates, macro, alt_data, ───────────┘
+#                     fundamental, universe
 #
 # A calculation that DERIVES from a product's data chains off it: equity_returns (`sym recompute`)
-# after equity_prices; index_returns (`indices returns`) after index_levels (split out of the old fused
-# `sym indices`). equity_gics (`sym classify`) does NOT derive from prices — it classifies the current
-# security set — so it runs independently off the window (no equity_prices dependency). fx / commodities
-# / rates / macro / alt_data / fundamental / universe are data-only
+# after equity_prices; index_returns (`indices returns`) after index_levels; commodity_returns
+# (`commodity returns` — trailing-window returns over the raw continuous settle, roll jumps included)
+# after commodities. equity_gics (`sym classify`) does NOT derive from prices — it classifies the
+# current security set — so it runs independently off the window. fx / rates / macro / alt_data /
+# fundamental / universe are data-only
 # (analytics are derive-on-read). `validate` checks the whole warehouse, so it fans in from every leaf
 # (the per-product calcs + the data-only nodes). op tags mark `phase: data|calc` for legibility. op
 # DEFINITION names are `eod_*`-prefixed
@@ -326,6 +328,17 @@ def index_returns_op(context, window: str) -> str:
     return window
 
 
+@op(name="eod_commodity_returns", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
+def commodity_returns_op(context, window: str) -> str:
+    """COMMODITY calc — recompute trailing-window returns (commodity.return_daily) across [start, end]
+    from the settle series. Runs right after `commodities` (mirrors equity/index). Attempt-all (a hiccup
+    is logged, doesn't gate validate). NB: raw continuous front-month — returns include roll jumps."""
+    start, end = window.split("/")
+    _shell(context, f"commodity returns {start}..{end}",
+           ["commodity.cli", "returns", "--start_date", start, "--end_date", end], critical=False)
+    return window
+
+
 # --- cross-layer validate — fans in from EVERY leaf (runs after all data + the equity calcs) ----------
 
 @op(name="validate", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
@@ -353,13 +366,16 @@ def eod_job():
     w = date_range_op()  # the `date_range` node — resolves [start, end] for every downstream node
     eq = equity_prices_op.alias("equity_prices")(w)
     idx = index_levels_op.alias("index_levels")(w)
+    comm = _BUCKET_OPS["commodities"].alias("commodities")(w)
     leaves = [
-        equity_returns_op.alias("equity_returns")(eq),   # returns DERIVE from prices → after equity_prices
-        equity_gics_op.alias("equity_gics")(w),          # GICS is independent of prices → off date_range
-        index_returns_op.alias("index_returns")(idx),    # index calc — right after index levels
+        equity_returns_op.alias("equity_returns")(eq),    # returns DERIVE from prices → after equity_prices
+        equity_gics_op.alias("equity_gics")(w),           # GICS is independent of prices → off date_range
+        index_returns_op.alias("index_returns")(idx),     # index calc — right after index levels
+        commodity_returns_op.alias("commodity_returns")(comm),  # commodity calc — right after commodities
         fx_op.alias("fx")(w),
     ]
-    leaves += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS]
+    # the remaining data-only buckets (commodities is wired above for its returns calc)
+    leaves += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS if k != "commodities"]
     validate_op.alias("validate")(leaves)  # cross-layer gate — fans in from every leaf
 
 
