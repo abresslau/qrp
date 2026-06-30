@@ -36,19 +36,25 @@ mutation Launch($selector: JobOrPipelineSelector!, $rc: RunConfigData) {
 
 def launch_job(
     job: str, subcategories: list[str] | None = None, as_of_date: str | None = None,
+    start_date: str | None = None, end_date: str | None = None,
     timeout: float = 8.0,
 ) -> dict:
     """Launch a bucket job in the running Dagster instance via GraphQL ``launchRun``.
 
-    The bucket jobs wrap a single op ``<job>_load`` whose config is the BucketConfig
-    (``subcategories``/``as_of_date``) — so ``subcategories=["msci"]`` on ``index_levels`` runs only
-    ``sym msci-pull``. Returns ``{ok, run_id?, status?, error?}``; never raises (a dead daemon →
-    ``{ok: False, error: …}``)."""
+    The bucket jobs wrap a single op whose config is the BucketConfig
+    (``subcategories`` + the ``start_date``/``end_date`` window, or the ``as_of_date`` single-date
+    alias) — so ``subcategories=["msci"]`` on ``index_levels`` runs only ``sym msci-pull``, and a
+    ``start_date``/``end_date`` pair backfills that window. Returns ``{ok, run_id?, status?, error?}``;
+    never raises (a dead daemon → ``{ok: False, error: …}``)."""
     cfg: dict = {}
     if subcategories is not None:
         cfg["subcategories"] = list(subcategories)
     if as_of_date:
         cfg["as_of_date"] = as_of_date
+    if start_date:
+        cfg["start_date"] = start_date
+    if end_date:
+        cfg["end_date"] = end_date
     run_config = {"ops": {f"{job}_load": {"config": cfg}}}
     selector = {
         "repositoryLocationName": dagster_code_location(),

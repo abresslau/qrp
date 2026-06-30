@@ -105,7 +105,9 @@ def data_monitor_eod(gw: EodMonitorGateway = Depends(_gateway)) -> dict:
 class LaunchRequest(BaseModel):
     job: str  # a bucket key (fx, equity_prices, index_levels, rates, …)
     subcategories: list[str] = []  # empty ⇒ the whole bucket; e.g. ["msci"] ⇒ only that subcategory
-    as_of_date: str | None = None
+    as_of_date: str | None = None  # single-date alias
+    start_date: str | None = None  # window start (with end_date) for a backfill
+    end_date: str | None = None    # window end
 
 
 class LaunchResult(BaseModel):
@@ -127,7 +129,10 @@ def data_monitor_launch(req: LaunchRequest) -> dict:
     if req.job not in set(bucket_keys()):
         raise HTTPException(status_code=422, detail=f"unknown job {req.job!r}")
     # the page sends the bucket key; Dagster knows the job by its mnemonic name (buckets.JOB_NAMES).
-    res = launch_job(job_name(req.job), req.subcategories or None, req.as_of_date)
+    res = launch_job(
+        job_name(req.job), req.subcategories or None, req.as_of_date,
+        start_date=req.start_date, end_date=req.end_date,
+    )
     out: dict = {"ok": res["ok"], "error": res.get("error")}
     if res["ok"]:
         out["run_id"] = res["run_id"]

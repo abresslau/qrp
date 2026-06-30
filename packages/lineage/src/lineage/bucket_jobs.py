@@ -35,20 +35,48 @@ Cmd = tuple[str, ...]
 CMD_TIMEOUT_S = 5400
 
 
-def _resolve_as_of(context, config_as_of: str) -> str:
-    as_of = (config_as_of or "").strip()
-    if as_of:
-        return as_of
+def _tick_or_today(context) -> str:
     run = getattr(context, "run", None)
     tick = (run.tags.get("dagster/scheduled_execution_time") if run else None) or ""
     return tick[:10] or date.today().isoformat()
 
 
-def _window(as_of: str, days: int = 1) -> tuple[str, str]:
-    """A short [start, end] window ending at ``as_of`` — a light idempotent top-up (matches the
-    rates_world tail). days=1 → a single business day's worth of slack."""
-    end = date.fromisoformat(as_of)
-    return (end - timedelta(days=days)).isoformat(), end.isoformat()
+def resolve_window(
+    context, start_date: str = "", end_date: str = "", as_of_date: str = ""
+) -> tuple[str, str]:
+    """Resolve a ``[start_date, end_date]`` business-date window from the config trio — the single
+    resolver shared by the bucket jobs (``BucketConfig``) and the composite ``eod`` job
+    (``EodConfig``). Semantics:
+
+    * both blank        → ``end`` = the scheduled tick / today, ``start`` = ``end`` (a single day, so
+      the scheduled nightly run is unchanged);
+    * ``end`` set, no ``start`` → ``start`` = ``end`` (single day);
+    * both set          → the inclusive window;
+    * ``as_of_date`` set (start/end blank) → back-compat alias: ``start`` = ``end`` = ``as_of_date``.
+
+    Validates both dates and rejects ``start`` > ``end``.
+    """
+    sd, ed, ao = (start_date or "").strip(), (end_date or "").strip(), (as_of_date or "").strip()
+    if not ed:
+        ed = ao or _tick_or_today(context)
+    if not sd:
+        sd = ao or ed
+    for d in (sd, ed):
+        try:
+            date.fromisoformat(d)
+        except ValueError as exc:
+            raise RuntimeError(f"invalid date {d!r} (expected YYYY-MM-DD)") from exc
+    if sd > ed:
+        raise RuntimeError(f"start_date {sd} is after end_date {ed}")
+    return sd, ed
+
+
+def _tail(start: str, end: str, days: int) -> tuple[str, str]:
+    """Pad ``start`` back to at least ``days`` before ``end`` — a publish-lag lookback for rates /
+    commodities (their vendors restate the last couple of weeks). ISO dates compare chronologically,
+    so ``min`` on the strings is correct; an explicit range wider than the tail is preserved."""
+    floor = (date.fromisoformat(end) - timedelta(days=days)).isoformat()
+    return (min(start, floor), end)
 
 
 def _discover_universes() -> list[str]:
@@ -71,81 +99,91 @@ def _discover_universes() -> list[str]:
 
 
 # --- per-bucket command builders ------------------------------------------------------------
-# all_cmds(as_of) -> the whole-bucket commands; one_cmds(subcat, as_of) -> a single subcategory.
-# (module, *args, "!") — a trailing "!" marks the command critical (validate).
+# all_cmds(start, end) -> the whole-bucket commands; one_cmds(subcat, start, end) -> a single
+# subcategory. Range-native loaders take the [start, end] window directly; single-shot / incremental
+# loaders ignore it (they catch up from their cursor or are point-in-time snapshots).
+# (module, *args, "!") — a trailing "!" marks the command critical (validate / recompute).
 
-def _fx_all(a: str) -> list[Cmd]:
-    return [("sym.cli", "fx", "load")]
-
-
-def _equity_all(a: str) -> list[Cmd]:
-    return [("sym.cli", "load")]  # incremental-from-cursor for every universe member
+def _fx_all(s: str, e: str) -> list[Cmd]:
+    return [("sym.cli", "fx", "load")]  # single-shot: USD-base incremental, no date range
 
 
-def _equity_one(u: str, a: str) -> list[Cmd]:
-    s, e = _window(a)
+def _equity_all(s: str, e: str) -> list[Cmd]:
+    return [("sym.cli", "load")]  # incremental-from-cursor for every universe member (forward gap-fill)
+
+
+def _equity_one(u: str, s: str, e: str) -> list[Cmd]:
     return [("sym.cli", "load", "--scope", f"universe:{u}", "--start_date", s, "--end_date", e)]
 
 
-def _index_all(a: str) -> list[Cmd]:
+def _index_all(s: str, e: str) -> list[Cmd]:
     return [("sym.cli", "indices"), ("sym.cli", "msci-pull", "--all")]
 
 
-def _index_one(p: str, a: str) -> list[Cmd]:
+def _index_one(p: str, s: str, e: str) -> list[Cmd]:
     # msci is one-index-at-a-time; `--all` re-pulls every MSCI instrument. yahoo = the registry load.
     return [("sym.cli", "msci-pull", "--all")] if p == "msci" else [("sym.cli", "indices")]
 
 
-def _rates_all(a: str) -> list[Cmd]:
-    s, e = _window(a, days=12)
+def _rates_all(s: str, e: str) -> list[Cmd]:
+    ts, te = _tail(s, e, 12)  # 12-day publish-lag lookback (≥ the window)
     return [
-        ("rates.cli", "curve", "load"),                                   # GB (BoE archive)
-        ("rates.cli", "curve", "load-world", "--start_date", s, "--end_date", e),
+        ("rates.cli", "curve", "load"),                                     # GB (BoE archive)
+        ("rates.cli", "curve", "load-world", "--start_date", ts, "--end_date", te),
         ("rates.cli", "validate", "!"),
     ]
 
 
-def _rates_one(c: str, a: str) -> list[Cmd]:
-    s, e = _window(a, days=12)
+def _rates_one(c: str, s: str, e: str) -> list[Cmd]:
+    ts, te = _tail(s, e, 12)
     if c.upper() == "GB":
         return [("rates.cli", "curve", "load"), ("rates.cli", "validate", "!")]
     return [
-        ("rates.cli", "curve", "load-world", "--country", c, "--start_date", s, "--end_date", e),
+        ("rates.cli", "curve", "load-world", "--country", c, "--start_date", ts, "--end_date", te),
         ("rates.cli", "validate", "!"),
     ]
 
 
-def _fundamental_all(a: str) -> list[Cmd]:
-    return [("sym.cli", "fundamentals", "--all")]
+def _commodity_all(s: str, e: str) -> list[Cmd]:
+    # Not a generated bucket job (its dedicated job lives in schedules.py — see _EXTERNAL_JOB_BUCKETS),
+    # but a builder so the composite `eod` job runs commodities from the same single source of truth.
+    ts, te = _tail(s, e, 12)
+    return [
+        ("commodity.cli", "price", "load", "--start_date", ts, "--end_date", te),
+        ("commodity.cli", "validate", "!"),
+    ]
 
 
-def _fundamental_one(u: str, a: str) -> list[Cmd]:
+def _fundamental_all(s: str, e: str) -> list[Cmd]:
+    return [("sym.cli", "fundamentals", "--all")]  # single-shot: point-in-time vendor snapshot
+
+
+def _fundamental_one(u: str, s: str, e: str) -> list[Cmd]:
     return [("sym.cli", "fundamentals", "--universe", u)]
 
 
-def _altdata_all(a: str) -> list[Cmd]:
-    return [("altdata.cli", "load")]
+def _altdata_all(s: str, e: str) -> list[Cmd]:
+    return [("altdata.cli", "load", "--start_date", s, "--end_date", e)]  # range-native
 
 
-def _macro_all(a: str) -> list[Cmd]:
-    return [("macro.cli", "load")]
+def _macro_all(s: str, e: str) -> list[Cmd]:
+    return [("macro.cli", "load")]  # single-shot: full/incremental refresh, no date range
 
 
-def _universe_all(a: str) -> list[Cmd]:
+def _universe_all(s: str, e: str) -> list[Cmd]:
     return [("sym.cli", "universe", "monitor", u) for u in _discover_universes()]
 
 
-def _universe_one(u: str, a: str) -> list[Cmd]:
+def _universe_one(u: str, s: str, e: str) -> list[Cmd]:
     return [("sym.cli", "universe", "monitor", u)]
 
 
 CALC_TYPES = ("returns", "gics", "index_returns")
 
 
-def _calc_cmds(t: str, a: str) -> list[Cmd]:
-    s, e = _window(a)
+def _calc_cmds(t: str, s: str, e: str) -> list[Cmd]:
     # returns (recompute) is the CRITICAL compute step (trailing "!" → reddens the run on failure,
-    # per the Dev Notes compute-vs-ingest rule) and is date-windowed so a backfill targets `as_of`.
+    # per the Dev Notes compute-vs-ingest rule) and is date-windowed so a backfill targets [s, e].
     return {
         "returns": [("sym.cli", "recompute", "--start_date", s, "--end_date", e, "!")],
         "gics": [("sym.cli", "classify")],
@@ -153,19 +191,21 @@ def _calc_cmds(t: str, a: str) -> list[Cmd]:
     }.get(t, [])
 
 
-def _calc_all(a: str) -> list[Cmd]:
-    return [c for t in CALC_TYPES for c in _calc_cmds(t, a)]
+def _calc_all(s: str, e: str) -> list[Cmd]:
+    return [c for t in CALC_TYPES for c in _calc_cmds(t, s, e)]
 
 
-def _calc_one(t: str, a: str) -> list[Cmd]:
-    return _calc_cmds(t, a)
+def _calc_one(t: str, s: str, e: str) -> list[Cmd]:
+    return _calc_cmds(t, s, e)
 
 
-# bucket key -> (all_cmds, one_cmds | None, discover | None)
+# bucket key -> (all_cmds, one_cmds | None, discover | None). `commodities` has a builder (for the
+# composite `eod` job to reuse) but is excluded from generated BUCKET_JOBS (its job is in schedules.py).
 _BUILDERS: dict[str, tuple[Callable, Callable | None, Callable | None]] = {
     "fx": (_fx_all, None, None),
     "equity_prices": (_equity_all, _equity_one, _discover_universes),
     "index_levels": (_index_all, _index_one, lambda: ["yahoo", "msci"]),
+    "commodities": (_commodity_all, None, None),
     "rates": (_rates_all, _rates_one, None),
     "fundamental": (_fundamental_all, _fundamental_one, _discover_universes),
     "alt_data": (_altdata_all, None, None),
@@ -210,18 +250,17 @@ def _run_cmd(context, raw: Cmd) -> bool:
 
 class BucketConfig(Config):
     subcategories: list[str] = Field(default_factory=list)
-    as_of_date: str = ""
+    start_date: str = ""  # window start (YYYY-MM-DD); blank → single day (= end_date)
+    end_date: str = ""    # window end (YYYY-MM-DD); blank → scheduled tick / today
+    as_of_date: str = ""  # back-compat single-date alias (start = end = as_of_date when start/end blank)
 
 
 def _run_bucket(context, key: str, config: BucketConfig) -> None:
     all_cmds, one_cmds, discover = _BUILDERS[key]
-    as_of = _resolve_as_of(context, config.as_of_date)
-    # Validate the business date ONCE, up front — a malformed value (e.g. an operator typo) gets a
-    # clear error instead of a stack trace from deep inside a window builder.
-    try:
-        date.fromisoformat(as_of)
-    except ValueError as exc:
-        raise RuntimeError(f"bucket '{key}': invalid as_of_date {as_of!r} (expected YYYY-MM-DD)") from exc
+    # Resolve + validate the [start, end] window ONCE, up front — a malformed value (operator typo)
+    # or an inverted range gets a clear error instead of a stack trace from a window builder.
+    start, end = resolve_window(context, config.start_date, config.end_date, config.as_of_date)
+    win = start if start == end else f"{start}..{end}"
     subcats = [s.strip() for s in (config.subcategories or []) if s.strip()]
 
     # Fail-fast on an unknown subcategory (AC#2) where the bucket can enumerate its valid set.
@@ -235,8 +274,8 @@ def _run_bucket(context, key: str, config: BucketConfig) -> None:
             )
 
     if not subcats:
-        plan: list[Cmd] = list(all_cmds(as_of))
-        context.log.info(f"bucket '{key}': ALL subcategories, as_of={as_of} ({len(plan)} commands)")
+        plan: list[Cmd] = list(all_cmds(start, end))
+        context.log.info(f"bucket '{key}': ALL subcategories, window={win} ({len(plan)} commands)")
         units = [("(all)", plan)]
     elif one_cmds is None:
         # single-subcategory bucket (fx/alt_data/macro) — the CLI has no per-subcategory selector,
@@ -244,12 +283,12 @@ def _run_bucket(context, key: str, config: BucketConfig) -> None:
         # imply it was). [Review: macro/fx/alt_data selector deferral]
         context.log.warning(
             f"bucket '{key}': no per-subcategory selector for this source; selection {subcats} "
-            f"NOT applied — running the whole bucket. as_of={as_of}"
+            f"NOT applied — running the whole bucket. window={win}"
         )
-        units = [("(all)", list(all_cmds(as_of)))]
+        units = [("(all)", list(all_cmds(start, end)))]
     else:
-        context.log.info(f"bucket '{key}': {subcats}, as_of={as_of}")
-        units = [(s, list(one_cmds(s, as_of))) for s in subcats]
+        context.log.info(f"bucket '{key}': {subcats}, window={win}")
+        units = [(s, list(one_cmds(s, start, end))) for s in subcats]
 
     # An empty plan is NOT success — it means discovery returned nothing or a selection resolved to
     # no commands. Fail loudly instead of a green run that ingested zero rows. [Review]
