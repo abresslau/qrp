@@ -27,7 +27,6 @@ from dagster import (
     DefaultScheduleStatus,
     RetryPolicy,
     ScheduleDefinition,
-    graph,
     job,
     op,
 )
@@ -160,20 +159,30 @@ commodities_daily = ScheduleDefinition(
 )
 
 
-# ---- `eod` as a readable DAG: one op per bucket, grouped into data-load and calculations phases ----
-# The job is a graph-of-graphs so the Dagster UI shows two collapsible PHASE boxes — `eod_data` (every
-# bucket as its OWN node: equity_prices, fx, index_levels, commodities, rates, macro, alt_data,
-# fundamental, universe) and `eod_calculations` (returns_recompute → validate). The window is resolved
-# ONCE (`resolve_eod_window`) and threaded as "start/end" into every node; a fan-in (`data_complete`)
-# makes the calc phase wait for ALL data nodes. Each node shells the SAME CLI as before — only the op
-# decomposition is new, so behavior is unchanged. NOTE: launchpad config now lives under the
-# `resolve_eod_window` op (was `eod_data`).
+# ---- `eod` as a readable DAG: per-bucket data nodes + per-PRODUCT calculations ----------------
+# A FLAT job graph (NOT phase sub-graphs — those force the calc phase to wait for ALL data; the point
+# here is that each calculation runs as soon as ITS OWN data is in). The window resolves once
+# (`resolve_eod_window`) and threads to every node as "start/end". Topology:
+#
+#   resolve_eod_window ─► equity_prices ─┬─► equity_returns ─┐
+#                                          └─► equity_gics ───┤
+#                         fx ──────────────────────────────────┤
+#                         index_levels ────────────────────────┤─► validate   (cross-layer gate)
+#                         commodities, rates, macro, alt_data, ─┘
+#                         fundamental, universe
+#
+# Only equity has persisted calculations — returns (`sym recompute`) and GICS (`sym classify`) — and
+# they run RIGHT AFTER equity prices, not after every bucket. Index returns are computed inside
+# `sym indices` (the index_levels node). fx / commodities / rates / macro / alt_data / fundamental /
+# universe are data-only (analytics are derive-on-read). `validate` checks the whole warehouse, so it
+# fans in from every leaf (runs after all data + the equity calcs). Each node shells the SAME CLI as
+# before. op tags mark `phase: data|calc` for legibility. op DEFINITION names are `eod_*`-prefixed
+# (op/graph/job names share one repo namespace — a bare `commodities` op clashes with the `commodities`
+# job); nodes are aliased to clean names for the UI. Config (the window) is on `resolve_eod_window`.
 
-# The six separate-package buckets — each runs its bucket command builder (bucket_jobs._BUILDERS), so
-# `eod` and the per-bucket jobs share ONE definition and can't drift. equity_prices / fx / index_levels
-# are the sym-owned nodes (run via `sym eod --steps`, preserving the monitor→fill→map→classify chain).
 _EOD_DATA_BUCKETS = ("rates", "commodities", "macro", "alt_data", "fundamental", "universe")
-
+_DATA_TAG = {"phase": "data"}
+_CALC_TAG = {"phase": "calc"}
 EOD_TIMEOUT_S = 7200
 _EOD_RETRY = RetryPolicy(max_retries=2, delay=300)
 
@@ -192,6 +201,19 @@ def _sym_eod_steps(context, steps: str, end: str, *, critical: bool) -> None:
             raise RuntimeError(f"`sym eod --steps {steps}` exited {proc.returncode}")
 
 
+def _shell(context, label: str, args: list[str], *, critical: bool) -> None:
+    """Run ``python -m <args>``; attempt-all (log + swallow) unless ``critical`` (raise on non-zero)."""
+    proc = subprocess.run(
+        [sys.executable, "-m", *args], cwd=str(repo_root()),
+        capture_output=True, text=True, timeout=EOD_TIMEOUT_S,
+    )
+    context.log.info(f"{label}: " + (proc.stdout or "")[-4000:])
+    if proc.returncode != 0:
+        context.log.error(f"{label} FAILED (exit {proc.returncode}):\n{(proc.stderr or '')[-2000:]}")
+        if critical:
+            raise RuntimeError(f"`{label}` exited {proc.returncode}")
+
+
 @op(retry_policy=_EOD_RETRY)
 def resolve_eod_window(context, config: EodConfig) -> str:
     """Resolve the [start, end] window once (shared resolver) → ``"start/end"`` for every node."""
@@ -200,24 +222,20 @@ def resolve_eod_window(context, config: EodConfig) -> str:
     return f"{start}/{end}"
 
 
-# --- data-load phase: one op per bucket -------------------------------------------------------
+# --- DATA nodes (op defs `eod_*`-prefixed to avoid job-name collisions; aliased to clean UI names) ---
 
-# NOTE: op DEFINITION names are `eod_*`-prefixed so they don't collide with the same-named bucket jobs
-# (op/graph/job names share one repository namespace — e.g. a bare `commodities` op clashes with the
-# `commodities` job). The graph aliases each node back to the clean bucket name, so the UI still shows
-# `equity_prices` / `fx` / `commodities` / ….
-@op(name="eod_equity_prices", retry_policy=_EOD_RETRY)
+@op(name="eod_equity_prices", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
 def equity_prices_op(context, window: str) -> str:
-    """Equity prices + identity + GICS classify — the sym-owned chain (monitor→fill→map→classify).
-    CRITICAL: `fill` (the price pull) failing reddens the run and SKIPS the calc phase (returns derive
-    from prices). Incremental-from-cursor → catches prices up THROUGH `end` (forward gap-fill; a
-    historical re-pull is the `sym load --overwrite` runbook, not eod)."""
+    """Equity prices + identity — the sym-owned chain (monitor→fill→map). CRITICAL: `fill` (the price
+    pull) failing reddens the run and SKIPS the equity calcs + validate (returns derive from prices).
+    Incremental-from-cursor → catches prices up THROUGH `end` (forward gap-fill; a historical re-pull is
+    the `sym load --overwrite` runbook, not eod). GICS classify is now its own calc node (equity_gics)."""
     _start, end = window.split("/")
-    _sym_eod_steps(context, "monitor,fill,map,classify", end, critical=True)
+    _sym_eod_steps(context, "monitor,fill,map", end, critical=True)
     return window
 
 
-@op(name="eod_fx", retry_policy=_EOD_RETRY)
+@op(name="eod_fx", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
 def fx_op(context, window: str) -> str:
     """FX rates (USD base, incremental). Attempt-all (a failure is logged, doesn't gate returns)."""
     _start, end = window.split("/")
@@ -225,18 +243,19 @@ def fx_op(context, window: str) -> str:
     return window
 
 
-@op(name="eod_index_levels", retry_policy=_EOD_RETRY)
+@op(name="eod_index_levels", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
 def index_levels_op(context, window: str) -> str:
-    """Index levels (benchmark registry). Attempt-all."""
+    """Index levels AND index returns — both computed by `sym indices` (no separable index calc).
+    Attempt-all."""
     _start, end = window.split("/")
     _sym_eod_steps(context, "indices", end, critical=False)
     return window
 
 
 def _make_bucket_op(key: str, doc: str):
-    """A data-load op for a separate-package bucket — runs its shared builder commands, attempt-all
+    """A data node for a separate-package bucket — runs its shared builder commands, attempt-all
     (the builder's internal `validate "!"` critical markers are stripped so they can't red the night)."""
-    @op(name=f"eod_{key}", retry_policy=_EOD_RETRY)
+    @op(name=f"eod_{key}", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
     def _op(context, window: str) -> str:
         start, end = window.split("/")
         cmds = list(_BUILDERS[key][0](start, end))
@@ -265,75 +284,61 @@ _BUCKET_OPS = {
 }
 
 
-@op
-def data_complete(context, windows: list[str]) -> str:
-    """Fan-in: returns the window once EVERY data node has completed, so the calc phase waits for the
-    whole data-load phase. If a CRITICAL data node (equity_prices) failed, its output is missing and
-    this op — and therefore the calc phase — is skipped. All nodes carry the same window string."""
-    return windows[0] if windows else ""
+# --- EQUITY calculations — depend ONLY on equity_prices, so they start as soon as equity data lands ---
 
-
-# --- calculations phase -----------------------------------------------------------------------
-
-@op(name="returns_recompute", retry_policy=_EOD_RETRY)
-def recompute_op(context, window: str) -> str:
-    """Recompute fact_returns (PR+TR) across [start, end] — range-native `sym recompute
-    --start_date --end_date`. CRITICAL: a failure reddens the run and triggers the retry."""
+@op(name="eod_equity_returns", retry_policy=_EOD_RETRY, tags=_CALC_TAG)
+def equity_returns_op(context, window: str) -> str:
+    """EQUITY calc — recompute fact_returns (PR+TR) across [start, end] (range-native `sym recompute`).
+    Runs right after `equity_prices` (NOT after the other buckets). CRITICAL: a failure reddens the run,
+    triggers the retry, and skips `validate`."""
     start, end = window.split("/")
-    proc = subprocess.run(
-        [sys.executable, "-m", "sym.cli", "recompute", "--start_date", start, "--end_date", end],
-        cwd=str(repo_root()), capture_output=True, text=True, timeout=EOD_TIMEOUT_S,
-    )
-    context.log.info((proc.stdout or "")[-4000:])
-    if proc.returncode != 0:
-        context.log.error(f"sym recompute FAILED:\n{(proc.stderr or '')[-2000:]}")
-        raise RuntimeError(f"`sym recompute` exited {proc.returncode} (critical)")
+    _shell(context, f"sym recompute {start}..{end}",
+           ["sym.cli", "recompute", "--start_date", start, "--end_date", end], critical=True)
     return window
 
 
-@op(name="validate", retry_policy=_EOD_RETRY)
-def validate_op(context, window: str) -> None:
-    """Cross-layer `validate` gate via `sym eod --steps validate` — which (by sym's doctrine) exits 0
-    even when checks report FAIL, so a data-quality failure is LOGGED not run-red; the raise only fires
-    if the validate STEP itself errors (exit non-zero)."""
-    _start, end = window.split("/")
+@op(name="eod_equity_gics", retry_policy=_EOD_RETRY, tags=_CALC_TAG)
+def equity_gics_op(context, window: str) -> str:
+    """EQUITY calc — GICS classification (`sym classify`). Runs after `equity_prices` (needs identity).
+    Attempt-all (classify is non-critical — a failure is logged, doesn't gate validate)."""
+    _shell(context, "sym classify", ["sym.cli", "classify"], critical=False)
+    return window
+
+
+# --- cross-layer validate — fans in from EVERY leaf (runs after all data + the equity calcs) ----------
+
+@op(name="validate", retry_policy=_EOD_RETRY, tags=_CALC_TAG)
+def validate_op(context, windows: list[str]) -> None:
+    """Cross-layer `validate` gate via `sym eod --steps validate`. Fans in from every leaf node, so it
+    runs only after all data + the equity calcs are in. Exits 0 even when checks report FAIL (sym's
+    doctrine) — a data-quality failure is LOGGED not run-red; the raise only fires if the validate STEP
+    itself errors. Skipped if a critical node (equity_prices/equity_returns) failed (its output missing)."""
+    win = windows[0] if windows else ""
+    end = win.split("/")[1] if "/" in win else date.today().isoformat()
     _sym_eod_steps(context, "validate", end, critical=True)
-
-
-# --- the two phase graphs + the job -----------------------------------------------------------
-
-@graph
-def eod_data() -> str:
-    """DATA-LOAD phase — every bucket as its own node, all over the resolved window. Nodes are aliased
-    to clean bucket names (the op definitions are `eod_*` to avoid job-name collisions)."""
-    w = resolve_eod_window()
-    outs = [
-        equity_prices_op.alias("equity_prices")(w),
-        fx_op.alias("fx")(w),
-        index_levels_op.alias("index_levels")(w),
-    ]
-    outs += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS]
-    return data_complete(outs)
-
-
-@graph
-def eod_calculations(window: str) -> None:
-    """CALCULATIONS phase — recompute returns across the window, then validate."""
-    validate_op(recompute_op(window))
 
 
 @job(
     name="eod",
     description="Full end-of-day in one trigger over a [start_date, end_date] window (blank = today), as "
-    "a readable DAG: the `eod_data` phase runs every bucket as its own node (equity_prices [+identity/"
-    "classify], fx, index_levels, commodities, rates, macro, alt_data, fundamental, universe) and the "
-    "`eod_calculations` phase (returns_recompute → validate) runs only after ALL data nodes finish. "
-    "equity_prices is critical (its failure skips calc); the rest are attempt-all. Config (the window) "
-    "is on the `resolve_eod_window` op. sym_eod / commodities + the per-asset bucket jobs remain for "
-    "granular runs.",
+    "a readable DAG. DATA nodes (equity_prices, fx, index_levels, commodities, rates, macro, alt_data, "
+    "fundamental, universe) load in parallel off the resolved window; EQUITY CALCS (equity_returns = "
+    "recompute, equity_gics = classify) run as soon as equity_prices lands — NOT after the other buckets; "
+    "`validate` is the cross-layer gate that fans in from every leaf. equity_prices + equity_returns are "
+    "critical (a failure skips validate); the rest are attempt-all. Config (the window) is on the "
+    "`resolve_eod_window` op. sym_eod / commodities + the per-asset bucket jobs remain for granular runs.",
 )
 def eod_job():
-    eod_calculations(eod_data())
+    w = resolve_eod_window()
+    eq = equity_prices_op.alias("equity_prices")(w)
+    leaves = [
+        equity_returns_op.alias("equity_returns")(eq),  # equity calc — right after equity data
+        equity_gics_op.alias("equity_gics")(eq),        # equity calc — right after equity data
+        fx_op.alias("fx")(w),
+        index_levels_op.alias("index_levels")(w),
+    ]
+    leaves += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS]
+    validate_op.alias("validate")(leaves)  # cross-layer gate — fans in from every leaf
 
 
 # Weekdays 18:30 America/New_York — after the US cash close, by which point EU/UK/Asia EOD series are
