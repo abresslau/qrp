@@ -129,8 +129,10 @@ def data_monitor_launch(req: LaunchRequest) -> dict:
     if req.job not in set(bucket_keys()):
         raise HTTPException(status_code=422, detail=f"unknown job {req.job!r}")
     # the page sends the bucket key; Dagster knows the job by its mnemonic name (buckets.JOB_NAMES).
+    # pipelineName is the job's mnemonic name (job_name); the config nests under the op name, which is
+    # `{bucket_key}_op` (NOT `{job}_load`) — the bucket key is exactly req.job here.
     res = launch_job(
-        job_name(req.job), req.subcategories or None, req.as_of_date,
+        job_name(req.job), f"{req.job}_op", req.subcategories or None, req.as_of_date,
         start_date=req.start_date, end_date=req.end_date,
     )
     out: dict = {"ok": res["ok"], "error": res.get("error")}

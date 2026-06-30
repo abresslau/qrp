@@ -201,8 +201,16 @@ def eod_data(context, config: EodConfig) -> str:
     #    (logged, non-blocking; they don't gate equity returns). A bucket's internal `validate` "!"
     #    marker is stripped here so a rates/commodity validate FAIL can't red the whole nightly run.
     for key in _EOD_DATA_BUCKETS:
-        all_cmds = _BUILDERS[key][0]
-        for cmd in all_cmds(start, end):
+        cmds = list(_BUILDERS[key][0](start, end))
+        if not cmds:
+            # A bucket that resolved to zero commands (e.g. `universe` when discovery returns []) must
+            # be reported, not silently passed over — honest "no silent skip" (code-review finding).
+            context.log.warning(
+                f"eod_data: bucket '{key}' produced NO commands (e.g. universe discovery empty) — "
+                f"skipped, did not run. window={start}..{end}"
+            )
+            continue
+        for cmd in cmds:
             raw = cmd[:-1] if cmd and cmd[-1] == "!" else cmd  # non-blocking in the EOD context
             _run_cmd(context, raw)
     return f"{start}/{end}"

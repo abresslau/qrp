@@ -1,6 +1,6 @@
 # Story: EOD job runs every bucket over a [start_date, end_date] window
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-06-30 (Andre: "if I look at my data monitor page I can see most
 of the data is stale. I need my eod job to call all the individual jobs for the given start_date and
@@ -170,6 +170,36 @@ rates/commodities/macro/altdata/fundamental/universe are independent of equity r
   edges (rates worst-country CH ends 2025-07-31; commodities at last Friday pending the next publish),
   per AC#8's "don't force-green".
 
+### Review Findings
+
+<!-- bmad-code-review 2026-06-30 (3 adversarial layers: Blind Hunter / Edge Case Hunter / Acceptance
+Auditor) on commit 4d33487. No High severity; Acceptance Auditor confirmed AC#1–#7 + #9 met + test-pinned.
+3 patches applied, 6 dismissed. -->
+
+- [x] [Review][Patch] `as_of_date` pure single-date alias [bucket_jobs.py resolve_window] — it was silently
+  promoted to a window *bound* when combined with one explicit start/end (e.g. `end_date` + `as_of_date` →
+  `as_of` became the start). FIXED: `as_of_date` is honored only when BOTH start/end are blank; an explicit
+  window always wins (a stray `as_of_date` is ignored, not promoted). +unit coverage already green.
+- [x] [Review][Patch] `eod_data` no-silent-skip [schedules.py eod_data] — a bucket that resolved to zero
+  commands (e.g. `universe` when `_discover_universes()` returns `[]`) was silently passed over. FIXED:
+  log a `warning` ("produced NO commands … skipped") and continue (non-blocking, matching attempt-all — a
+  raise would red the night on a discovery hiccup). Mirrors `_run_bucket`'s honesty without its hard fail.
+- [x] [Review][Patch] `launch_job` op-config keying [dagster_runs.py + router.py] — config was nested under
+  `f"{job}_load"`, but the bucket op is `{key}_op` (the pre-existing bug the dev notes flagged; this commit
+  had widened it by routing the new start/end through it). FIXED: pass the op name (`{bucket_key}_op`)
+  explicitly; config now reaches the op. PROVEN LIVE: the old key → `RunConfigValidationInvalid (unexpected
+  entry calculations_load at root:ops)`; the fixed key + window config → ACCEPTED (run launched). This also
+  makes the Data Monitor "Run" button's subcategories/as_of/start/end actually work (closes the pre-existing
+  bug as a bonus).
+
+<!-- Dismissed (6): backfill recompute-vs-fetch divergence (documented Open-Q#1 — equity forward-fills
+incrementally; historical re-pull is the `--overwrite` runbook; Auditor confirmed no AC violation, range
+honored where it matters); `window.split("/")` arity guard (contract-safe — producer emits slash-free ISO
+`f"{start}/{end}"`); `!`-strip positional fragility (verified: no `_EOD_DATA_BUCKETS` builder ends in a
+legitimate `"!"`, so nothing real is truncated); validate-only-checks-end (validate is inherently as-of-date
+scoped; docstring already honest); all-blank-manual-launch-uses-wall-clock (pre-existing pattern shared with
+sym_eod; operator sets the date for backfills); index_levels double-run (Auditor confirmed NOT real — eod_calculations hardcodes recompute+validate, doesn't call the calc builder's index_returns path). -->
+
 ## Dev Notes
 
 ### Critical conventions (regressions if violated)
@@ -287,4 +317,5 @@ claude-opus-4-8 (Claude Code), 2026-06-30
 | Date | Change |
 |---|---|
 | 2026-06-30 | Created (bmad-create-story, Andre: "data monitor shows most data stale; need my eod job to call all the individual jobs for the given start_date and end_date"). The `eod` job exists but (1) omits macro/alt_data/fundamental/universe and (2) takes a single `as_of_date`. Story: make `eod` the union of all nine buckets over a `[start_date, end_date]` window, reusing `bucket_jobs._BUILDERS` as the single source of truth; range-native loaders take the window, single-shot loaders run once (as-of = end_date); two-stage gate + criticality preserved; scheduled single-day behaviour unchanged. Status → ready-for-dev. |
+| 2026-06-30 | Code-reviewed (bmad-code-review, 3 adversarial layers) → done. No High; Auditor confirmed AC#1–#7+#9 met + test-pinned. 3 patches: `as_of_date` pure-alias (no silent bound-promotion); `eod_data` no-silent-skip warning on an empty bucket plan; `launch_job` op-config keying fixed `{job}_load`→`{key}_op` (proven live: old key RunConfigValidationInvalid, fixed key + window ACCEPTED — also closes the pre-existing Run-button bug). 6 dismissed. 62 lineage+data_monitor tests + ruff green. |
 | 2026-06-30 | Dev complete → review (bmad-dev-story). Implemented Tasks 1–5: shared `resolve_window` + `(start,end)` builders + `_tail` lookback + `_commodity_all`; `EodConfig`/`BucketConfig` range; `eod_data` fans out to all 9 buckets (sym sequence + 6 separate-package builders, attempt-all) and `eod_calculations` recomputes the window. Launch API accepts start/end. 47 lineage + 15 data_monitor tests green, ruff clean, 12 jobs load. LIVE backfill `2026-06-23..2026-06-29` via Dagster CLI = RUN_SUCCESS; Data Monitor flipped 7 load-driven buckets to `ok` (macro already ok). 2 remain stale by honest source/vendor edge (rates CH source-end; commodities last-Friday). Flagged a pre-existing `launch_job` op-config-keying bug (data-monitor Run button; out of scope). Status → review. |

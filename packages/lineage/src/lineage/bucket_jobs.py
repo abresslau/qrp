@@ -57,10 +57,15 @@ def resolve_window(
     Validates both dates and rejects ``start`` > ``end``.
     """
     sd, ed, ao = (start_date or "").strip(), (end_date or "").strip(), (as_of_date or "").strip()
-    if not ed:
-        ed = ao or _tick_or_today(context)
-    if not sd:
-        sd = ao or ed
+    if ao and not sd and not ed:
+        sd = ed = ao  # pure single-date alias — ONLY when no explicit window is given
+    else:
+        # an explicit window wins; a stray as_of_date alongside start/end is ignored, not silently
+        # promoted to a bound (avoids a surprising widened range — code-review finding).
+        if not ed:
+            ed = _tick_or_today(context)
+        if not sd:
+            sd = ed
     for d in (sd, ed):
         try:
             date.fromisoformat(d)
