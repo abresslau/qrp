@@ -162,9 +162,9 @@ commodities_daily = ScheduleDefinition(
 # ---- `eod` as a readable DAG: per-bucket data nodes + per-PRODUCT calculations ----------------
 # A FLAT job graph (NOT phase sub-graphs — those force the calc phase to wait for ALL data; the point
 # here is that each calculation runs as soon as ITS OWN data is in). The window resolves once
-# (`resolve_eod_window`) and threads to every node as "start/end". Topology:
+# (`date_range`) and threads to every node as "start/end". Topology:
 #
-#   resolve_eod_window ─► equity_prices ─┬─► equity_returns ─┐
+#   date_range ─► equity_prices ─┬─► equity_returns ─┐
 #                                          └─► equity_gics ───┤
 #                         fx ──────────────────────────────────┤
 #                         index_levels ────────────────────────┤─► validate   (cross-layer gate)
@@ -178,13 +178,20 @@ commodities_daily = ScheduleDefinition(
 # fans in from every leaf (runs after all data + the equity calcs). Each node shells the SAME CLI as
 # before. op tags mark `phase: data|calc` for legibility. op DEFINITION names are `eod_*`-prefixed
 # (op/graph/job names share one repo namespace — a bare `commodities` op clashes with the `commodities`
-# job); nodes are aliased to clean names for the UI. Config (the window) is on `resolve_eod_window`.
+# job); nodes are aliased to clean names for the UI. Config (the window) is on `date_range`.
 
 _EOD_DATA_BUCKETS = ("rates", "commodities", "macro", "alt_data", "fundamental", "universe")
 _DATA_TAG = {"phase": "data"}
 _CALC_TAG = {"phase": "calc"}
-EOD_TIMEOUT_S = 7200
-_EOD_RETRY = RetryPolicy(max_retries=2, delay=300)
+# Per-op subprocess cap. 1h comfortably covers a wide backfill (a week of equity fill is ~minutes; the
+# slowest data op, `fundamentals --all`, is attempt-all so a timeout there is caught, not fatal) while
+# capping a hung vendor socket at 1h instead of 2h. (Ops finding: a stalled yfinance call on a delisted
+# ticker blocked equity_prices for the full old 7200s cap; the old 2 retries could stack it toward ~6h.)
+EOD_TIMEOUT_S = 3600
+# Data ops hit vendors — a hung/failed pull must NOT be retried (a retry just re-hangs); surface it fast.
+_DATA_RETRY = RetryPolicy(max_retries=0)
+# Calc / critical ops — one quick retry covers a transient DB-lock / network blip.
+_CALC_RETRY = RetryPolicy(max_retries=1, delay=60)
 
 
 def _sym_eod_steps(context, steps: str, end: str, *, critical: bool) -> None:
@@ -214,17 +221,18 @@ def _shell(context, label: str, args: list[str], *, critical: bool) -> None:
             raise RuntimeError(f"`{label}` exited {proc.returncode}")
 
 
-@op(retry_policy=_EOD_RETRY)
-def resolve_eod_window(context, config: EodConfig) -> str:
-    """Resolve the [start, end] window once (shared resolver) → ``"start/end"`` for every node."""
+@op(name="date_range", retry_policy=_CALC_RETRY)
+def date_range_op(context, config: EodConfig) -> str:
+    """Resolve the [start, end] date range once (shared resolver) → ``"start/end"`` for every node.
+    This is the `date_range` node — config (start_date/end_date/as_of_date) lives here."""
     start, end = resolve_window(context, config.start_date, config.end_date, config.as_of_date)
-    context.log.info(f"eod window = {start}..{end}")
+    context.log.info(f"eod date range = {start}..{end}")
     return f"{start}/{end}"
 
 
 # --- DATA nodes (op defs `eod_*`-prefixed to avoid job-name collisions; aliased to clean UI names) ---
 
-@op(name="eod_equity_prices", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
+@op(name="eod_equity_prices", retry_policy=_DATA_RETRY, tags=_DATA_TAG)
 def equity_prices_op(context, window: str) -> str:
     """Equity prices + identity — the sym-owned chain (monitor→fill→map). CRITICAL: `fill` (the price
     pull) failing reddens the run and SKIPS the equity calcs + validate (returns derive from prices).
@@ -235,7 +243,7 @@ def equity_prices_op(context, window: str) -> str:
     return window
 
 
-@op(name="eod_fx", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
+@op(name="eod_fx", retry_policy=_DATA_RETRY, tags=_DATA_TAG)
 def fx_op(context, window: str) -> str:
     """FX rates (USD base, incremental). Attempt-all (a failure is logged, doesn't gate returns)."""
     _start, end = window.split("/")
@@ -243,7 +251,7 @@ def fx_op(context, window: str) -> str:
     return window
 
 
-@op(name="eod_index_levels", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
+@op(name="eod_index_levels", retry_policy=_DATA_RETRY, tags=_DATA_TAG)
 def index_levels_op(context, window: str) -> str:
     """Index levels AND index returns — both computed by `sym indices` (no separable index calc).
     Attempt-all."""
@@ -255,7 +263,7 @@ def index_levels_op(context, window: str) -> str:
 def _make_bucket_op(key: str, doc: str):
     """A data node for a separate-package bucket — runs its shared builder commands, attempt-all
     (the builder's internal `validate "!"` critical markers are stripped so they can't red the night)."""
-    @op(name=f"eod_{key}", retry_policy=_EOD_RETRY, tags=_DATA_TAG)
+    @op(name=f"eod_{key}", retry_policy=_DATA_RETRY, tags=_DATA_TAG)
     def _op(context, window: str) -> str:
         start, end = window.split("/")
         cmds = list(_BUILDERS[key][0](start, end))
@@ -286,7 +294,7 @@ _BUCKET_OPS = {
 
 # --- EQUITY calculations — depend ONLY on equity_prices, so they start as soon as equity data lands ---
 
-@op(name="eod_equity_returns", retry_policy=_EOD_RETRY, tags=_CALC_TAG)
+@op(name="eod_equity_returns", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
 def equity_returns_op(context, window: str) -> str:
     """EQUITY calc — recompute fact_returns (PR+TR) across [start, end] (range-native `sym recompute`).
     Runs right after `equity_prices` (NOT after the other buckets). CRITICAL: a failure reddens the run,
@@ -297,7 +305,7 @@ def equity_returns_op(context, window: str) -> str:
     return window
 
 
-@op(name="eod_equity_gics", retry_policy=_EOD_RETRY, tags=_CALC_TAG)
+@op(name="eod_equity_gics", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
 def equity_gics_op(context, window: str) -> str:
     """EQUITY calc — GICS classification (`sym classify`). Runs after `equity_prices` (needs identity).
     Attempt-all (classify is non-critical — a failure is logged, doesn't gate validate)."""
@@ -307,7 +315,7 @@ def equity_gics_op(context, window: str) -> str:
 
 # --- cross-layer validate — fans in from EVERY leaf (runs after all data + the equity calcs) ----------
 
-@op(name="validate", retry_policy=_EOD_RETRY, tags=_CALC_TAG)
+@op(name="validate", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
 def validate_op(context, windows: list[str]) -> None:
     """Cross-layer `validate` gate via `sym eod --steps validate`. Fans in from every leaf node, so it
     runs only after all data + the equity calcs are in. Exits 0 even when checks report FAIL (sym's
@@ -326,10 +334,10 @@ def validate_op(context, windows: list[str]) -> None:
     "recompute, equity_gics = classify) run as soon as equity_prices lands — NOT after the other buckets; "
     "`validate` is the cross-layer gate that fans in from every leaf. equity_prices + equity_returns are "
     "critical (a failure skips validate); the rest are attempt-all. Config (the window) is on the "
-    "`resolve_eod_window` op. sym_eod / commodities + the per-asset bucket jobs remain for granular runs.",
+    "`date_range` op. sym_eod / commodities + the per-asset bucket jobs remain for granular runs.",
 )
 def eod_job():
-    w = resolve_eod_window()
+    w = date_range_op()  # the `date_range` node — resolves [start, end] for every downstream node
     eq = equity_prices_op.alias("equity_prices")(w)
     leaves = [
         equity_returns_op.alias("equity_returns")(eq),  # equity calc — right after equity data

@@ -33,7 +33,7 @@ def test_eod_job_is_flat_with_one_node_per_bucket():
 
     assert eod_job.name == "eod"
     assert {n.name for n in eod_job.graph.nodes} == {
-        "resolve_eod_window",
+        "date_range",
         "equity_prices", "fx", "index_levels", "rates", "commodities",
         "macro", "alt_data", "fundamental", "universe",  # data nodes
         "equity_returns", "equity_gics",                  # per-product (equity) calcs
@@ -51,12 +51,12 @@ def test_equity_calcs_depend_only_on_equity_prices_no_global_barrier():
 
 
 def test_data_nodes_only_depend_on_the_window_resolver():
-    # every raw-data node hangs off resolve_eod_window alone (so they all run in parallel).
+    # every raw-data node hangs off date_range alone (so they all run in parallel).
     from lineage.schedules import eod_job
 
     for node in ("equity_prices", "fx", "index_levels", "rates", "commodities",
                  "macro", "alt_data", "fundamental", "universe"):
-        assert _upstreams(eod_job.graph, node) == {"resolve_eod_window"}, node
+        assert _upstreams(eod_job.graph, node) == {"date_range"}, node
 
 
 def test_validate_fans_in_from_every_leaf():
