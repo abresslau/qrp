@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 from ..universe import UNIVERSE, Commodity
 from .base import PricePoint
@@ -36,8 +36,10 @@ def _history(ticker: str, start_date: date | None, end_date: date | None):
     if start_date is None:
         df = t.history(period="max", interval="1d", auto_adjust=False)
     else:
-        # yfinance `end` is exclusive — bump by a day so end_date itself is included.
-        end = None if end_date is None else end_date.isoformat()
+        # yfinance `end` is EXCLUSIVE — bump by a day so end_date itself is included (the
+        # post-fetch `d > end_date` filter still drops anything beyond it). Without this the
+        # requested end_date was always excluded, so the daily load fell a trading session short.
+        end = None if end_date is None else (end_date + timedelta(days=1)).isoformat()
         df = t.history(start=start_date.isoformat(), end=end, interval="1d", auto_adjust=False)
     return df
 
