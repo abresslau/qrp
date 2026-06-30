@@ -185,15 +185,15 @@ def test_count_none_for_buckets_without_a_count_basis():
         assert EodMonitorGateway(conn)._instrument_count(conn, b, b.datasets[0]) is None
 
 
-def test_commodities_is_a_bucket_but_not_a_generated_dagster_job():
+def test_commodity_is_a_bucket_but_not_a_generated_dagster_job():
     from lineage.bucket_jobs import BUCKET_JOBS, _EXTERNAL_JOB_BUCKETS
     from lineage.buckets import bucket_keys
 
-    assert "commodities" in bucket_keys()  # on the EOD board
-    cb = _bucket("commodities")
+    assert "commodity" in bucket_keys()  # on the EOD board
+    cb = _bucket("commodity")
     assert cb.datasets[0].wide and cb.datasets[0].id_column == "commodity_code"
-    # collision guard: the dedicated `commodities` job (schedules.py) owns the name — no duplicate
-    assert "commodities" in _EXTERNAL_JOB_BUCKETS
+    # collision guard: the dedicated `commodity` job (schedules.py) owns the name — no duplicate
+    assert "commodity" in _EXTERNAL_JOB_BUCKETS
     assert len(BUCKET_JOBS) == len(bucket_keys()) - 1
 
 

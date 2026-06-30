@@ -204,13 +204,13 @@ def _calc_one(t: str, s: str, e: str) -> list[Cmd]:
     return _calc_cmds(t, s, e)
 
 
-# bucket key -> (all_cmds, one_cmds | None, discover | None). `commodities` has a builder (for the
+# bucket key -> (all_cmds, one_cmds | None, discover | None). `commodity` has a builder (for the
 # composite `eod` job to reuse) but is excluded from generated BUCKET_JOBS (its job is in schedules.py).
 _BUILDERS: dict[str, tuple[Callable, Callable | None, Callable | None]] = {
     "fx": (_fx_all, None, None),
     "equity_prices": (_equity_all, _equity_one, _discover_universes),
     "index_levels": (_index_all, _index_one, lambda: ["yahoo", "msci"]),
-    "commodities": (_commodity_all, None, None),
+    "commodity": (_commodity_all, None, None),
     "rates": (_rates_all, _rates_one, None),
     "fundamental": (_fundamental_all, _fundamental_one, _discover_universes),
     "alt_data": (_altdata_all, None, None),
@@ -338,6 +338,6 @@ def _make_job(b):
 # Buckets whose Dagster job is owned elsewhere (a dedicated job in `schedules.py`) and which have no
 # command builder here — they appear on the EOD board (via `buckets.BUCKETS`) but must NOT mint a
 # second job of the same name, which would collide at definitions load.
-_EXTERNAL_JOB_BUCKETS = {"commodities"}  # `commodities` job + schedule live in schedules.py
+_EXTERNAL_JOB_BUCKETS = {"commodity"}  # `commodity` job + schedule live in schedules.py
 
 BUCKET_JOBS = [_make_job(b) for b in BUCKETS if b.key not in _EXTERNAL_JOB_BUCKETS]

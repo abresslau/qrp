@@ -170,4 +170,4 @@ def test_job_name_falls_back_to_key_when_unmapped():
 
     assert job_name("rates") == "rates_load"          # mapped
     assert job_name("calculations") == "calculations"  # unmapped → key (kept per Andre)
-    assert job_name("commodities") == "commodities"    # the dedicated job, not a bucket job
+    assert job_name("commodity") == "commodity"        # the dedicated job, not a bucket job

@@ -88,7 +88,7 @@ BUCKETS: tuple[Bucket, ...] = (
         run_options=("yahoo", "msci"),  # yahoo = `sym indices`; msci = `sym msci-pull`
     ),
     Bucket(
-        "commodities", "Commodities", "commodity",
+        "commodity", "Commodities", "commodity",
         (Dataset(COMMODITIES, "commodity.price_daily", "as_of_date", "commodity.price_daily",
                  wide=True, id_column="commodity_code", count_label="commodities"),),
     ),
@@ -146,7 +146,7 @@ BUCKETS_BY_KEY: dict[str, Bucket] = {b.key: b for b in BUCKETS}
 # the bucket jobs readable + uniform in the Dagster UI (e.g. `rates_load` over a bare `rates`).
 # `rates_load` is the single unified rates job (BoE UK + world + validate); the old split
 # `rates_uk_boe`/`rates_world` jobs were retired. Anything not listed keeps its key as the job name
-# (calculations; commodities is the dedicated schedules.py job, not a generated bucket job).
+# (calculations; commodity is the dedicated schedules.py job, not a generated bucket job).
 JOB_NAMES: dict[str, str] = {
     "fx": "fx_load",
     "equity_prices": "equity_load",

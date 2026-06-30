@@ -16,8 +16,8 @@ from dagster import Definitions, in_process_executor
 from .assets import all_assets
 from .bucket_jobs import BUCKET_JOBS
 from .schedules import (
-    commodities_daily,
-    commodities_job,
+    commodity_daily,
+    commodity_job,
     eod_daily,
     eod_job,
     sym_eod_daily,
@@ -26,10 +26,10 @@ from .schedules import (
 
 defs = Definitions(
     assets=all_assets(),
-    # `eod` runs the whole nightly refresh in one trigger; sym_eod / commodities remain as standalone
+    # `eod` runs the whole nightly refresh in one trigger; sym_eod / commodity remain as standalone
     # pipelines, PLUS the nine config-driven bucket jobs (fx_load, equity_load, index_load, rates_load
     # [UK + world, unified], fundamental_load, alt_data_load, macro_load, universe_load, calculations).
-    jobs=[eod_job, sym_eod_job, commodities_job, *BUCKET_JOBS],
-    schedules=[eod_daily, sym_eod_daily, commodities_daily],
+    jobs=[eod_job, sym_eod_job, commodity_job, *BUCKET_JOBS],
+    schedules=[eod_daily, sym_eod_daily, commodity_daily],
     executor=in_process_executor,
 )

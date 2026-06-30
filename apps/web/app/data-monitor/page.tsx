@@ -143,7 +143,7 @@ export default async function DataMonitorPage() {
         <Stat label="Indices" value={fmtCount("index_levels")} />
         <Stat label="FX pairs" value={fmtCount("fx")} />
         <Stat label="Rates curves" value={fmtCount("rates")} />
-        <Stat label="Commodities" value={fmtCount("commodities")} />
+        <Stat label="Commodities" value={fmtCount("commodity")} />
       </div>
 
       <div className="mt-3">
