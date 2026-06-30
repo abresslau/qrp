@@ -34,7 +34,7 @@ def test_eod_job_is_flat_with_one_node_per_bucket():
     assert eod_job.name == "eod"
     assert {n.name for n in eod_job.graph.nodes} == {
         "date_range",
-        "equity_prices", "fx", "index_levels", "rates", "commodities",
+        "equity_prices", "fx", "index_levels", "rates", "commodity",
         "macro", "alt_data", "fundamental", "universe",                      # data nodes
         "equity_returns", "equity_gics", "index_returns", "commodity_returns",  # per-product calcs
         "validate",                                                          # cross-layer gate
@@ -48,7 +48,7 @@ def test_derived_calcs_chain_off_their_own_data_no_global_barrier():
 
     assert _upstreams(eod_job.graph, "equity_returns") == {"equity_prices"}     # returns derive from prices
     assert _upstreams(eod_job.graph, "index_returns") == {"index_levels"}       # index returns from levels
-    assert _upstreams(eod_job.graph, "commodity_returns") == {"commodities"}    # commodity returns from settle
+    assert _upstreams(eod_job.graph, "commodity_returns") == {"commodity"}      # commodity returns from settle
     assert _upstreams(eod_job.graph, "equity_gics") == {"date_range"}           # GICS is NOT price-derived
 
 
@@ -56,7 +56,7 @@ def test_data_nodes_only_depend_on_the_window_resolver():
     # every raw-data node hangs off date_range alone (so they all run in parallel).
     from lineage.schedules import eod_job
 
-    for node in ("equity_prices", "fx", "index_levels", "rates", "commodities",
+    for node in ("equity_prices", "fx", "index_levels", "rates", "commodity",
                  "macro", "alt_data", "fundamental", "universe"):
         assert _upstreams(eod_job.graph, node) == {"date_range"}, node
 
@@ -78,7 +78,7 @@ def test_eod_data_covers_all_separate_package_buckets():
     from lineage.schedules import _EOD_DATA_BUCKETS
 
     assert set(_EOD_DATA_BUCKETS) == {
-        "rates", "commodities", "macro", "alt_data", "fundamental", "universe"
+        "rates", "commodity", "macro", "alt_data", "fundamental", "universe"
     }
     for key in _EOD_DATA_BUCKETS:
         assert key in _BUILDERS and _BUILDERS[key][0] is not None
@@ -129,12 +129,12 @@ def test_critical_vs_attempt_all(monkeypatch):
 def test_repository_builds_without_name_conflicts():
     # Build the FULL repository (what `dagster dev`'s code server does) — a plain import does NOT
     # trigger op/graph/job name-uniqueness validation, so this is the guard that catches a collision
-    # (e.g. an eod bucket op named `commodities` clashing with the `commodities` job).
+    # (e.g. an eod bucket op named `commodity` clashing with the `commodity` job).
     import lineage.definitions as d
 
     repo = d.defs.get_repository_def()
     job_names = {j.name for j in repo.get_all_jobs()}
-    assert {"eod", "commodities"}.issubset(job_names)  # both load, no conflict
+    assert {"eod", "commodity"}.issubset(job_names)  # both load, no conflict
 
 
 def test_eod_registered_in_definitions():

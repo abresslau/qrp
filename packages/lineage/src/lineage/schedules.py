@@ -105,11 +105,11 @@ sym_eod_daily = ScheduleDefinition(
 
 
 @op(retry_policy=RetryPolicy(max_retries=2, delay=300))
-def commodities_load(context) -> None:
-    """Tail-load the commodity continuous front-month series then validate (commodities owns its
-    steps; trigger-only here).
+def commodity_load(context) -> None:
+    """Tail-load the commodity continuous front-month series then validate (the commodity package owns
+    its steps; trigger-only here).
 
-    Manual: ``uv run commodities price load`` then ``uv run commodities validate``. The load tails a
+    Manual: ``uv run commodity price load`` then ``uv run commodity validate``. The load tails a
     short window (last ~12 days, idempotent equal-value rows skip) so the daily tick is a light
     top-up, not a full re-pull. A FAIL in validate (exit 2) turns the run red and triggers the retry.
     """
@@ -126,33 +126,33 @@ def commodities_load(context) -> None:
     context.log.info((load.stdout or "")[-4000:])
     if load.returncode != 0:
         context.log.error(
-            f"commodities price load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
-        raise RuntimeError(f"`commodities price load` exited {load.returncode}")
+            f"commodity price load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
+        raise RuntimeError(f"`commodity price load` exited {load.returncode}")
     val = subprocess.run(
         [sys.executable, "-m", "commodity.cli", "validate"],
         cwd=root, capture_output=True, text=True, timeout=600,
     )
     context.log.info((val.stdout or "")[-4000:])
     if val.returncode != 0:
-        raise RuntimeError(f"`commodities validate` exited {val.returncode} (a check FAILED)")
+        raise RuntimeError(f"`commodity validate` exited {val.returncode} (a check FAILED)")
 
 
 @job(
-    name="commodities",
+    name="commodity",
     description="Daily commodity prices (Tier-A vendor continuous front-month) — tail load + "
     "validate across the whole universe (energy / metals / grains / softs / livestock). "
-    "Manual: `uv run commodities price load`.",
+    "Manual: `uv run commodity price load`.",
 )
-def commodities_job():
-    commodities_load()
+def commodity_job():
+    commodity_load()
 
 
 # Weekdays 18:30 America/New_York — after the US futures (NYMEX/COMEX/CBOT/ICE) settle and the
 # vendor continuous series refresh. Timezone ALWAYS explicit (the hard requirement). STOPPED until
 # enabled in the Dagster UI.
-commodities_daily = ScheduleDefinition(
-    name="commodities_daily",
-    job=commodities_job,
+commodity_daily = ScheduleDefinition(
+    name="commodity_daily",
+    job=commodity_job,
     cron_schedule="30 18 * * 1-5",
     execution_timezone="America/New_York",
     default_status=DefaultScheduleStatus.STOPPED,
@@ -166,7 +166,7 @@ commodities_daily = ScheduleDefinition(
 #
 #   date_range ─► equity_prices ──► equity_returns ─────┐
 #                 ├─► index_levels ──► index_returns ────┤
-#                 ├─► commodities ──► commodity_returns ─┤
+#                 ├─► commodity ──► commodity_returns ───┤
 #                 ├─► equity_gics ───────────────────────┤─► validate   (cross-layer gate)
 #                 ├─► fx ────────────────────────────────┤
 #                 └─► rates, macro, alt_data, ───────────┘
@@ -175,16 +175,16 @@ commodities_daily = ScheduleDefinition(
 # A calculation that DERIVES from a product's data chains off it: equity_returns (`sym recompute`)
 # after equity_prices; index_returns (`indices returns`) after index_levels; commodity_returns
 # (`commodity returns` — trailing-window returns over the raw continuous settle, roll jumps included)
-# after commodities. equity_gics (`sym classify`) does NOT derive from prices — it classifies the
+# after commodity. equity_gics (`sym classify`) does NOT derive from prices — it classifies the
 # current security set — so it runs independently off the window. fx / rates / macro / alt_data /
 # fundamental / universe are data-only
 # (analytics are derive-on-read). `validate` checks the whole warehouse, so it fans in from every leaf
 # (the per-product calcs + the data-only nodes). op tags mark `phase: data|calc` for legibility. op
 # DEFINITION names are `eod_*`-prefixed
-# (op/graph/job names share one repo namespace — a bare `commodities` op clashes with the `commodities`
+# (op/graph/job names share one repo namespace — a bare `commodity` op clashes with the `commodity`
 # job); nodes are aliased to clean names for the UI. Config (the window) is on `date_range`.
 
-_EOD_DATA_BUCKETS = ("rates", "commodities", "macro", "alt_data", "fundamental", "universe")
+_EOD_DATA_BUCKETS = ("rates", "commodity", "macro", "alt_data", "fundamental", "universe")
 _DATA_TAG = {"phase": "data"}
 _CALC_TAG = {"phase": "calc"}
 # Per-op subprocess cap. 1h comfortably covers a wide backfill (a week of equity fill is ~minutes; the
@@ -287,7 +287,7 @@ def _make_bucket_op(key: str, doc: str):
 
 _BUCKET_OPS = {
     "rates": _make_bucket_op("rates", "Rates curves — BoE UK + world + validate. Attempt-all."),
-    "commodities": _make_bucket_op("commodities", "Commodity front-month prices + validate. Attempt-all."),
+    "commodity": _make_bucket_op("commodity", "Commodity front-month prices + validate. Attempt-all."),
     "macro": _make_bucket_op("macro", "Macro series. Attempt-all."),
     "alt_data": _make_bucket_op("alt_data", "Alt-data series. Attempt-all."),
     "fundamental": _make_bucket_op("fundamental", "Fundamentals snapshot. Attempt-all."),
@@ -331,7 +331,7 @@ def index_returns_op(context, window: str) -> str:
 @op(name="eod_commodity_returns", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
 def commodity_returns_op(context, window: str) -> str:
     """COMMODITY calc — recompute trailing-window returns (commodity.return_daily) across [start, end]
-    from the settle series. Runs right after `commodities` (mirrors equity/index). Attempt-all (a hiccup
+    from the settle series. Runs right after `commodity` (mirrors equity/index). Attempt-all (a hiccup
     is logged, doesn't gate validate). NB: raw continuous front-month — returns include roll jumps."""
     start, end = window.split("/")
     _shell(context, f"commodity returns {start}..{end}",
@@ -355,27 +355,27 @@ def validate_op(context, windows: list[str]) -> None:
 @job(
     name="eod",
     description="Full end-of-day in one trigger over a [start_date, end_date] window (blank = today), as "
-    "a readable DAG. DATA nodes (equity_prices, fx, index_levels, commodities, rates, macro, alt_data, "
+    "a readable DAG. DATA nodes (equity_prices, fx, index_levels, commodity, rates, macro, alt_data, "
     "fundamental, universe) load off the resolved window; PER-PRODUCT CALCS run as soon as their own data "
     "lands — equity_prices → equity_returns (recompute) + equity_gics (classify); index_levels → "
     "index_returns; `validate` is the cross-layer gate that fans in from every leaf. equity_prices + equity_returns are "
     "critical (a failure skips validate); the rest are attempt-all. Config (the window) is on the "
-    "`date_range` op. sym_eod / commodities + the per-asset bucket jobs remain for granular runs.",
+    "`date_range` op. sym_eod / commodity + the per-asset bucket jobs remain for granular runs.",
 )
 def eod_job():
     w = date_range_op()  # the `date_range` node — resolves [start, end] for every downstream node
     eq = equity_prices_op.alias("equity_prices")(w)
     idx = index_levels_op.alias("index_levels")(w)
-    comm = _BUCKET_OPS["commodities"].alias("commodities")(w)
+    comm = _BUCKET_OPS["commodity"].alias("commodity")(w)
     leaves = [
         equity_returns_op.alias("equity_returns")(eq),    # returns DERIVE from prices → after equity_prices
         equity_gics_op.alias("equity_gics")(w),           # GICS is independent of prices → off date_range
         index_returns_op.alias("index_returns")(idx),     # index calc — right after index levels
-        commodity_returns_op.alias("commodity_returns")(comm),  # commodity calc — right after commodities
+        commodity_returns_op.alias("commodity_returns")(comm),  # commodity calc — right after commodity data
         fx_op.alias("fx")(w),
     ]
-    # the remaining data-only buckets (commodities is wired above for its returns calc)
-    leaves += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS if k != "commodities"]
+    # the remaining data-only buckets (commodity is wired above for its returns calc)
+    leaves += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS if k != "commodity"]
     validate_op.alias("validate")(leaves)  # cross-layer gate — fans in from every leaf
 
 
