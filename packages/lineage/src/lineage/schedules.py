@@ -164,17 +164,18 @@ commodities_daily = ScheduleDefinition(
 # here is that each calculation runs as soon as ITS OWN data is in). The window resolves once
 # (`date_range`) and threads to every node as "start/end". Topology:
 #
-#   date_range ─► equity_prices ─┬─► equity_returns ─┐
-#                                 └─► equity_gics ────┤
+#   date_range ─► equity_prices ──► equity_returns ──┐
 #                 ├─► index_levels ──► index_returns ─┤
+#                 ├─► equity_gics ────────────────────┤
 #                 ├─► fx ─────────────────────────────┤─► validate   (cross-layer gate)
 #                 ├─► commodities, rates, macro, ─────┘
 #                 └─► alt_data, fundamental, universe
 #
-# Each product's calculation runs RIGHT AFTER its own data, not after every bucket: equity_prices ─►
-# equity_returns (`sym recompute`) + equity_gics (`sym classify`); index_levels (`indices levels`) ─►
-# index_returns (`indices returns` — fact_index_returns, split out of the old fused `sym indices` so it
-# mirrors equity). fx / commodities / rates / macro / alt_data / fundamental / universe are data-only
+# A calculation that DERIVES from a product's data chains off it: equity_returns (`sym recompute`)
+# after equity_prices; index_returns (`indices returns`) after index_levels (split out of the old fused
+# `sym indices`). equity_gics (`sym classify`) does NOT derive from prices — it classifies the current
+# security set — so it runs independently off the window (no equity_prices dependency). fx / commodities
+# / rates / macro / alt_data / fundamental / universe are data-only
 # (analytics are derive-on-read). `validate` checks the whole warehouse, so it fans in from every leaf
 # (the per-product calcs + the data-only nodes). op tags mark `phase: data|calc` for legibility. op
 # DEFINITION names are `eod_*`-prefixed
@@ -307,8 +308,9 @@ def equity_returns_op(context, window: str) -> str:
 
 @op(name="eod_equity_gics", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
 def equity_gics_op(context, window: str) -> str:
-    """EQUITY calc — GICS classification (`sym classify`). Runs after `equity_prices` (needs identity).
-    Attempt-all (classify is non-critical — a failure is logged, doesn't gate validate)."""
+    """GICS classification (`sym classify`) — classifies the current security set; does NOT depend on
+    equity prices (or the day's price load), so it runs independently off the window. Attempt-all
+    (classify is non-critical — a failure is logged, doesn't gate validate)."""
     _shell(context, "sym classify", ["sym.cli", "classify"], critical=False)
     return window
 
@@ -352,8 +354,8 @@ def eod_job():
     eq = equity_prices_op.alias("equity_prices")(w)
     idx = index_levels_op.alias("index_levels")(w)
     leaves = [
-        equity_returns_op.alias("equity_returns")(eq),   # equity calc — right after equity data
-        equity_gics_op.alias("equity_gics")(eq),         # equity calc — right after equity data
+        equity_returns_op.alias("equity_returns")(eq),   # returns DERIVE from prices → after equity_prices
+        equity_gics_op.alias("equity_gics")(w),          # GICS is independent of prices → off date_range
         index_returns_op.alias("index_returns")(idx),    # index calc — right after index levels
         fx_op.alias("fx")(w),
     ]
