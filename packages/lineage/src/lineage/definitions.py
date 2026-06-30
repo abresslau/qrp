@@ -20,16 +20,15 @@ from .schedules import (
     commodity_job,
     eod_daily,
     eod_job,
-    sym_eod_daily,
-    sym_eod_job,
 )
 
 defs = Definitions(
     assets=all_assets(),
-    # `eod` runs the whole nightly refresh in one trigger; sym_eod / commodity remain as standalone
-    # pipelines, PLUS the nine config-driven bucket jobs (fx_load, equity_load, index_load, rates_load
+    # `eod` runs the whole nightly refresh in one trigger; `commodity_load` remains as a standalone
+    # pipeline, PLUS the nine config-driven bucket jobs (fx_load, equity_load, index_load, rates_load
     # [UK + world, unified], fundamental_load, alt_data_load, macro_load, universe_load, calculations).
-    jobs=[eod_job, sym_eod_job, commodity_job, *BUCKET_JOBS],
-    schedules=[eod_daily, sym_eod_daily, commodity_daily],
+    # (The sym-only `sym_eod` job was retired — `eod`'s sym-owned nodes cover its steps.)
+    jobs=[eod_job, commodity_job, *BUCKET_JOBS],
+    schedules=[eod_daily, commodity_daily],
     executor=in_process_executor,
 )
