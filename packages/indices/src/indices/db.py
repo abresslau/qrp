@@ -73,8 +73,16 @@ def sym_connect() -> psycopg.Connection:
 
 
 def universe_connect() -> psycopg.Connection:
-    """Open a connection to the universe DB for the membership roster (universe→benchmark link)."""
+    """Open a connection to the universe DB for the membership roster (universe→benchmark link).
+
+    The universe tables (``universe``/``universe_benchmark``) live in the ``universe`` schema, so
+    search_path is pinned to it (mirrors ``universe.db.connect``). Without this, the link query
+    ``SELECT 1 FROM universe`` fails (relation "universe" missing) — the sym eod path dodged it by
+    injecting a ``universe.db.connect``; the standalone ``indices`` CLI needs it here.
+    """
     _load_env()
     name = os.environ.get("UNIVERSE_DB_NAME", "universe")
     target = os.environ.get("UNIVERSE_DATABASE_URL") or f"dbname={name}"
-    return psycopg.connect(target, connect_timeout=5)
+    conn = psycopg.connect(target, connect_timeout=5, autocommit=True)
+    conn.execute("SET search_path TO universe, public")
+    return conn
