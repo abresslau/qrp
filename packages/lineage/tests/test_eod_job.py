@@ -134,7 +134,7 @@ def test_repository_builds_without_name_conflicts():
 
     repo = d.defs.get_repository_def()
     job_names = {j.name for j in repo.get_all_jobs()}
-    assert {"eod", "commodity"}.issubset(job_names)  # both load, no conflict
+    assert {"eod", "commodity_load"}.issubset(job_names)  # both load, no conflict
 
 
 def test_eod_registered_in_definitions():

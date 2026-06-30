@@ -145,8 +145,9 @@ BUCKETS_BY_KEY: dict[str, Bucket] = {b.key: b for b in BUCKETS}
 # from the bucket ``key`` (the stable internal id used for dispatch + freshness special-casing). Keeps
 # the bucket jobs readable + uniform in the Dagster UI (e.g. `rates_load` over a bare `rates`).
 # `rates_load` is the single unified rates job (BoE UK + world + validate); the old split
-# `rates_uk_boe`/`rates_world` jobs were retired. Anything not listed keeps its key as the job name
-# (calculations; commodity is the dedicated schedules.py job, not a generated bucket job).
+# `rates_uk_boe`/`rates_world` jobs were retired. `commodity` maps to `commodity_load` too — its job is
+# the dedicated schedules.py one (not a generated bucket job), but it follows the same `<asset>_load`
+# name so the EOD board's launch resolves to it. Anything not listed keeps its key (calculations).
 JOB_NAMES: dict[str, str] = {
     "fx": "fx_load",
     "equity_prices": "equity_load",
@@ -156,6 +157,7 @@ JOB_NAMES: dict[str, str] = {
     "alt_data": "alt_data_load",
     "macro": "macro_load",
     "universe": "universe_load",
+    "commodity": "commodity_load",
 }
 
 
