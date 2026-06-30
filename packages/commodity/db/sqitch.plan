@@ -3,3 +3,4 @@
 %uri=https://github.com/abresslau/qrp-commodity
 
 price_daily 2026-06-24T00:00:00Z Andre <ab@gladstone-management.com> # commodities schema: Tier-A vendor continuous front-month daily prices (raw OHLCV+volume, immutable first_settle + restated settle) + review queue, own database
+return_daily [price_daily] 2026-06-30T00:00:00Z Andre <ab@gladstone-management.com> # derived trailing-window price returns over the continuous front-month settle (mirrors fact_returns/fact_index_returns; raw, not roll-adjusted)

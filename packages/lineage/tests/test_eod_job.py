@@ -35,9 +35,9 @@ def test_eod_job_is_flat_with_one_node_per_bucket():
     assert {n.name for n in eod_job.graph.nodes} == {
         "date_range",
         "equity_prices", "fx", "index_levels", "rates", "commodities",
-        "macro", "alt_data", "fundamental", "universe",      # data nodes
-        "equity_returns", "equity_gics", "index_returns",    # per-product calcs
-        "validate",                                          # cross-layer gate
+        "macro", "alt_data", "fundamental", "universe",                      # data nodes
+        "equity_returns", "equity_gics", "index_returns", "commodity_returns",  # per-product calcs
+        "validate",                                                          # cross-layer gate
     }
 
 
@@ -46,9 +46,10 @@ def test_derived_calcs_chain_off_their_own_data_no_global_barrier():
     # a calc that doesn't derive from prices (GICS) stays independent off the window.
     from lineage.schedules import eod_job
 
-    assert _upstreams(eod_job.graph, "equity_returns") == {"equity_prices"}  # returns derive from prices
-    assert _upstreams(eod_job.graph, "index_returns") == {"index_levels"}    # index returns from levels
-    assert _upstreams(eod_job.graph, "equity_gics") == {"date_range"}        # GICS is NOT price-derived
+    assert _upstreams(eod_job.graph, "equity_returns") == {"equity_prices"}     # returns derive from prices
+    assert _upstreams(eod_job.graph, "index_returns") == {"index_levels"}       # index returns from levels
+    assert _upstreams(eod_job.graph, "commodity_returns") == {"commodities"}    # commodity returns from settle
+    assert _upstreams(eod_job.graph, "equity_gics") == {"date_range"}           # GICS is NOT price-derived
 
 
 def test_data_nodes_only_depend_on_the_window_resolver():
@@ -65,8 +66,8 @@ def test_validate_fans_in_from_every_leaf():
     from lineage.schedules import eod_job
 
     assert _upstreams(eod_job.graph, "validate") == {
-        "equity_returns", "equity_gics", "index_returns", "fx",
-        "rates", "commodities", "macro", "alt_data", "fundamental", "universe",
+        "equity_returns", "equity_gics", "index_returns", "commodity_returns", "fx",
+        "rates", "macro", "alt_data", "fundamental", "universe",
     }
 
 

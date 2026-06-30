@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 
 import psycopg
 
@@ -20,6 +20,8 @@ from .db import connect
 from .ingest import fill_prices
 from .sources.yfinance_src import YFinanceCommoditySource
 from .universe import BY_CODE, UNIVERSE
+
+_RETURNS_LOOKBACK = timedelta(days=430)  # default recompute window when no dates given
 
 
 def _parse_date(s: str | None) -> date | None:
@@ -107,6 +109,32 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 1 if fails else 0
 
 
+def _cmd_returns(args: argparse.Namespace) -> int:
+    """Recompute commodity trailing-window returns into commodity.return_daily over a window."""
+    from .returns import recompute_commodity_returns
+
+    try:
+        end_date = _parse_date(args.end_date) or date.today()
+        start_date = _parse_date(args.start_date) or (end_date - _RETURNS_LOOKBACK)
+    except ValueError as exc:
+        print(f"invalid date: {exc}", file=sys.stderr)
+        return 1
+    if start_date > end_date:
+        print(f"start_date {start_date} is after end_date {end_date}", file=sys.stderr)
+        return 1
+    try:
+        conn = connect()
+    except psycopg.OperationalError as exc:
+        print(f"database connection failed: {exc}", file=sys.stderr)
+        return 2
+    try:
+        s = recompute_commodity_returns(conn, start_date=start_date, end_date=end_date)
+    finally:
+        conn.close()
+    print(f"commodity returns [{start_date}..{end_date}]: {s.rows:,} rows / {s.series} commodities")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="commodity", description="QRP commodities — daily prices")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -127,6 +155,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     pv = sub.add_parser("validate", help="Run data-quality checks.")
     pv.set_defaults(func=_cmd_validate)
+
+    pr = sub.add_parser("returns", help="Recompute trailing-window returns over the settle series.")
+    pr.add_argument("--start_date", help="Window start (ISO); default: end − ~430d.")
+    pr.add_argument("--end_date", help="Window end (ISO); default: today.")
+    pr.set_defaults(func=_cmd_returns)
     return p
 
 
