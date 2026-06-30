@@ -104,6 +104,21 @@ def test_plausible_band_warns_on_a_tenor_shrink_vs_prior_day():
     assert r.status == WARN and r.failures == 0 and any("holes" in s for s in r.samples)
 
 
+def test_plausible_band_admits_br_nominal_and_real_yields():
+    # BR enrichment: nominal (LTN ~14%, NTN-F long ~13%) + real (NTN-B IPCA ~6-7%) all inside the
+    # wide EM band (-5..40). The GB exact-match breakeven FAIL is GB-scoped
+    # (check_inflation_reconcile hardcodes GB/glc), so BR is never subject to it.
+    d = date(2026, 6, 30)
+    conn = _Conn(latest=d,
+                 series=[("govt", "nominal", "yield"), ("govt", "real", "yield")],
+                 curves={
+                     ("govt", "nominal", "yield"): [(0.51, 14.7), (5.51, 13.4), (9.8, 13.1)],
+                     ("govt", "real", "yield"): [(3.0, 6.9), (10.0, 6.6), (24.0, 6.4)],
+                 })
+    r = check_plausible_band(conn, "BR")
+    assert r.status == PASS and r.failures == 0 and r.checked == 6
+
+
 def _daily(latest: date, n: int = 10) -> list[date]:
     # a DESC run of weekday-ish daily dates ending at `latest` (cadence ~1d)
     return [latest - timedelta(days=i) for i in range(n)]

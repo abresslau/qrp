@@ -14,6 +14,8 @@ from datetime import date, timedelta
 
 import psycopg
 
+from . import analytics
+
 # UK curated spreads — legs are (country, curve_set, basis, rate_type, tenor); `fn` maps the ordered
 # leg values (% p.a.) to the spread in `unit` ('bp' = a difference ×100; '%' = a level/breakeven).
 _GB_SPREAD_SPECS: list[dict] = [
@@ -105,6 +107,25 @@ class DbRatesGateway:
             (country, country),
         ).fetchone()
         return (row[0], row[1], row[2]) if row else None
+
+    def _latest_day_series(self, country: str) -> list[tuple[str, str, str, int]]:
+        """Every (curve_set, basis, rate_type, node_count) present on the country's LATEST day. One
+        bounded query: the inner ``max(as_of_date)`` finds the country's most recent date (a row
+        that exists, so the backward index scan stops immediately), and the outer scan is pinned to
+        that single date. Detects which bases a country publishes WITHOUT a per-basis ``max()``
+        probe — an absent basis (a country with no real curve) would otherwise force a ~3s full
+        backward scan of the whole as_of_date index hunting a row that never matches."""
+        rows = self._conn.execute(
+            """
+            SELECT curve_set, basis, rate_type, count(*) AS n
+              FROM rates.curve_point
+             WHERE country = %s
+               AND as_of_date = (SELECT max(as_of_date) FROM rates.curve_point WHERE country = %s)
+             GROUP BY curve_set, basis, rate_type
+            """,
+            (country, country),
+        ).fetchall()
+        return [(r[0], r[1], r[2], int(r[3])) for r in rows]
 
     # ---- single-country curve ----------------------------------------------------------------
 
@@ -233,11 +254,79 @@ class DbRatesGateway:
         if {5.0, 30.0} <= tenors:
             specs.append({"key": "5s30s", "label": "5s30s", "unit": "bp",
                           "legs": [leg(5.0), leg(30.0)], "fn": lambda v: (v[1] - v[0]) * 100.0})
+        # Generic breakeven: only when the country publishes a REAL level curve in the SAME
+        # curve_set as its nominal primary AND doesn't already publish a fitted inflation curve
+        # (the US GSW set carries its own BKEVEN as basis='inflation' — don't double it). BR's
+        # per-issue Tesouro tenors don't line up nominal-to-real, so this is an INTERPOLATED
+        # nominal−real at a standard tenor (10y), explicitly labelled approximate. Presence is read
+        # from ONE bounded latest-day query (never a per-basis max() probe — that scans the whole
+        # as_of_date index for a country lacking the basis).
+        latest_series = self._latest_day_series(country)
+        if not any(b2 == "inflation" for _cs, b2, _rt, _n in latest_series):
+            real = self._pick_real_series(latest_series, cs)
+            if real is not None:
+                label = ("10y breakeven (IPCA, approx)" if country == "BR"
+                         else "10y breakeven (approx)")
+                specs.append({
+                    "key": "be10y", "label": label, "unit": "%", "interp": True, "tenor": 10.0,
+                    "nominal": (country, cs, b, rt), "real": (country, *real),
+                })
         return specs
+
+    @staticmethod
+    def _pick_real_series(
+        latest_series: list[tuple[str, str, str, int]], curve_set: str
+    ) -> tuple[str, str, str] | None:
+        """The best real LEVEL series sharing ``curve_set`` with the nominal primary: a level
+        rate_type (spot/par/yield) with the most nodes. None if no real LEVEL curve — a ``forward``
+        real curve is excluded (a forward minus a level nominal is not a breakeven)."""
+        rank = {"spot": 0, "par": 1, "yield": 2}
+        cands = [(cs, b, rt, n) for cs, b, rt, n in latest_series
+                 if b == "real" and cs == curve_set and rt != "forward"]
+        if not cands:
+            return None
+        cs, b, rt, _n = min(cands, key=lambda r: (rank.get(r[2], 3), -r[3]))
+        return (cs, b, rt)
+
+    def _full_curve_by_date(
+        self, country: str, curve_set: str, basis: str, rate_type: str
+    ) -> dict[date, dict[float, float]]:
+        """The whole stored history of one series as ``{as_of_date: {tenor: value}}`` — the input
+        the interpolated breakeven needs (it interpolates each day's curve, so it can't pre-filter
+        to fixed tenors the way the exact-leg spreads do)."""
+        rows = self._conn.execute(
+            """
+            SELECT as_of_date, tenor, value FROM rates.curve_point
+             WHERE country=%s AND curve_set=%s AND basis=%s AND rate_type=%s
+            """,
+            (country, curve_set, basis, rate_type),
+        ).fetchall()
+        out: dict[date, dict[float, float]] = {}
+        for d, t, v in rows:
+            out.setdefault(d, {})[float(t)] = float(v)
+        return out
+
+    def _interp_breakeven_series(self, spec: dict) -> list[tuple[date, float]]:
+        """Breakeven = nominal − real at a standard ``tenor``, interpolating BOTH curves daily (the
+        nominal and real issues mature on different dates, so their raw tenors don't match). A date
+        contributes only when the tenor is bracketed by published nodes on BOTH curves (``interp``
+        returns None outside the grid — never extrapolated)."""
+        tenor = float(spec["tenor"])
+        nominal = self._full_curve_by_date(*spec["nominal"])
+        real = self._full_curve_by_date(*spec["real"])
+        series: list[tuple[date, float]] = []
+        for d in sorted(set(nominal) & set(real)):
+            be = analytics.breakeven(nominal[d], real[d], tenor)
+            if be is not None:
+                series.append((d, be))
+        return series
 
     def _spread_series(self, spec: dict) -> list[tuple[date, float]]:
         """One spread's full daily series. One query per distinct (country,set,basis,type) group;
-        a date contributes only when all legs are present."""
+        a date contributes only when all legs are present. Interpolated specs (breakeven) route to
+        the per-day interpolation builder instead of exact-tenor leg matching."""
+        if spec.get("interp"):
+            return self._interp_breakeven_series(spec)
         legs = spec["legs"]
         by_date: dict[date, dict[tuple, float]] = {}
         groups: dict[tuple[str, str, str, str], set[float]] = {}

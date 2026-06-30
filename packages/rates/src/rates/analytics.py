@@ -64,9 +64,12 @@ def butterfly(spot_curve: Curve, t_short: float, t_mid: float, t_long: float) ->
 
 
 def breakeven(nominal_spot: Curve, real_spot: Curve, t: float) -> float | None:
-    """Implied (RPI) inflation breakeven at tenor ``t`` as a **level in %**: nominal − real.
+    """Implied inflation breakeven at tenor ``t`` as a **level in %**: nominal − real.
 
-    RPI-based with the linker indexation lag — NEVER consume as CPI expectations."""
+    Index-AGNOSTIC — the inflation index is whatever the real curve is linked to, named by the
+    caller's label: **RPI** for the UK gilt curve (linker indexation lag — never CPI), **IPCA** for
+    the BR Tesouro curve (and that BR variant is approximate — nominal/real issues mature on
+    different dates, so the tenors are interpolated, not matched)."""
     n = interp(nominal_spot, t)
     r = interp(real_spot, t)
     if n is None or r is None:
