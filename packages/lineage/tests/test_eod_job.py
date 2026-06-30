@@ -35,19 +35,20 @@ def test_eod_job_is_flat_with_one_node_per_bucket():
     assert {n.name for n in eod_job.graph.nodes} == {
         "date_range",
         "equity_prices", "fx", "index_levels", "rates", "commodities",
-        "macro", "alt_data", "fundamental", "universe",  # data nodes
-        "equity_returns", "equity_gics",                  # per-product (equity) calcs
-        "validate",                                       # cross-layer gate
+        "macro", "alt_data", "fundamental", "universe",      # data nodes
+        "equity_returns", "equity_gics", "index_returns",    # per-product calcs
+        "validate",                                          # cross-layer gate
     }
 
 
-def test_equity_calcs_depend_only_on_equity_prices_no_global_barrier():
-    # the headline property: equity_returns / equity_gics run as soon as equity_prices lands — they do
-    # NOT wait on fx / macro / universe / … (no global data barrier before the calc).
+def test_per_product_calcs_depend_only_on_their_own_data_no_global_barrier():
+    # the headline property: each calc runs as soon as ITS data lands — equity calcs off equity_prices,
+    # index_returns off index_levels — NOT after fx / macro / universe / … (no global data barrier).
     from lineage.schedules import eod_job
 
     assert _upstreams(eod_job.graph, "equity_returns") == {"equity_prices"}
     assert _upstreams(eod_job.graph, "equity_gics") == {"equity_prices"}
+    assert _upstreams(eod_job.graph, "index_returns") == {"index_levels"}
 
 
 def test_data_nodes_only_depend_on_the_window_resolver():
@@ -64,7 +65,7 @@ def test_validate_fans_in_from_every_leaf():
     from lineage.schedules import eod_job
 
     assert _upstreams(eod_job.graph, "validate") == {
-        "equity_returns", "equity_gics", "fx", "index_levels",
+        "equity_returns", "equity_gics", "index_returns", "fx",
         "rates", "commodities", "macro", "alt_data", "fundamental", "universe",
     }
 

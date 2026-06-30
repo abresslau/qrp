@@ -165,18 +165,19 @@ commodities_daily = ScheduleDefinition(
 # (`date_range`) and threads to every node as "start/end". Topology:
 #
 #   date_range ─► equity_prices ─┬─► equity_returns ─┐
-#                                          └─► equity_gics ───┤
-#                         fx ──────────────────────────────────┤
-#                         index_levels ────────────────────────┤─► validate   (cross-layer gate)
-#                         commodities, rates, macro, alt_data, ─┘
-#                         fundamental, universe
+#                                 └─► equity_gics ────┤
+#                 ├─► index_levels ──► index_returns ─┤
+#                 ├─► fx ─────────────────────────────┤─► validate   (cross-layer gate)
+#                 ├─► commodities, rates, macro, ─────┘
+#                 └─► alt_data, fundamental, universe
 #
-# Only equity has persisted calculations — returns (`sym recompute`) and GICS (`sym classify`) — and
-# they run RIGHT AFTER equity prices, not after every bucket. Index returns are computed inside
-# `sym indices` (the index_levels node). fx / commodities / rates / macro / alt_data / fundamental /
-# universe are data-only (analytics are derive-on-read). `validate` checks the whole warehouse, so it
-# fans in from every leaf (runs after all data + the equity calcs). Each node shells the SAME CLI as
-# before. op tags mark `phase: data|calc` for legibility. op DEFINITION names are `eod_*`-prefixed
+# Each product's calculation runs RIGHT AFTER its own data, not after every bucket: equity_prices ─►
+# equity_returns (`sym recompute`) + equity_gics (`sym classify`); index_levels (`indices levels`) ─►
+# index_returns (`indices returns` — fact_index_returns, split out of the old fused `sym indices` so it
+# mirrors equity). fx / commodities / rates / macro / alt_data / fundamental / universe are data-only
+# (analytics are derive-on-read). `validate` checks the whole warehouse, so it fans in from every leaf
+# (the per-product calcs + the data-only nodes). op tags mark `phase: data|calc` for legibility. op
+# DEFINITION names are `eod_*`-prefixed
 # (op/graph/job names share one repo namespace — a bare `commodities` op clashes with the `commodities`
 # job); nodes are aliased to clean names for the UI. Config (the window) is on `date_range`.
 
@@ -253,10 +254,9 @@ def fx_op(context, window: str) -> str:
 
 @op(name="eod_index_levels", retry_policy=_DATA_RETRY, tags=_DATA_TAG)
 def index_levels_op(context, window: str) -> str:
-    """Index levels AND index returns — both computed by `sym indices` (no separable index calc).
-    Attempt-all."""
-    _start, end = window.split("/")
-    _sym_eod_steps(context, "indices", end, critical=False)
+    """Index LEVELS (Yahoo) + universe links + FIGIs — NO returns recompute (that's the `index_returns`
+    calc node). Attempt-all."""
+    _shell(context, "indices levels", ["indices.cli", "levels"], critical=False)
     return window
 
 
@@ -313,6 +313,17 @@ def equity_gics_op(context, window: str) -> str:
     return window
 
 
+@op(name="eod_index_returns", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
+def index_returns_op(context, window: str) -> str:
+    """INDEX calc — recompute index returns (fact_index_returns) across [start, end], derived from the
+    index levels. Runs right after `index_levels` (mirrors equity's prices -> returns split). Attempt-all
+    (a hiccup here is logged, doesn't gate validate; index returns are a secondary product)."""
+    start, end = window.split("/")
+    _shell(context, f"indices returns {start}..{end}",
+           ["indices.cli", "returns", "--start_date", start, "--end_date", end], critical=False)
+    return window
+
+
 # --- cross-layer validate — fans in from EVERY leaf (runs after all data + the equity calcs) ----------
 
 @op(name="validate", retry_policy=_CALC_RETRY, tags=_CALC_TAG)
@@ -330,20 +341,21 @@ def validate_op(context, windows: list[str]) -> None:
     name="eod",
     description="Full end-of-day in one trigger over a [start_date, end_date] window (blank = today), as "
     "a readable DAG. DATA nodes (equity_prices, fx, index_levels, commodities, rates, macro, alt_data, "
-    "fundamental, universe) load in parallel off the resolved window; EQUITY CALCS (equity_returns = "
-    "recompute, equity_gics = classify) run as soon as equity_prices lands — NOT after the other buckets; "
-    "`validate` is the cross-layer gate that fans in from every leaf. equity_prices + equity_returns are "
+    "fundamental, universe) load off the resolved window; PER-PRODUCT CALCS run as soon as their own data "
+    "lands — equity_prices → equity_returns (recompute) + equity_gics (classify); index_levels → "
+    "index_returns; `validate` is the cross-layer gate that fans in from every leaf. equity_prices + equity_returns are "
     "critical (a failure skips validate); the rest are attempt-all. Config (the window) is on the "
     "`date_range` op. sym_eod / commodities + the per-asset bucket jobs remain for granular runs.",
 )
 def eod_job():
     w = date_range_op()  # the `date_range` node — resolves [start, end] for every downstream node
     eq = equity_prices_op.alias("equity_prices")(w)
+    idx = index_levels_op.alias("index_levels")(w)
     leaves = [
-        equity_returns_op.alias("equity_returns")(eq),  # equity calc — right after equity data
-        equity_gics_op.alias("equity_gics")(eq),        # equity calc — right after equity data
+        equity_returns_op.alias("equity_returns")(eq),   # equity calc — right after equity data
+        equity_gics_op.alias("equity_gics")(eq),         # equity calc — right after equity data
+        index_returns_op.alias("index_returns")(idx),    # index calc — right after index levels
         fx_op.alias("fx")(w),
-        index_levels_op.alias("index_levels")(w),
     ]
     leaves += [_BUCKET_OPS[k].alias(k)(w) for k in _EOD_DATA_BUCKETS]
     validate_op.alias("validate")(leaves)  # cross-layer gate — fans in from every leaf

@@ -47,6 +47,47 @@ def _cmd_load(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_levels(args: argparse.Namespace) -> int:
+    """Load Yahoo index LEVELS + universe links + FIGIs — NO returns recompute.
+
+    The level-load half of `load`, split out so an orchestrator (the eod DAG) can run levels and the
+    derived returns as separate nodes (`index_levels` -> `index_returns`), mirroring equity's
+    prices -> recompute split. Returns are produced by `indices returns`."""
+    from indices.figis import attach_index_figis
+    from indices.levels import INDICES, YahooIndexLevelSource, load_index_levels
+    from indices.links import link_universe_indices
+
+    with connect() as conn, sym_connect() as sym_conn:
+        ls = load_index_levels(conn, sym_conn, YahooIndexLevelSource(), INDICES)
+        with universe_connect() as u_conn:
+            lk = link_universe_indices(conn, sym_conn, u_conn)
+        attached, _ = attach_index_figis(sym_conn)
+        print(
+            f"index levels: {ls.instruments} instruments, {ls.levels_written} written, "
+            f"{ls.deferred} deferred (MSCI), {ls.gaps} gaps; universe links: {lk.linked} created; "
+            f"figis: {attached} attached (returns NOT recomputed — run `indices returns`)"
+        )
+    return 0
+
+
+def _cmd_returns(args: argparse.Namespace) -> int:
+    """Recompute index returns (fact_index_returns) over a window — derived from levels, no load.
+
+    The returns half of `load`, split out for the eod DAG's `index_returns` node (mirrors equity's
+    `sym recompute`). Window defaults to the standard lookback ending today."""
+    from indices.returns import recompute_index_returns
+
+    end = date.fromisoformat(args.end_date) if args.end_date else date.today()
+    start = date.fromisoformat(args.start_date) if args.start_date else end - DEFAULT_LOOKBACK
+    with connect() as conn:
+        rs = recompute_index_returns(conn, start_date=start, end_date=end)
+        print(
+            f"index returns [{start}..{end}]: {rs.rows:,} rows / {rs.series} series "
+            f"({rs.extreme_rows:,} extreme rows)"
+        )
+    return 0
+
+
 def _cmd_msci_import(args: argparse.Namespace) -> int:
     from indices.msci import load_msci_file
     from indices.returns import recompute_index_returns
@@ -112,6 +153,14 @@ def main(argv: list[str] | None = None) -> int:
     load = sub.add_parser("load", help="Yahoo levels + returns + universe links + FIGIs")
     load.add_argument("--attach-figis", action="store_true", help="re-attach FIGIs only")
     load.set_defaults(func=_cmd_load)
+
+    levels = sub.add_parser("levels", help="Yahoo levels + links + FIGIs (no returns recompute)")
+    levels.set_defaults(func=_cmd_levels)
+
+    returns = sub.add_parser("returns", help="recompute index returns over a window (no load)")
+    returns.add_argument("--start_date")
+    returns.add_argument("--end_date")
+    returns.set_defaults(func=_cmd_returns)
 
     imp = sub.add_parser("msci-import", help="import an MSCI level export (.csv/.xls/.xlsx)")
     imp.add_argument("path")
