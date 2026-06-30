@@ -54,8 +54,9 @@ class EodConfig(Config):
     # Recovery: auto-retry transient EOD failures (network/lock). sym's steps are idempotent.
     retry_policy=RetryPolicy(max_retries=2, delay=300),
 )
-def sym_eod(context, config: EodConfig) -> None:
+def sym_eod_run(context, config: EodConfig) -> None:
     """Run the `sym eod` CLI (sym owns the step orchestration). Manual: `uv run sym eod [--as_of_date DATE]`.
+    Op `sym_eod_run`; job `sym_eod` (the `_run` op name keeps the op distinct from the job).
 
     Note: `sym eod` exits non-zero only when a *critical* step (fill/recompute) fails — that is
     what turns the Dagster run red and triggers the retry. Non-critical hiccups (monitor / fx /
@@ -87,9 +88,9 @@ def sym_eod(context, config: EodConfig) -> None:
     context.log.info(f"sym eod ok in {round(time.monotonic() - started, 1)}s")
 
 
-@job(description="sym end-of-day pipeline — runs the `sym eod` CLI. Manual: `uv run sym eod`.")
+@job(name="sym_eod", description="sym end-of-day pipeline — runs the `sym eod` CLI. Manual: `uv run sym eod`.")
 def sym_eod_job():
-    sym_eod()
+    sym_eod_run()
 
 
 # Weekdays 18:30 America/New_York — after the US equity close (+ buffer); DST-aware so it stays
@@ -104,10 +105,11 @@ sym_eod_daily = ScheduleDefinition(
 )
 
 
-@op(retry_policy=RetryPolicy(max_retries=2, delay=300))
+@op(name="commodity_op", retry_policy=RetryPolicy(max_retries=2, delay=300))
 def commodity_load(context) -> None:
     """Tail-load the commodity continuous front-month series then validate (the commodity package owns
-    its steps; trigger-only here).
+    its steps; trigger-only here). Op `commodity_op`, job `commodity_load` — matching the `<asset>_op` /
+    `<asset>_load` convention of the generated bucket jobs.
 
     Manual: ``uv run commodity price load`` then ``uv run commodity validate``. The load tails a
     short window (last ~12 days, idempotent equal-value rows skip) so the daily tick is a light
@@ -138,7 +140,7 @@ def commodity_load(context) -> None:
 
 
 @job(
-    name="commodity",
+    name="commodity_load",
     description="Daily commodity prices (Tier-A vendor continuous front-month) — tail load + "
     "validate across the whole universe (energy / metals / grains / softs / livestock). "
     "Manual: `uv run commodity price load`.",
