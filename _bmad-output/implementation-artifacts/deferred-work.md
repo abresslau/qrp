@@ -3,6 +3,24 @@
 
 - **[RESOLVED 2026-06-29] Non-finite auto-refresh interval drives a zero-delay poll loop — shared across all live boards** (`apps/web/app/monitor/fx/page.tsx`, `apps/web/app/monitor/wei/page.tsx`, `apps/web/components/heatmap-view.tsx`) — the `onChange` handler computed `Math.max(0, Math.floor(Number(e.target.value) || 0))`; an over-large numeric literal (e.g. `1e400`) overflowed to `Infinity`, so `setInterval(…, Math.max(3, Infinity)*1000)` passed a non-finite delay that browsers clamp to 0 → a max-rate fetch loop. The portfolio live cockpit copy was patched during the review; the three sibling boards were swept with the identical `Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0` guard immediately after (same branch/commit). No remaining occurrences.
 
+## Deferred from: retro action #1 — web verification gate (2026-06-30)
+
+Action #1 (re-establish the local web verification path) turned out to be a **misdiagnosis fix**, not a
+toolchain repair: the web `tsc`/`eslint`/`vitest` were never broken — they're hoisted to the workspace
+ROOT `node_modules/.bin` (the recurring "node_modules/.bin empty → unrunnable" note checked `apps/web`'s
+local `.bin`, which is empty by hoisting; `npm i --prefix` had mangled it once, see minimize-dev-churn).
+The gate runs: `npm --workspace web run typecheck|test|lint` (or `../../node_modules/.bin/{tsc --noEmit,
+vitest run,eslint .}` from `apps/web`). Verified 2026-06-30: **tsc clean; vitest 154/154 after fixing
+rates-page test rot** (stub didn't mock `/countries` + `/curve/series` from the rates-sources story, and
+the legend copy moved "as of …" → "Latest · …" + the curve URL gained `country=`). Remaining (deferred):
+
+- **`app/rates/page.tsx`: 8 `react-hooks/set-state-in-effect` lint errors** (lines ~624/631/634/665/695/709/757/766)
+  — the country-aware snap/clamp effects and the curve-timelapse animation call `setState` synchronously in
+  effect bodies. Shipped because the rates stories (rates-curve-analytics / rates-sources) believed the gate
+  was unrunnable. A proper fix needs real restructuring (derive state / `key` prop / move setState into
+  callbacks), not a blanket disable — its own small follow-up story ("rates-page set-state-in-effect cleanup").
+- **`__tests__/fx-matrix-page.test.tsx`: 1 lint warning** — minor; sweep with the above.
+
 ## Deferred from: code review of the Monitor arc (2026-06-22)
 
 Adversarial 3-layer review (Blind / Edge / Acceptance) of the 4 Monitor stories (wei-world-equity-indices, wei-backdate-as-of-date, monitor-fx-cross-matrix, portfolios-live-header-pnl-declutter). 4 patches applied (FX `ccys` dedupe, WEI stale-tooltip honesty, canonical `as_of_date` SQL placeholder, live-page test-masking). Deferred:
