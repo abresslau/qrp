@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
-from datetime import date
+from datetime import date, timedelta
 
 from equity.returns.windows import BY_CODE, base_date
 from fx.convert import convert
@@ -38,7 +38,10 @@ TOLERANCE_PP = 1.5  # percentage points; residual above this is worth investigat
 def _yahoo_close_series(symbol: str, start: str, end: str) -> list[tuple[date, float]]:
     import yfinance as yf
 
-    hist = yf.Ticker(symbol).history(start=start, end=end, auto_adjust=False)
+    # yfinance `end` is EXCLUSIVE — bump a day so the requested end date is included (the as-of
+    # lookups below would otherwise fall back a session). Mirrors the equity/commodity adapters.
+    end_excl = (date.fromisoformat(end) + timedelta(days=1)).isoformat()
+    hist = yf.Ticker(symbol).history(start=start, end=end_excl, auto_adjust=False)
     return [(idx.date(), float(v)) for idx, v in hist["Close"].items()]
 
 
