@@ -12,6 +12,7 @@ from datetime import date
 
 import openpyxl
 
+from rates.sources.aft_fr import parse_workbook as aft_parse
 from rates.sources.banco_espana import parse_csv as bde_parse
 from rates.sources.boc import parse_observations
 from rates.sources.rba import parse_csv as rba_parse
@@ -61,6 +62,36 @@ def test_bde_parses_clean_govt_tenors_only_from_wide_latin1_csv():
     assert all(p.country == "ES" and p.basis == "nominal" and p.curve_set == "govt" for p in pts)
     # the 6m on 25 Jun is "_" (missing) → skipped, not zero
     assert {p.tenor for p in pts if p.as_of_date == date(2026, 6, 25)} == {3.0, 10.0}
+
+
+def _xlsx(rows: list[list]) -> io.BytesIO:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for r in rows:
+        ws.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def test_aft_emits_real_and_breakeven_scaled_from_decimals():
+    # title/header preamble (non-date rows skipped), then data rows: date, real, nominal, breakeven
+    # as DECIMAL fractions (x100 -> %). A blank real (early history) → only the breakeven point.
+    rows = [
+        ["Rendement des OAT indexées", None, None, None],
+        [None, "zone euro 10 ans", None, None],
+        [date(2026, 6, 1), 0.01462, 0.03654, 0.02192],
+        [date(2013, 11, 1), None, None, 0.01766],  # early: breakeven only, real blank
+    ]
+    pts = aft_parse(_xlsx(rows))
+    by = {(p.basis, p.as_of_date): p for p in pts}
+    assert all(p.country == "FR" and p.curve_set == "govt" and p.tenor == 10.0 for p in pts)
+    assert abs(by[("real", date(2026, 6, 1))].value - 1.462) < 1e-9
+    assert abs(by[("inflation", date(2026, 6, 1))].value - 2.192) < 1e-9
+    # real + breakeven == nominal (source identity), and the blank-real early row → inflation only
+    assert ("real", date(2013, 11, 1)) not in by
+    assert abs(by[("inflation", date(2013, 11, 1))].value - 1.766) < 1e-9
 
 
 def _b2_workbook(rows: list[list]) -> io.BytesIO:

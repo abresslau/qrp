@@ -32,7 +32,7 @@ rates is done, "add more relevant macro datasets (e.g. IBGE)".
 | **ES** | ✅ **NEW daily** | ✖ ceiling | ✖ | 0.5/1/3/5/10/15y | **06-26** | **thin→full** (BdE; was 1 monthly 10y pt) |
 | **SE** | ✅ benchmarks | ✖ ceiling | ✖ | 2/5/7/10y | 06-29 | refreshed |
 | **NO** | ✅ benchmarks | ✖ ceiling | ✖ | 3m–10y | 06-29 | refreshed |
-| **FR** | ⚠ 10y only | ✖ (deferred) | ✖ | 10y (monthly) | 05-01 | ceiling — see below |
+| **FR** | ⚠ 10y only | **✅ NEW (10y)** | **✅ NEW (10y)** | 10y | real/BE 06-01 | **real+breakeven added** (AFT OAT€i); nominal still 10y monthly ceiling |
 | **IT** | ⚠ 10y only | ✖ ceiling | ✖ | 10y (monthly) | 05-01 | ceiling — see below |
 | **CH** | ⚠ frozen | ✖ ceiling | ✖ | 1–30y | **2025-07-31** | source discontinued — see below |
 | **HK** | ✅ | ✖ ceiling | ✖ | 7d–15y | 05-29 | monthly-bulletin lag |
@@ -52,14 +52,16 @@ via live probes that these do **not** exist for free:
 - **SE / NO** — Riksbank SWEA & Norges SDMX are nominal-only (NO issues no linkers). → ceiling.
 - **IT** — no free daily multi-tenor curve at all (Banca d'Italia infostat is WAF-blocked, MTS is
   commercial, MEF is auction-only); stays at the ECB 10y monthly point. → ceiling.
-- **FR** — Banque de France discontinued OAT rates (2024-07-10); AFT's full-grid file is a frozen 2021
-  demo. FR **real** (AFT OAT€i 10y/30y + breakeven) IS published daily and was confirmed reachable, but
-  the file is an awkward xls-container openpyxl rejects → **deferred** (needs xlrd/pandas plumbing).
+- **FR** — **real + breakeven NOW ADDED** (AFT OAT€i 10y, daily, via `aft_fr.py`; latest 06-01: real
+  1.46%, breakeven 2.19%). The nominal FULL curve is still a ceiling (BdF discontinued OAT rates
+  2024-07-10; AFT's full-grid file is a frozen 2021 demo) — FR nominal stays on the ECB 10y monthly +
+  the EU aggregate proxy. NB the OAT€i is euro-HICP-linked, so FR breakeven = EU inflation, and it's a
+  single ~10y benchmark, not a fitted curve. (The openpyxl-rejects-`.xls` snag was the extension check
+  — a BytesIO handle reads it fine.)
 - **CH** — the SNB `rendoblid` curve was **discontinued** (last data 2025-07-31); no successor full-curve
   API. Only a current 10y point remains. → ceiling (frozen).
 
 ### Re-test triggers (to break the ceilings later)
-- FR real: wire the AFT OAT€i monthly-rolling `.xls` via xlrd/pandas (data confirmed to ~2026-06-01).
 - FR/IT full nominal: a commercial/MTS feed, or Banca d'Italia infostat dataflow code (contact BdI).
 - CH: a non-SNB full-curve vendor, or accept the frozen ceiling / add the 10y-only top-up.
 - HK/AU: reload after the next publication (source cadence lag, not a bug).
