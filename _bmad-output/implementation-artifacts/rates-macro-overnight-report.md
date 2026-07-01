@@ -78,10 +78,14 @@ via live probes that these do **not** exist for free:
 - AU: reload after the next RBA publication (source cadence lag, not a bug).
 - BR: ~~ANBIMA ETTJ authoritative curve~~ ADDED (07-01 follow-up — ANBIMA Mercado Secundário
   indicative rates: nominal LTN/NTN-F + real NTN-B). The literal **B3 DI futures curve** stays
-  deferred: no clean endpoint in-env (the DI×Pré reference curve is behind a JS/Cloudflare page; the
-  only reachable raw data is a 12MB/day BVBG-086 pregão XML — too heavy for a daily feed). Re-test =
-  a browser-driven fetch of the reference-rate proxy, the B3 developers API with credentials, or a
-  paid feed. The ANBIMA prefixed curve is the reachable stand-in in the meantime.
+  deferred (DECISION 2026-07-01, after investigation): no clean endpoint in-env. The DI×Pré
+  reference curve is behind a JS/Cloudflare page (no reachable JSON proxy), and the only reachable
+  raw data is the `pesquisapregao` PR ZIP — a ~12MB download that unpacks to **4 BVBG-086 XMLs
+  totalling ~300MB+ decompressed** (the largest alone 134MB; DI1 futures aren't even in it). Parsing
+  hundreds of MB of XML nightly for one curve is too heavy/brittle, and the **ANBIMA prefixed curve
+  already covers BR nominal** to within a small cash/futures basis. Re-test only if the DI-futures
+  curve specifically matters: a browser-driven capture of the reference-rate JSON proxy, the B3
+  developers API with credentials, or a paid feed — NOT the pregão XML.
 - MX/CN/DK/SG: unchanged from PULL_REPORT (auth/undocumented/discontinued).
 
 ## Addendum — 2026-07-01 follow-up: HK / FR / CH daily source fixes + BR ANBIMA
@@ -119,6 +123,11 @@ Separately (macro package, merged to `main`; 45/45 macro tests pass):
 - **IBGE PIM/PMC** — the SA index levels were already live (the deferred "zero rows" note was stale);
   added the growth prints `IBGE:PIM_MOM`/`PIM_YOY` + `PMC_MOM`/`PMC_YOY` (tables 8888/8880, fresh
   Apr-2026). The old "non-JSON metadata" blocker was just gzip on the `/agregados/{t}/metadados` API.
+- **Fuller BCB Focus** — extended the survey beyond IPCA/BRL/GDP/debt: the annual term structure
+  (current..+3y) gained **Selic** eop (the flagged follow-up gap — closed), IGP-M, Resultado
+  primário, Taxa de desocupação; and a NEW **Top-5** breakdown (best-forecaster median, short-term
+  ranking `tipoCalculo='C'`) for IPCA + Selic (`BCB:FOCUS5:*`). 24 new series, fresh to the 06-26
+  survey.
 - **Skipped:** IPEADATA EMBI (dead since 2024-07-30, no fresh free source).
 
 ## Macro — IBGE enrichment
@@ -143,6 +152,7 @@ All overnight branches were reviewed and **merged to `main`**, and pushed:
 - **07-01 follow-up (all merged + pushed):** `feat/rates-hk-fr-daily-sources` (daily HK + FR TEC-10),
   `feat/rates-ch-oecd-10y` (CH OECD 10y top-up), `feat/rates-anbima-ntnb` + `feat/rates-anbima-nominal`
   (BR ANBIMA real + prefixed nominal), plus the macro-breadth branches `feat/macro-br-trade-employment`
-  and `feat/macro-ibge-pim-pmc-growth`. Also `chore/retire-commodity-job` (commodity → eod node only).
+  `feat/macro-ibge-pim-pmc-growth`, and `feat/macro-focus-fuller` (fuller BCB Focus + Top-5). Also
+  `chore/retire-commodity-job` (commodity → eod node only).
   See the Addenda above.
 - The data is loaded in the rates/macro databases.
