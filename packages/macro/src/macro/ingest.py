@@ -268,6 +268,17 @@ _IBGE = [
      "activity", [(544, 129314)], 1.0),
     (8880, 7170, "IBGE:PMC", "Retail sales volume (PMC, SA)", "index", "monthly",
      "activity", [(11046, 56734)], 1.0),
+    # PIM/PMC growth rates — the prints a desk actually reads, alongside the index levels above
+    # (same table + classification: PIM c544/129314 "Indústria geral", PMC c11046/56734 "volume").
+    # Verified live 2026-07-01 to Apr-2026.
+    (8888, 11601, "IBGE:PIM_MOM", "Industrial production MoM (PIM-PF, SA)", "%", "monthly",
+     "activity", [(544, 129314)], 1.0),
+    (8888, 11602, "IBGE:PIM_YOY", "Industrial production YoY (PIM-PF)", "%", "monthly",
+     "activity", [(544, 129314)], 1.0),
+    (8880, 11708, "IBGE:PMC_MOM", "Retail sales volume MoM (PMC, SA)", "%", "monthly",
+     "activity", [(11046, 56734)], 1.0),
+    (8880, 11709, "IBGE:PMC_YOY", "Retail sales volume YoY (PMC)", "%", "monthly",
+     "activity", [(11046, 56734)], 1.0),
 ]
 
 # US BLS series (no key; FRED-free US coverage). (bls_series, series_id, name, unit, category).
