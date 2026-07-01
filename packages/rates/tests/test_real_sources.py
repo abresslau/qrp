@@ -11,10 +11,14 @@ import io
 from datetime import date
 
 import openpyxl
+import pytest
 
 from rates.sources.aft_fr import parse_workbook as aft_parse
+from rates.sources.aft_tec10 import CurveLayoutError as Tec10LayoutError
+from rates.sources.aft_tec10 import parse_tec10
 from rates.sources.banco_espana import parse_csv as bde_parse
 from rates.sources.boc import parse_observations
+from rates.sources.hkma import parse_records as hkma_parse
 from rates.sources.rba import parse_csv as rba_parse
 from rates.sources.rbnz import parse_workbook
 
@@ -92,6 +96,36 @@ def test_aft_emits_real_and_breakeven_scaled_from_decimals():
     # real + breakeven == nominal (source identity), and the blank-real early row → inflation only
     assert ("real", date(2013, 11, 1)) not in by
     assert abs(by[("inflation", date(2013, 11, 1))].value - 1.766) < 1e-9
+
+
+def test_tec10_parses_daily_fr_nominal_10y():
+    html = "<p>TEC 10 index on Wednesday 01 July 2026: 3.65%</p>"
+    pt = parse_tec10(html)
+    assert (pt.country, pt.currency, pt.curve_set, pt.basis, pt.rate_type, pt.tenor) == (
+        "FR", "EUR", "govt", "nominal", "yield", 10.0)
+    assert pt.as_of_date == date(2026, 7, 1) and pt.value == 3.65
+
+
+def test_tec10_fails_loud_on_layout_drift():
+    with pytest.raises(Tec10LayoutError):
+        parse_tec10("<p>no tec ten value here</p>")
+
+
+def test_hkma_daily_maps_terms_to_tenors_and_skips_unknowns():
+    records = [
+        {"end_of_date": "2026-06-30", "term": "1W", "issue_no": "Q1", "yield": 2.45, "price": None},
+        {"end_of_date": "2026-06-30", "term": "3M", "issue_no": "Q2", "yield": 2.45},
+        {"end_of_date": "2026-06-30", "term": "12M", "issue_no": "Y1", "yield": 2.66},
+        {"end_of_date": "2026-06-30", "term": "2 YR", "issue_no": "N1", "yield": 2.901},
+        {"end_of_date": "2026-06-30", "term": "5 YR", "yield": None},  # null yield → skip
+        {"end_of_date": "2026-06-30", "term": "weird", "yield": 3.0},  # unparseable term → skip
+    ]
+    pts = hkma_parse(records)
+    by = {p.tenor: p.value for p in pts}
+    assert by == {round(7 / 365, 6): 2.45, 0.25: 2.45, 1.0: 2.66, 2.0: 2.901}
+    assert all(p.country == "HK" and p.currency == "HKD" and p.basis == "nominal"
+               and p.curve_set == "govt" and p.rate_type == "yield" for p in pts)
+    assert all(p.as_of_date == date(2026, 6, 30) for p in pts)
 
 
 def _b2_workbook(rows: list[list]) -> io.BytesIO:
