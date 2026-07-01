@@ -19,6 +19,7 @@ from rates.sources.aft_tec10 import parse_tec10
 from rates.sources.banco_espana import parse_csv as bde_parse
 from rates.sources.boc import parse_observations
 from rates.sources.hkma import parse_records as hkma_parse
+from rates.sources.oecd_ltir import parse_ltir as oecd_ltir_parse
 from rates.sources.rba import parse_csv as rba_parse
 from rates.sources.rbnz import parse_workbook
 
@@ -126,6 +127,20 @@ def test_hkma_daily_maps_terms_to_tenors_and_skips_unknowns():
     assert all(p.country == "HK" and p.currency == "HKD" and p.basis == "nominal"
                and p.curve_set == "govt" and p.rate_type == "yield" for p in pts)
     assert all(p.as_of_date == date(2026, 6, 30) for p in pts)
+
+
+def test_oecd_ltir_parses_ch_10y_yield_at_month_end():
+    csv_text = (
+        "STRUCTURE,REF_AREA,FREQ,MEASURE,UNIT_MEASURE,TIME_PERIOD,OBS_VALUE\n"
+        "x,CHE,M,IRLT,PA,2026-05,0.44\n"
+        "x,CHE,M,IRLT,PA,2026-04,0.45\n"
+        "x,CHE,M,IR3TIB,PA,2026-05,-0.04\n"  # short-term rate → filtered out (MEASURE != IRLT)
+    )
+    pts = oecd_ltir_parse(csv_text, country="CH", currency="CHF")
+    by = {p.as_of_date: p.value for p in pts}
+    assert by == {date(2026, 5, 31): 0.44, date(2026, 4, 30): 0.45}  # month-END dated
+    assert all(p.country == "CH" and p.currency == "CHF" and p.curve_set == "govt"
+               and p.basis == "nominal" and p.rate_type == "yield" and p.tenor == 10.0 for p in pts)
 
 
 def _b2_workbook(rows: list[list]) -> io.BytesIO:

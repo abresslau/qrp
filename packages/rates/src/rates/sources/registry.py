@@ -22,6 +22,7 @@ from .fed_gsw import FedGswCurveSource
 from .hkma import HkmaCurveSource
 from .mof_jp import MofJgbCurveSource
 from .norgesbank import NorgesBankCurveSource
+from .oecd_ltir import OecdLtirCurveSource
 from .rba import RbaCurveSource
 from .rbnz import RbnzCurveSource
 from .riksbank import RiksbankCurveSource
@@ -44,7 +45,8 @@ def build_registry() -> dict[str, list[CurveSource]]:
         "ES": [BancoEspanaCurveSource()],  # BdE daily curve (0.5–15y) — supersedes ECB 10y monthly
         "US": [UsTreasuryCurveSource(), FedGswCurveSource()],  # CMT par + Fed GSW fitted curves
         "JP": [MofJgbCurveSource()],
-        "CH": [SnbCurveSource()],
+        # SNB spot curve (frozen: discontinued 2025-07-31) + OECD monthly 10y yield top-up (fresh)
+        "CH": [SnbCurveSource(), OecdLtirCurveSource(country="CH", geo="CHE", currency="CHF")],
         "CA": [BocCurveSource()],
         "AU": [RbaCurveSource()],
         "NZ": [RbnzCurveSource()],
