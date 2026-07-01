@@ -150,8 +150,8 @@ def _rates_one(c: str, s: str, e: str) -> list[Cmd]:
 
 
 def _commodity_all(s: str, e: str) -> list[Cmd]:
-    # Not a generated bucket job (its dedicated job lives in schedules.py — see _EXTERNAL_JOB_BUCKETS),
-    # but a builder so the composite `eod` job runs commodities from the same single source of truth.
+    # Single source of truth for BOTH the `eod` job's `commodity` node and the granular
+    # `commodity_load` bucket job — commodity has no separate/bespoke job.
     ts, te = _tail(s, e, 12)
     return [
         ("commodity.cli", "price", "load", "--start_date", ts, "--end_date", te),
@@ -204,8 +204,8 @@ def _calc_one(t: str, s: str, e: str) -> list[Cmd]:
     return _calc_cmds(t, s, e)
 
 
-# bucket key -> (all_cmds, one_cmds | None, discover | None). `commodity` has a builder (for the
-# composite `eod` job to reuse) but is excluded from generated BUCKET_JOBS (its job is in schedules.py).
+# bucket key -> (all_cmds, one_cmds | None, discover | None). `commodity`'s builder feeds BOTH the
+# composite `eod` job's `commodity` node and its own generated `commodity_load` bucket job.
 _BUILDERS: dict[str, tuple[Callable, Callable | None, Callable | None]] = {
     "fx": (_fx_all, None, None),
     "equity_prices": (_equity_all, _equity_one, _discover_universes),
@@ -335,9 +335,6 @@ def _make_job(b):
     return _bucket_job
 
 
-# Buckets whose Dagster job is owned elsewhere (a dedicated job in `schedules.py`) and which have no
-# command builder here — they appear on the EOD board (via `buckets.BUCKETS`) but must NOT mint a
-# second job of the same name, which would collide at definitions load.
-_EXTERNAL_JOB_BUCKETS = {"commodity"}  # `commodity` job + schedule live in schedules.py
-
-BUCKET_JOBS = [_make_job(b) for b in BUCKETS if b.key not in _EXTERNAL_JOB_BUCKETS]
+# Every data bucket mints one granular `<asset>_load` job for ad-hoc runs (commodity included — it
+# has no separate/bespoke job anymore, just this generated one + its node in the `eod` DAG).
+BUCKET_JOBS = [_make_job(b) for b in BUCKETS]

@@ -5,17 +5,18 @@ operator runs by hand, and Dagster only decides WHEN + retains the run log. This
 
 * ``eod`` — the composite, all-packages end-of-day DAG (per-product nodes: equity/index/fx/commodity/
   rates/macro/alt_data/fundamental/universe + their calcs → validate), over a [start_date, end_date]
-  window. The single job to run for the whole nightly refresh. Schedule ``eod_daily`` (STOPPED).
-* ``commodity_load`` — the standalone commodity tail-load + validate (its own schedule ``commodity_daily``).
+  window. The single job to run for the whole nightly refresh. Schedule ``eod_daily``.
 
 **Manual running is unchanged** (no Dagster needed): ``uv run sym eod`` (sym's own pipeline),
-``uv run commodity price load``, etc. (The older sym-only ``sym_eod`` Dagster job was retired —
-``eod``'s sym-owned nodes cover the same steps; the ``sym eod`` CLI it wrapped is unchanged.)
+``uv run commodity price load``, etc. Commodity has NO separate job/schedule — it is a node in the
+``eod`` DAG (``commodity`` + ``commodity_returns``) and a granular ``commodity_load`` bucket job
+(generated from ``bucket_jobs`` like every other data bucket) for ad-hoc runs. (The older sym-only
+``sym_eod`` Dagster job was retired too — ``eod``'s sym-owned nodes cover the same steps.)
 """
 
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date
 
 from dagster import (
     Config,
@@ -49,62 +50,6 @@ class EodConfig(Config):
 # composite `eod` job's sym-owned nodes (equity_prices = monitor,fill,map; fx; index_levels;
 # equity_gics = classify; equity_returns = recompute; validate) cover the same steps. The `sym eod`
 # CLI those nodes shell is unchanged (still `uv run sym eod`).
-
-
-@op(name="commodity_op", retry_policy=RetryPolicy(max_retries=2, delay=300))
-def commodity_load(context) -> None:
-    """Tail-load the commodity continuous front-month series then validate (the commodity package owns
-    its steps; trigger-only here). Op `commodity_op`, job `commodity_load` — matching the `<asset>_op` /
-    `<asset>_load` convention of the generated bucket jobs.
-
-    Manual: ``uv run commodity price load`` then ``uv run commodity validate``. The load tails a
-    short window (last ~12 days, idempotent equal-value rows skip) so the daily tick is a light
-    top-up, not a full re-pull. A FAIL in validate (exit 2) turns the run red and triggers the retry.
-    """
-    root = str(repo_root())
-    scheduled = getattr(context, "run", None)
-    tick = (scheduled.tags.get("dagster/scheduled_execution_time") if scheduled else None)
-    end = (tick or "")[:10] or date.today().isoformat()
-    start = (date.fromisoformat(end) - timedelta(days=12)).isoformat()
-    load = subprocess.run(
-        [sys.executable, "-m", "commodity.cli", "price", "load",
-         "--start_date", start, "--end_date", end],
-        cwd=root, capture_output=True, text=True, timeout=3600,
-    )
-    context.log.info((load.stdout or "")[-4000:])
-    if load.returncode != 0:
-        context.log.error(
-            f"commodity price load FAILED (exit {load.returncode}):\n{(load.stderr or '')[-2000:]}")
-        raise RuntimeError(f"`commodity price load` exited {load.returncode}")
-    val = subprocess.run(
-        [sys.executable, "-m", "commodity.cli", "validate"],
-        cwd=root, capture_output=True, text=True, timeout=600,
-    )
-    context.log.info((val.stdout or "")[-4000:])
-    if val.returncode != 0:
-        raise RuntimeError(f"`commodity validate` exited {val.returncode} (a check FAILED)")
-
-
-@job(
-    name="commodity_load",
-    description="Daily commodity prices (Tier-A vendor continuous front-month) — tail load + "
-    "validate across the whole universe (energy / metals / grains / softs / livestock). "
-    "Manual: `uv run commodity price load`.",
-)
-def commodity_job():
-    commodity_load()
-
-
-# Weekdays 18:30 America/New_York — after the US futures (NYMEX/COMEX/CBOT/ICE) settle and the
-# vendor continuous series refresh. Timezone ALWAYS explicit (the hard requirement). STOPPED until
-# enabled in the Dagster UI.
-commodity_daily = ScheduleDefinition(
-    name="commodity_daily",
-    job=commodity_job,
-    cron_schedule="30 18 * * 1-5",
-    execution_timezone="America/New_York",
-    default_status=DefaultScheduleStatus.STOPPED,
-)
 
 
 # ---- `eod` as a readable DAG: per-bucket data nodes + per-PRODUCT calculations ----------------
