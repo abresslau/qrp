@@ -129,7 +129,7 @@ def test_critical_vs_attempt_all(monkeypatch):
 def test_repository_builds_without_name_conflicts():
     # Build the FULL repository (what `dagster dev`'s code server does) — a plain import does NOT
     # trigger op/graph/job name-uniqueness validation, so this is the guard that catches a collision
-    # (e.g. an eod bucket op named `commodity` clashing with the `commodity` job).
+    # (e.g. the eod bucket op aliased `commodity` clashing with the `commodity_load` job).
     import lineage.definitions as d
 
     repo = d.defs.get_repository_def()

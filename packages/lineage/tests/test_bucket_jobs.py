@@ -159,8 +159,8 @@ def test_bucket_jobs_use_mnemonic_names_not_bare_keys():
     from lineage.bucket_jobs import BUCKET_JOBS
 
     names = {j.name for j in BUCKET_JOBS}
-    assert {"fx_load", "equity_load", "index_load", "rates_load", "fundamental_load",
-            "alt_data_load", "macro_load", "universe_load", "calculations"} == names
+    assert {"fx_load", "equity_load", "index_load", "rates_load", "commodity_load",
+            "fundamental_load", "alt_data_load", "macro_load", "universe_load", "calculations"} == names
     # the `rates` bucket job must NOT clash with the scheduled rates pipelines
     assert "rates" not in names and "rates_load" in names
 
@@ -170,4 +170,4 @@ def test_job_name_falls_back_to_key_when_unmapped():
 
     assert job_name("rates") == "rates_load"          # mapped
     assert job_name("calculations") == "calculations"  # unmapped → key (kept per Andre)
-    assert job_name("commodity") == "commodity_load"   # dedicated schedules.py job; `<asset>_load` name
+    assert job_name("commodity") == "commodity_load"   # generated bucket job; `<asset>_load` name
