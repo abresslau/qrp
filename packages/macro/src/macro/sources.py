@@ -717,6 +717,48 @@ def fetch_bcb_focus_annual(
     return meta, obs
 
 
+# Focus "Top 5" — the median of the 5 institutions with the best recent forecast track record (the
+# sharper signal the bank spotlights). Same annual shape as ExpectativasMercadoAnuais but ranked;
+# ``tipoCalculo`` is the ranking horizon C/M/L (curto/médio/longo) — 'C' (short-term) is the fresh,
+# headline one (M is not maintained for every indicator). No ``baseCalculo`` field here.
+FOCUS_TOP5_ANNUAL = (
+    "https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/"
+    "ExpectativasMercadoTop5Anuais?$format=json&$select=Data,Mediana&$orderby=Data&$top=20000"
+)
+
+
+def fetch_bcb_focus_top5_annual(
+    indicator: str, series_id: str, name: str, unit: str, ref_year: int,
+    tipo: str = "C", geo: str = "Brazil",
+) -> tuple[dict, list]:
+    """Focus Top-5 median for ``indicator`` at reference year ``ref_year`` and ranking horizon
+    ``tipo`` (C/M/L), as a time series over survey dates. An unknown combination yields an empty
+    series (never bad data)."""
+    flt = (f"Indicador eq '{indicator}' and DataReferencia eq '{ref_year}' "
+           f"and tipoCalculo eq '{tipo}'")
+    url = f"{FOCUS_TOP5_ANNUAL}&$filter={urllib.parse.quote(flt, safe=chr(39))}"
+    payload = json.loads(_get_retry(url, timeout=45).decode("utf-8", "replace"))
+    obs: list[tuple[date, float]] = []
+    for row in payload.get("value", []) if isinstance(payload, dict) else []:
+        d, v = row.get("Data"), row.get("Mediana")
+        if not d or v is None:
+            continue
+        try:
+            obs.append((date.fromisoformat(d[:10]), _finite(v)))
+        except (ValueError, TypeError):
+            continue
+    obs.sort()
+    meta = {
+        "series_id": series_id,
+        "source": "bcb_focus",
+        "name": name,
+        "geo": geo,
+        "unit": unit,
+        "frequency": "daily",
+    }
+    return meta, obs
+
+
 # --- IBGE SIDRA (Brazilian official statistics: IPCA, PNAD unemployment, PIB) ------------
 # Open JSON REST, no key. The response is a FLAT array whose first element is a legend
 # (header) and the rest are data rows; `V` is the value (string; non-numeric sentinels

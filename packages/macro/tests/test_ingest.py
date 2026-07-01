@@ -121,6 +121,7 @@ def test_run_ingest_attaches_declared_categories(monkeypatch):
     monkeypatch.setattr(ingest, "fetch_bcb_focus_12m", _empty_focus)
     monkeypatch.setattr(ingest, "ingest_population_all", lambda conn: [])
     monkeypatch.setattr(ingest, "ingest_focus_annual", lambda conn: [])
+    monkeypatch.setattr(ingest, "ingest_focus_top5", lambda conn: [])
     monkeypatch.setattr(ingest, "_OECD_CPI_GEOS", ["USA"])
     monkeypatch.setattr(
         ingest, "_WB",
@@ -188,6 +189,7 @@ def test_run_ingest_attributes_failures_per_series(monkeypatch):
     monkeypatch.setattr(ingest, "fetch_bcb_focus_12m", _empty_focus)
     monkeypatch.setattr(ingest, "ingest_population_all", lambda conn: [])
     monkeypatch.setattr(ingest, "ingest_focus_annual", lambda conn: [])
+    monkeypatch.setattr(ingest, "ingest_focus_top5", lambda conn: [])
     monkeypatch.setattr(ingest, "_OECD_CPI_GEOS", ["USA", "GBR"])
 
     def fake_oecd(geo):

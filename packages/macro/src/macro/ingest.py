@@ -16,6 +16,7 @@ from macro.market_sources import fetch_yfinance
 from macro.sources import (
     fetch_bcb_focus_12m,
     fetch_bcb_focus_annual,
+    fetch_bcb_focus_top5_annual,
     fetch_bcb_sgs,
     fetch_bls,
     fetch_ecb,
@@ -127,12 +128,23 @@ _WB_POP_ALL = [
 # indicator string yields an empty series (stored as nothing) — never bad data.
 _BCB_FOCUS_ANNUAL = [
     ("IPCA", "IPCA", "IPCA expectation (Focus)", "% per year", "inflation"),
+    ("Selic", "SELIC", "Selic eop expectation (Focus)", "% p.a.", "rates"),
     ("Câmbio", "BRL", "BRL/USD eop expectation (Focus)", "BRL per USD", "fx"),
     ("PIB Total", "PIB", "GDP growth expectation (Focus)", "% per year", "gdp"),
+    ("IGP-M", "IGPM", "IGP-M expectation (Focus)", "% per year", "inflation"),
+    ("Taxa de desocupação", "UNEMP", "Unemployment expectation (Focus)", "%", "employment"),
+    ("Resultado primário", "PRIMARY",
+     "Primary result expectation (Focus)", "% of GDP", "fiscal"),
     ("Dívida bruta do governo geral", "GROSSDEBT",
      "Gross general govt debt expectation (Focus)", "% of GDP", "debt"),
-    # NOTE: Selic eop expectations live in a separate Olinda endpoint
-    # (ExpectativasMercadoSelic) — wire as a follow-up.
+]
+
+# Focus "Top 5" annual — the median of the best-track-record institutions (the sharper anchor),
+# short-term ranking (tipoCalculo='C', the fresh one). One series per (indicator, reference year).
+# (Olinda indicator, id-prefix, name, unit, category).
+_BCB_FOCUS_TOP5 = [
+    ("IPCA", "IPCA", "IPCA Top-5 expectation (Focus)", "% per year", "inflation"),
+    ("Selic", "SELIC", "Selic eop Top-5 expectation (Focus)", "% p.a.", "rates"),
 ]
 
 # ECB Data Portal series: (key, series_id, name, unit, frequency, category). The three
@@ -415,6 +427,25 @@ def ingest_focus_annual(conn: psycopg.Connection) -> list[dict]:
     return out
 
 
+def ingest_focus_top5(conn: psycopg.Connection) -> list[dict]:
+    """Ingest the Focus Top-5 annual medians (short-term ranking): one series per (indicator,
+    reference year) for the current + next three years. Returns the per-series summary rows."""
+    conn.autocommit = True
+    out: list[dict] = []
+    y0 = _date.today().year
+    for indicator, prefix, name, unit, category in _BCB_FOCUS_TOP5:
+        for y in range(y0, y0 + 4):
+            sid = f"BCB:FOCUS5:{prefix}:{y}"
+            try:
+                meta, obs = fetch_bcb_focus_top5_annual(indicator, sid, f"{name} ({y})", unit, y)
+                n, restated = _upsert(conn, dict(meta, category=category), obs)
+                out.append({"series_id": sid, "obs": n, "restated": restated, "ok": True})
+            except Exception as exc:  # noqa: BLE001
+                out.append({"series_id": sid, "obs": 0, "restated": 0, "ok": False,
+                            "error": str(exc)[:160]})
+    return out
+
+
 def run_ingest(conn: psycopg.Connection) -> dict:
     """Fetch + upsert all configured series. Returns a per-series summary (never fabricates)."""
     conn.autocommit = True
@@ -442,6 +473,7 @@ def run_ingest(conn: psycopg.Connection) -> dict:
                 _failed(f"WB:{indicator}:{geo}", exc)
     summary.extend(ingest_population_all(conn))  # population for every country (world map)
     summary.extend(ingest_focus_annual(conn))  # Focus survey annual term structure
+    summary.extend(ingest_focus_top5(conn))  # Focus Top-5 (best-forecaster) annual medians
     for key, sid, name, unit, freq, category in _ECB:
         try:
             _record(sid, fetch_ecb(key, sid, name, unit, freq), category)
