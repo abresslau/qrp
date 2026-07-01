@@ -220,6 +220,19 @@ _BCB = [
      "monthly", "external", 1.0, False),
     (13621, "BCB:RESERVES", "International reserves", "USD billion", "daily",
      "external", 1e-3, False),
+    # trade (SECEX/MDIC, republished via BCB SGS; monthly USD-mn — balance = exports − imports.
+    # NB the earlier-probed 22704/22705 were the WRONG codes [magnitudes didn't reconcile];
+    # 22707/22708/22709 reconcile exactly, verified live 2026-07-01 to May-2026.)
+    (22707, "BCB:TRADE_BALANCE", "Trade balance (goods, FOB)", "USD million", "monthly",
+     "trade", 1.0, False),
+    (22708, "BCB:EXPORTS", "Exports (goods, FOB)", "USD million", "monthly",
+     "trade", 1.0, False),
+    (22709, "BCB:IMPORTS", "Imports (goods, FOB)", "USD million", "monthly",
+     "trade", 1.0, False),
+    # employment (Novo CAGED, formal-employment STOCK; its month-over-month change is the widely
+    # watched net formal-job creation. Verified live 2026-07-01 to Apr-2026.)
+    (28763, "BCB:CAGED_STOCK", "Formal employment (Novo CAGED, stock)", "jobs", "monthly",
+     "employment", 1.0, False),
     # money / credit
     (27813, "BCB:M3", "Broad money M3 (end of period)", "R$ trillion", "monthly",
      "money", 1e-9, False),
