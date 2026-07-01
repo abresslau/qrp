@@ -4,6 +4,10 @@
 all rates nominal, real, etc. populated for all countries, up to yesterday / all vertices"; then, when
 rates is done, "add more relevant macro datasets (e.g. IBGE)".
 
+> **2026-07-01 UPDATE:** the overnight branches were merged to `main`, and a follow-up replaced the
+> monthly HK/FR sources with daily ones and topped up CH — see the **Addendum** at the end. The
+> per-country table + "Git state" below are updated; the narrative TL;DR reflects the overnight run.
+
 ## TL;DR
 - Every daily source **refreshed to the latest published business day**; three stale/thin sources
   investigated and **JP fixed** (freshness) + **ES upgraded** (thin→full daily curve).
@@ -13,8 +17,8 @@ rates is done, "add more relevant macro datasets (e.g. IBGE)".
   countries (DE/EU/IT/ES/SE/NO/JP/CH). Those are documented, not faked, with a re-test trigger each.
 - **Macro:** added the headline **IBGE inflation** series that were missing — IPCA & INPC, monthly and
   12-month — the single most-watched Brazilian prints.
-- **Nothing pushed.** Work is committed on two feature branches for your review (a direct push to
-  `main` was correctly blocked by policy). See "Git state".
+- **[Overnight] Nothing pushed** — work was committed on feature branches for review. *(Since merged +
+  pushed to `main` on 2026-07-01, along with the HK/FR/CH follow-up — see "Git state" + Addendum.)*
 
 ## Rates — per-country status (as of 2026-07-01; "yesterday" = 06-30)
 
@@ -32,15 +36,17 @@ rates is done, "add more relevant macro datasets (e.g. IBGE)".
 | **ES** | ✅ **NEW daily** | ✖ ceiling | ✖ | 0.5/1/3/5/10/15y | **06-26** | **thin→full** (BdE; was 1 monthly 10y pt) |
 | **SE** | ✅ benchmarks | ✖ ceiling | ✖ | 2/5/7/10y | 06-29 | refreshed |
 | **NO** | ✅ benchmarks | ✖ ceiling | ✖ | 3m–10y | 06-29 | refreshed |
-| **FR** | ⚠ 10y only | **✅ NEW (10y)** | **✅ NEW (10y)** | 10y | real/BE 06-01 | **real+breakeven added** (AFT OAT€i); nominal still 10y monthly ceiling |
+| **FR** | ✅ **10y DAILY** | ✅ (10y) | ✅ (10y) | 10y | **nom 07-01** / real 06-01 | **nominal now DAILY** (AFT TEC-10, 07-01 follow-up); real/BE stay OAT€i monthly |
 | **IT** | ⚠ 10y only | ✖ ceiling | ✖ | 10y (monthly) | 05-01 | ceiling — see below |
-| **CH** | ⚠ frozen | ✖ ceiling | ✖ | 1–30y | **2025-07-31** | source discontinued — see below |
-| **HK** | ✅ | ✖ ceiling | ✖ | 7d–15y | 05-29 | monthly-bulletin lag |
+| **CH** | ✅ **10y (OECD)** + frozen spot | ✖ ceiling | ✖ | 10y yield + spot 1–30y | **10y 2026-05** / spot 2025-07-31 | **OECD monthly 10y top-up added** (07-01 follow-up); SNB spot curve still frozen |
+| **HK** | ✅ **DAILY** | ✖ ceiling | ✖ | 1W–2Y | **06-30** | **now daily** (EFBN indicative-price, 07-01 follow-up; was monthly-bulletin 05-29; 5–15y long end dropped) |
 
 \* AU nominal itself lags to 06-24 (RBA F2 publish cadence) — a source lag, not fixable.
 
-`rates validate`: **exit 0, zero FAIL** across all countries (only 3 staleness WARNs = AU/CH/HK source
-lag). GB's two free checks (RPI breakeven = nominal−real; fwd↔spot identity) pass.
+`rates validate`: **exit 0, zero FAIL** across all countries. After the 07-01 follow-up (FR/HK/CH
+below) the only remaining staleness WARN is **AU** (RBA publish lag) + a transient ES band hole; the
+overnight run's AU/CH/HK/FR WARNs are otherwise cleared. GB's two free checks (RPI breakeven =
+nominal−real; fwd↔spot identity) pass.
 
 ## Why "real + all vertices for every country" is only partly attainable (the ceilings)
 A market real curve needs a liquid inflation-linked bond market **and** a public fitted curve. Confirmed
@@ -52,20 +58,45 @@ via live probes that these do **not** exist for free:
 - **SE / NO** — Riksbank SWEA & Norges SDMX are nominal-only (NO issues no linkers). → ceiling.
 - **IT** — no free daily multi-tenor curve at all (Banca d'Italia infostat is WAF-blocked, MTS is
   commercial, MEF is auction-only); stays at the ECB 10y monthly point. → ceiling.
-- **FR** — **real + breakeven NOW ADDED** (AFT OAT€i 10y, daily, via `aft_fr.py`; latest 06-01: real
-  1.46%, breakeven 2.19%). The nominal FULL curve is still a ceiling (BdF discontinued OAT rates
-  2024-07-10; AFT's full-grid file is a frozen 2021 demo) — FR nominal stays on the ECB 10y monthly +
-  the EU aggregate proxy. NB the OAT€i is euro-HICP-linked, so FR breakeven = EU inflation, and it's a
-  single ~10y benchmark, not a fitted curve. (The openpyxl-rejects-`.xls` snag was the extension check
-  — a BytesIO handle reads it fine.)
-- **CH** — the SNB `rendoblid` curve was **discontinued** (last data 2025-07-31); no successor full-curve
-  API. Only a current 10y point remains. → ceiling (frozen).
+- **FR** — real + breakeven from AFT OAT€i 10y (daily-in-file, monthly-published, `aft_fr.py`; latest
+  06-01: real 1.46%, breakeven 2.19%). **Nominal is now DAILY** (07-01 follow-up — AFT TEC-10, see
+  addendum), superseding the ECB 10y monthly. The nominal FULL curve is still a ceiling (BdF
+  discontinued OAT rates 2024-07-10; MTS commercial; Webstat needs an API key). NB the OAT€i is
+  euro-HICP-linked, so FR breakeven = EU inflation, and it's a single ~10y benchmark, not a fitted
+  curve. (The openpyxl-rejects-`.xls` snag was the extension check — a BytesIO handle reads it fine.)
+- **CH** — the SNB `rendoblid` daily spot curve was **discontinued** (last data 2025-07-31; the monthly
+  `rendoblim` and the `rendopar` NSS params stop on the same date — an SNB-wide discontinuation). The
+  fitted spot curve stays frozen, but a **fresh 10y yield is now topped up** from OECD monthly (07-01
+  follow-up, see addendum). A free daily Swiss 10y does not exist (SNB was the only one; FRED blocked).
 
 ### Re-test triggers (to break the ceilings later)
 - FR/IT full nominal: a commercial/MTS feed, or Banca d'Italia infostat dataflow code (contact BdI).
-- CH: a non-SNB full-curve vendor, or accept the frozen ceiling / add the 10y-only top-up.
-- HK/AU: reload after the next publication (source cadence lag, not a bug).
+  (FR nominal 10y is now daily via TEC-10 — this trigger is only for the FULL fitted curve.)
+- CH: a non-SNB full-curve vendor for the fitted spot curve (the 10y benchmark is now covered by OECD).
+- HK: ~~monthly-bulletin lag~~ RESOLVED (07-01 follow-up — daily EFBN indicative-price). The dropped
+  5–15y long end returns if HKMA issues on-the-run EFNs at those tenors again.
+- AU: reload after the next RBA publication (source cadence lag, not a bug).
 - MX/CN/DK/SG: unchanged from PULL_REPORT (auth/undocumented/discontinued).
+
+## Addendum — 2026-07-01 follow-up: HK / FR / CH daily source fixes
+After review flagged that HK and FR should not be monthly, the sources were replaced/added (merged to
+`main`; `rates validate` exits 0 with HK/FR/CH staleness now green):
+- **HK** — swapped the monthly-bulletin `efbn-yield-daily` (only refreshed with the monthly bulletin →
+  ran ~a month stale) for the daily `daily-monetary-statistics/efbn-indicative-price` (Reuters-priced
+  twice daily). Fresh to the latest business day (06-30), tenors 1W–2Y. Trade-off: reaches only ~2y —
+  HKMA has no on-the-run EFN beyond ~3y, so the old 5/7/10/15y benchmark points are dropped. Latest-
+  business-day-only, so history accrues forward. `hkma.py` rewritten (`parse_records`).
+- **FR** — added AFT **TEC-10** (CNO-TEC-10 nominal 10y, MTS-sourced) as a **daily** nominal-10y point
+  (fresh 07-01, 3.65%), superseding the ECB Maastricht 10y monthly (removed from the FR registry to
+  avoid a same-key collision — the store key has no `source`). OAT€i real/breakeven retained. New
+  `aft_tec10.py` (`parse_tec10` + retry-on-403). History accrues forward.
+- **CH** — added an OECD monthly **long-term (10y) interest rate** (`DF_FINMARK` `MEASURE=IRLT`, fresh
+  2026-05) as a 10y `yield` point, coexisting with the frozen SNB `spot` curve (different `rate_type` →
+  no key clash). Monthly points are **month-end-dated** so the ~1-month-lagged series stays inside the
+  staleness cadence window. New `oecd_ltir.py` (reusable `OecdLtirCurveSource(country, geo, currency)`).
+- **Verified:** live loads landed (FR 07-01, HK 06-30, CH 437 monthly pts to 2026-05); 87/87 rates
+  tests pass; ruff clean. The full Dagster `eod` job was run end-to-end afterwards (15/15 nodes SUCCESS)
+  to confirm the `rates` node picks these up.
 
 ## Macro — IBGE enrichment
 Added the headline **inflation** series that were missing from the IBGE/SIDRA catalogue (we had the IPCA
@@ -81,9 +112,11 @@ needs a classification pin — left as a follow-on.) Full `macro load` ran green
 both IBGE (the statistics office, official) and BCB (the central bank's republish) — complementary
 provenance. `macro load` is idempotent, so re-running is safe.
 
-## Git state (NOTHING PUSHED — awaiting your review)
-- `feat/rates-enrich-realcurves-freshness` (commit `bbc2ebb`) — the rates enrichment. Off `main`.
-- `feat/macro-enrich-national-stats` — the IBGE additions (this branch).
-- A direct merge+push to `main` was **blocked by policy** (correctly — the overnight ask was to enrich
-  data, not to push). Merge both when you're happy with them.
-- The **data is already loaded** in the rates/macro databases regardless of branch state.
+## Git state (MERGED — 2026-07-01)
+All overnight branches were reviewed and **merged to `main`**, and pushed:
+- `feat/rates-enrich-realcurves-freshness` (`bbc2ebb`) — the rates enrichment.
+- `feat/macro-enrich-national-stats` — the IBGE additions.
+- `feat/rates-fr-oatei-real` (`ab2ec67`) — FR OAT€i real/breakeven.
+- **07-01 follow-up (also merged + pushed):** `feat/rates-hk-fr-daily-sources` (daily HK + FR TEC-10)
+  and `feat/rates-ch-oecd-10y` (CH OECD 10y top-up) — see the Addendum above.
+- The data is loaded in the rates/macro databases.
