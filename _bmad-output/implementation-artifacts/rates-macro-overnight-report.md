@@ -26,7 +26,7 @@ rates is done, "add more relevant macro datasets (e.g. IBGE)".
 |---|---|---|---|---|---|---|
 | **GB** | ✅ fitted | ✅ | ✅ (RPI) | 0.5–40y +OIS | 06-29 | reference (BoE) — unchanged |
 | **US** | ✅ fitted | ✅ | ✅ (CPI) | 1m–30y | 06-30 / gsw 06-26 | reference (Treasury + Fed GSW) |
-| **BR** | ✅ (LTN+NTN-F) | ✅ (NTN-B) | ✅ (IPCA, approx) | per-issue → ~34y | 06-29 | (earlier this session) |
+| **BR** | ✅ (LTN+NTN-F) | ✅ (NTN-B) | ✅ (IPCA, approx) | per-issue → ~34y | 06-30 | Tesouro (retail) + **ANBIMA reference NEW** (07-01 follow-up: nominal LTN/NTN-F + real NTN-B, `curve_set='anbima'`) — the prefixed leg stands in for the B3 DI curve |
 | **DE** | ✅ fitted Svensson | ✖ ceiling | ✖ | 0.5–30y | **06-30** | refreshed +31 days |
 | **EU** | ✅ fitted (AAA+all) | ✖ ceiling | ✖ | 3m–30y ×3 types | 06-29 | refreshed |
 | **CA** | ✅ benchmarks | **✅ NEW (RRB 30y)** | — (single 30y pt) | 2/3/5/7/10/30y +real | 06-29 | **real added** |
@@ -76,9 +76,15 @@ via live probes that these do **not** exist for free:
 - HK: ~~monthly-bulletin lag~~ RESOLVED (07-01 follow-up — daily EFBN indicative-price). The dropped
   5–15y long end returns if HKMA issues on-the-run EFNs at those tenors again.
 - AU: reload after the next RBA publication (source cadence lag, not a bug).
+- BR: ~~ANBIMA ETTJ authoritative curve~~ ADDED (07-01 follow-up — ANBIMA Mercado Secundário
+  indicative rates: nominal LTN/NTN-F + real NTN-B). The literal **B3 DI futures curve** stays
+  deferred: no clean endpoint in-env (the DI×Pré reference curve is behind a JS/Cloudflare page; the
+  only reachable raw data is a 12MB/day BVBG-086 pregão XML — too heavy for a daily feed). Re-test =
+  a browser-driven fetch of the reference-rate proxy, the B3 developers API with credentials, or a
+  paid feed. The ANBIMA prefixed curve is the reachable stand-in in the meantime.
 - MX/CN/DK/SG: unchanged from PULL_REPORT (auth/undocumented/discontinued).
 
-## Addendum — 2026-07-01 follow-up: HK / FR / CH daily source fixes
+## Addendum — 2026-07-01 follow-up: HK / FR / CH daily source fixes + BR ANBIMA
 After review flagged that HK and FR should not be monthly, the sources were replaced/added (merged to
 `main`; `rates validate` exits 0 with HK/FR/CH staleness now green):
 - **HK** — swapped the monthly-bulletin `efbn-yield-daily` (only refreshed with the monthly bulletin →
@@ -94,9 +100,26 @@ After review flagged that HK and FR should not be monthly, the sources were repl
   2026-05) as a 10y `yield` point, coexisting with the frozen SNB `spot` curve (different `rate_type` →
   no key clash). Monthly points are **month-end-dated** so the ~1-month-lagged series stays inside the
   staleness cadence window. New `oecd_ltir.py` (reusable `OecdLtirCurveSource(country, geo, currency)`).
-- **Verified:** live loads landed (FR 07-01, HK 06-30, CH 437 monthly pts to 2026-05); 87/87 rates
-  tests pass; ruff clean. The full Dagster `eod` job was run end-to-end afterwards (15/15 nodes SUCCESS)
-  to confirm the `rates` node picks these up.
+- **BR** — added the **ANBIMA** Mercado-Secundário indicative curve (`curve_set='anbima'`, coexists
+  with the Tesouro retail `govt` curve): real **NTN-B** + prefixed nominal **LTN/NTN-F** (LTN
+  zero-coupon preferred over a same-maturity NTN-F; NTN-F extends the long end). This is the
+  authoritative reference the Tesouro docstring flagged as the follow-on. New `anbima.py`
+  (`AnbimaCurveSource`, `parse_ms`). Live 06-30: 17 nominal (0→10.5y) + 15 real (0.13→34y). The
+  prefixed leg is the reachable stand-in for the **B3 DI curve**, which stays deferred (no clean
+  endpoint in-env — see re-test triggers).
+- **Verified:** live loads landed (FR 07-01, HK 06-30, CH 437 monthly pts to 2026-05, BR ANBIMA
+  06-30); rates tests 88/88 pass; ruff clean. The full Dagster `eod` job was run end-to-end
+  afterwards (15/15 nodes SUCCESS) to confirm the `rates` node picks these up.
+
+## Addendum — 2026-07-01: Brazil macro breadth (trade / employment / IBGE PIM-PMC)
+Separately (macro package, merged to `main`; 45/45 macro tests pass):
+- **Trade** — `BCB:TRADE_BALANCE`/`EXPORTS`/`IMPORTS` (SGS 22707/8/9, SECEX goods FOB, USD-mn monthly,
+  fresh May-2026, reconcile exactly). The earlier-deferred 22704/22705 were the WRONG codes.
+- **Employment** — `BCB:CAGED_STOCK` (SGS 28763, Novo CAGED formal-employment stock, fresh Apr-2026).
+- **IBGE PIM/PMC** — the SA index levels were already live (the deferred "zero rows" note was stale);
+  added the growth prints `IBGE:PIM_MOM`/`PIM_YOY` + `PMC_MOM`/`PMC_YOY` (tables 8888/8880, fresh
+  Apr-2026). The old "non-JSON metadata" blocker was just gzip on the `/agregados/{t}/metadados` API.
+- **Skipped:** IPEADATA EMBI (dead since 2024-07-30, no fresh free source).
 
 ## Macro — IBGE enrichment
 Added the headline **inflation** series that were missing from the IBGE/SIDRA catalogue (we had the IPCA
@@ -117,6 +140,9 @@ All overnight branches were reviewed and **merged to `main`**, and pushed:
 - `feat/rates-enrich-realcurves-freshness` (`bbc2ebb`) — the rates enrichment.
 - `feat/macro-enrich-national-stats` — the IBGE additions.
 - `feat/rates-fr-oatei-real` (`ab2ec67`) — FR OAT€i real/breakeven.
-- **07-01 follow-up (also merged + pushed):** `feat/rates-hk-fr-daily-sources` (daily HK + FR TEC-10)
-  and `feat/rates-ch-oecd-10y` (CH OECD 10y top-up) — see the Addendum above.
+- **07-01 follow-up (all merged + pushed):** `feat/rates-hk-fr-daily-sources` (daily HK + FR TEC-10),
+  `feat/rates-ch-oecd-10y` (CH OECD 10y top-up), `feat/rates-anbima-ntnb` + `feat/rates-anbima-nominal`
+  (BR ANBIMA real + prefixed nominal), plus the macro-breadth branches `feat/macro-br-trade-employment`
+  and `feat/macro-ibge-pim-pmc-growth`. Also `chore/retire-commodity-job` (commodity → eod node only).
+  See the Addenda above.
 - The data is loaded in the rates/macro databases.
