@@ -8,7 +8,9 @@ The Bank of Canada Valet API publishes the *benchmark Government of Canada bond 
 The payload carries ``seriesDetail`` (series name → human label) and ``observations`` — a list of
 ``{"d": "YYYY-MM-DD", "<series>": {"v": "<value>"}}`` records. The nominal benchmark series are
 ``BD.CDN.<n>YR.DQ.YLD`` for n in 2/3/5/7/10 plus ``BD.CDN.LONG.DQ.YLD`` (a long-term ~30y proxy).
-``BD.CDN.RRB.DQ.YLD`` is a Real Return Bond yield (real, not nominal) — excluded here.
+``BD.CDN.RRB.DQ.YLD`` is the Real Return Bond yield — a long-term (~30y) **real** point, emitted
+with ``basis='real'`` (RRB new issuance was discontinued in 2022, but the BoE still publishes the
+outstanding-RRB yield daily). No fitted real *curve* (multiple tenors) is published free.
 
 This module separates **parsing** (pure, no network) from **downloading**.
 """
@@ -23,14 +25,16 @@ from .base import CurvePoint
 
 BOC_URL = "https://www.bankofcanada.ca/valet/observations/group/bond_yields_benchmark/json"
 
-# Nominal GoC benchmark series → tenor in years. The long-term benchmark tracks ~30y.
-SERIES_TENORS: dict[str, float] = {
-    "BD.CDN.2YR.DQ.YLD": 2.0,
-    "BD.CDN.3YR.DQ.YLD": 3.0,
-    "BD.CDN.5YR.DQ.YLD": 5.0,
-    "BD.CDN.7YR.DQ.YLD": 7.0,
-    "BD.CDN.10YR.DQ.YLD": 10.0,
-    "BD.CDN.LONG.DQ.YLD": 30.0,
+# GoC benchmark series → (basis, tenor in years). Nominal 2/3/5/7/10y + the long-term ~30y proxy,
+# plus the Real Return Bond long-term real yield (~30y).
+SERIES_SPECS: dict[str, tuple[str, float]] = {
+    "BD.CDN.2YR.DQ.YLD": ("nominal", 2.0),
+    "BD.CDN.3YR.DQ.YLD": ("nominal", 3.0),
+    "BD.CDN.5YR.DQ.YLD": ("nominal", 5.0),
+    "BD.CDN.7YR.DQ.YLD": ("nominal", 7.0),
+    "BD.CDN.10YR.DQ.YLD": ("nominal", 10.0),
+    "BD.CDN.LONG.DQ.YLD": ("nominal", 30.0),
+    "BD.CDN.RRB.DQ.YLD": ("real", 30.0),  # Real Return Bond — long-term real point
 }
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) QRP-rates/0.1"
@@ -51,7 +55,7 @@ def parse_observations(payload: dict) -> list[CurvePoint]:
         if not isinstance(d_str, str):
             continue
         d = date.fromisoformat(d_str)
-        for series, tenor in SERIES_TENORS.items():
+        for series, (basis, tenor) in SERIES_SPECS.items():
             cell = obs.get(series)
             if not isinstance(cell, dict):
                 continue
@@ -59,7 +63,7 @@ def parse_observations(payload: dict) -> list[CurvePoint]:
             if v in (None, ""):
                 continue
             out.append(
-                CurvePoint("CA", "CAD", "govt", "nominal", "yield", tenor, d, float(v))
+                CurvePoint("CA", "CAD", "govt", basis, "yield", tenor, d, float(v))
             )
     return out
 

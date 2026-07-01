@@ -8,9 +8,11 @@ browser User-Agent. Probed 2026-06-22 (200, ~400 KB):
 The "Data" sheet header is four rows: row 0 = group (e.g. "Secondary market government bond
 closing"), row 1 = the per-column label ("1 year"/"2 year"/… or a specific bond maturity like
 "May 2030"), row 4 = the ``Series Id`` (``INM.DG10<n>.NZZCF`` are the constant-maturity nominal
-benchmarks). Data rows (date in col A) start at row 5. We keep ONLY the constant-maturity nominal
-government benchmarks (1/2/5/10 year) — bank-bill yields, swap rates, inflation-indexed bonds, and
-the specific dated bonds are excluded.
+benchmarks). Data rows (date in col A) start at row 5. We keep the constant-maturity nominal
+government benchmarks (1/2/5/10 year) PLUS the **inflation-indexed (real) government bonds**
+(``INM.DG29.NS*ZC`` — dated linkers maturing Sep-2030/2035/2040/2050, emitted with ``basis='real'``
+and a tenor computed per day from the bond's maturity date). Bank-bill yields and swap rates are
+excluded.
 
 NB: this workbook ships without a stored worksheet dimension, so it must be opened WITHOUT
 ``read_only`` (else openpyxl reports a single phantom row). This module separates **parsing**
@@ -41,6 +43,17 @@ SERIES_TENORS: dict[str, float] = {
     "INM.DG102.NZZCF": 2.0,
     "INM.DG105.NZZCF": 5.0,
     "INM.DG110.NZZCF": 10.0,
+}
+
+# Inflation-indexed (real) GoNZ bonds — dated linkers (NOT constant-maturity), Series Id → maturity
+# date. Tenor is computed per observation as (maturity − as_of_date)/365.25; emitted basis='real'.
+# (The Sep-2025 linker INM.DG29.NS2509ZC has matured — its column is now empty and contributes
+# nothing; new linkers can be added here as they're issued.)
+REAL_SERIES_MATURITY: dict[str, date] = {
+    "INM.DG29.NS3009ZC": date(2030, 9, 20),
+    "INM.DG29.NS3509ZC": date(2035, 9, 20),
+    "INM.DG29.NS4009ZC": date(2040, 9, 20),
+    "INM.DG29.NS5009ZCF": date(2050, 9, 20),
 }
 
 # RBNZ's WAF rejects a non-browser User-Agent (a custom suffix → 403). Use a clean browser string.
@@ -95,7 +108,13 @@ def parse_workbook(source: str | Path | io.BytesIO) -> list[CurvePoint]:
         for j, sid in enumerate(sid_row)
         if j >= 1 and isinstance(sid, str) and sid.strip() in SERIES_TENORS
     ]
-    if not col_tenors:
+    # real (inflation-indexed) columns: column index → the bond's maturity date.
+    col_real = [
+        (j, REAL_SERIES_MATURITY[str(sid).strip()])
+        for j, sid in enumerate(sid_row)
+        if j >= 1 and isinstance(sid, str) and sid.strip() in REAL_SERIES_MATURITY
+    ]
+    if not col_tenors and not col_real:
         raise CurveLayoutError(f"no known GoNZ benchmark Series Ids in {sid_row}")
     out: list[CurvePoint] = []
     for r in rows[sid_row_idx + 1 :]:
@@ -112,6 +131,18 @@ def parse_workbook(source: str | Path | io.BytesIO) -> list[CurvePoint]:
                 continue
             out.append(
                 CurvePoint("NZ", "NZD", "govt", "nominal", "yield", tenor, d, float(v))
+            )
+        for j, maturity in col_real:
+            if j >= len(r):
+                continue
+            v = r[j]
+            if not isinstance(v, (int, float)):
+                continue
+            tenor = (maturity - d).days / 365.25
+            if tenor <= 0:  # bond matured — skip
+                continue
+            out.append(
+                CurvePoint("NZ", "NZD", "govt", "real", "yield", round(tenor, 6), d, float(v))
             )
     return out
 
