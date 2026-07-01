@@ -16,6 +16,7 @@ import pytest
 from rates.sources.aft_fr import parse_workbook as aft_parse
 from rates.sources.aft_tec10 import CurveLayoutError as Tec10LayoutError
 from rates.sources.aft_tec10 import parse_tec10
+from rates.sources.anbima import parse_ms as anbima_parse
 from rates.sources.banco_espana import parse_csv as bde_parse
 from rates.sources.boc import parse_observations
 from rates.sources.hkma import parse_records as hkma_parse
@@ -127,6 +128,24 @@ def test_hkma_daily_maps_terms_to_tenors_and_skips_unknowns():
     assert all(p.country == "HK" and p.currency == "HKD" and p.basis == "nominal"
                and p.curve_set == "govt" and p.rate_type == "yield" for p in pts)
     assert all(p.as_of_date == date(2026, 6, 30) for p in pts)
+
+
+def test_anbima_keeps_only_ntnb_real_with_indicative_rate():
+    text = (
+        "ANBIMA - Associacao...\n\n"
+        "Titulo@Data Referencia@Codigo SELIC@Data Base/Emissao@Data Vencimento@Tx. Compra@"
+        "Tx. Venda@Tx. Indicativas@PU@Desvio\n"
+        "LTN@20260630@100000@20230106@20260701@14,3495@14,3196@14,3196@999,469078@0\n"
+        "NTN-B@20260630@760199@20000715@20350515@8,1311@8,0984@8,1098@4181,03@0\n"
+        "NTN-C@20260630@770100@20000701@20310101@8,28@7,95@8,0626@7992,77@0\n"  # IGP-M → excluded
+    )
+    pts = anbima_parse(text)
+    assert len(pts) == 1  # only the NTN-B row (LTN nominal + NTN-C IGP-M dropped)
+    p = pts[0]
+    assert (p.country, p.currency, p.curve_set, p.basis, p.rate_type) == (
+        "BR", "BRL", "anbima", "real", "yield")
+    assert p.as_of_date == date(2026, 6, 30) and p.value == 8.1098
+    assert abs(p.tenor - (date(2035, 5, 15) - date(2026, 6, 30)).days / 365) < 1e-6
 
 
 def test_oecd_ltir_parses_ch_10y_yield_at_month_end():
