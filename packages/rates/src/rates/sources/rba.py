@@ -8,8 +8,9 @@ Layout: a block of metadata header rows (``Title`` / ``Description`` / ``Frequen
 ``Units`` / ``Source`` / ``Publication date`` / ``Series ID`` …) then daily data rows. The first
 column is the date (``DD-Mon-YYYY``). The Australian Government nominal benchmark columns are
 identified by their ``Series ID`` (``FCMYGBAG<n>D`` for n in 2/3/5/10) and their ``Title``
-("Australian Government <n> year bond"). The indexed-bond column (``FCMYGBAGID``) is real —
-excluded.
+("Australian Government <n> year bond"). The indexed-bond column (``FCMYGBAGID``,
+"indexed bonds, interpolated, 10 years maturity") is the **real** 10y point — emitted with
+``basis='real'`` so the nominal−real breakeven derives on read.
 
 This module separates **parsing** (pure, no network) from **downloading**.
 """
@@ -26,12 +27,14 @@ from .base import CurvePoint
 
 RBA_URL = "https://www.rba.gov.au/statistics/tables/csv/f2-data.csv"
 
-# Nominal Australian Government benchmark series ID → tenor in years.
-SERIES_TENORS: dict[str, float] = {
-    "FCMYGBAG2D": 2.0,
-    "FCMYGBAG3D": 3.0,
-    "FCMYGBAG5D": 5.0,
-    "FCMYGBAG10D": 10.0,
+# Australian Government benchmark series ID → (basis, tenor in years). Nominal 2/3/5/10y +
+# the interpolated 10y indexed (real) bond yield.
+SERIES_SPECS: dict[str, tuple[str, float]] = {
+    "FCMYGBAG2D": ("nominal", 2.0),
+    "FCMYGBAG3D": ("nominal", 3.0),
+    "FCMYGBAG5D": ("nominal", 5.0),
+    "FCMYGBAG10D": ("nominal", 10.0),
+    "FCMYGBAGID": ("real", 10.0),  # indexed bonds, interpolated 10y → the real point
 }
 
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) QRP-rates/0.1"
@@ -58,13 +61,13 @@ def parse_csv(text: str) -> list[CurvePoint]:
     )
     if sid_row is None:
         raise CurveLayoutError("no 'Series ID' header row found in F2 CSV")
-    # column index → tenor, for the columns whose Series ID we recognise.
-    col_tenors = [
-        (j, SERIES_TENORS[sid.strip()])
+    # column index → (basis, tenor), for the columns whose Series ID we recognise.
+    col_specs = [
+        (j, *SERIES_SPECS[sid.strip()])
         for j, sid in enumerate(sid_row)
-        if j >= 1 and sid.strip() in SERIES_TENORS
+        if j >= 1 and sid.strip() in SERIES_SPECS
     ]
-    if not col_tenors:
+    if not col_specs:
         raise CurveLayoutError(f"no known AU Govt series IDs in {sid_row}")
     out: list[CurvePoint] = []
     for r in rows:
@@ -73,14 +76,14 @@ def parse_csv(text: str) -> list[CurvePoint]:
         d = _parse_date(r[0])
         if d is None:
             continue
-        for j, tenor in col_tenors:
+        for j, basis, tenor in col_specs:
             if j >= len(r):
                 continue
             v = r[j].strip()
             if not v:
                 continue
             out.append(
-                CurvePoint("AU", "AUD", "govt", "nominal", "yield", tenor, d, float(v))
+                CurvePoint("AU", "AUD", "govt", basis, "yield", tenor, d, float(v))
             )
     return out
 

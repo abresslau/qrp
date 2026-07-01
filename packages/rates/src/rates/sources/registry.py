@@ -10,6 +10,7 @@ PULL_REPORT.md). Blocked/needs-auth sources (DK, MX, CN) are intentionally absen
 
 from __future__ import annotations
 
+from .banco_espana import BancoEspanaCurveSource
 from .base import CurveSource
 from .boc import BocCurveSource
 from .bundesbank import BundesbankCurveSource
@@ -35,7 +36,7 @@ def build_registry() -> dict[str, list[CurveSource]]:
         "EU": [EcbYieldCurveSource()],     # euro-area aggregate (full Svensson spot curve)
         "FR": [EcbLongTermRateSource("FR")],
         "IT": [EcbLongTermRateSource("IT")],
-        "ES": [EcbLongTermRateSource("ES")],
+        "ES": [BancoEspanaCurveSource()],  # BdE daily curve (0.5–15y) — supersedes ECB 10y monthly
         "US": [UsTreasuryCurveSource(), FedGswCurveSource()],  # CMT par + Fed GSW fitted curves
         "JP": [MofJgbCurveSource()],
         "CH": [SnbCurveSource()],
