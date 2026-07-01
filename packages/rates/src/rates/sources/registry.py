@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from .aft_fr import AftOateiCurveSource
 from .aft_tec10 import AftTec10CurveSource
-from .anbima import AnbimaNtnbCurveSource
+from .anbima import AnbimaCurveSource
 from .banco_espana import BancoEspanaCurveSource
 from .base import CurveSource
 from .boc import BocCurveSource
@@ -54,8 +54,9 @@ def build_registry() -> dict[str, list[CurveSource]]:
         "SE": [RiksbankCurveSource()],
         "NO": [NorgesBankCurveSource()],
         "HK": [HkmaCurveSource()],
-        # Tesouro Direto retail per-issue curve (govt) + ANBIMA authoritative NTN-B real reference
-        "BR": [TesouroCurveSource(), AnbimaNtnbCurveSource()],
+        # Tesouro Direto retail per-issue curve (govt) + ANBIMA authoritative reference curve
+        # (nominal LTN/NTN-F prefixed + real NTN-B; the prefixed leg stands in for the DI curve)
+        "BR": [TesouroCurveSource(), AnbimaCurveSource()],
     }
 
 

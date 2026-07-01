@@ -130,22 +130,34 @@ def test_hkma_daily_maps_terms_to_tenors_and_skips_unknowns():
     assert all(p.as_of_date == date(2026, 6, 30) for p in pts)
 
 
-def test_anbima_keeps_only_ntnb_real_with_indicative_rate():
+def test_anbima_emits_nominal_and_real_dedupes_ltn_over_ntnf_excludes_legacy():
     text = (
         "ANBIMA - Associacao...\n\n"
         "Titulo@Data Referencia@Codigo SELIC@Data Base/Emissao@Data Vencimento@Tx. Compra@"
         "Tx. Venda@Tx. Indicativas@PU@Desvio\n"
-        "LTN@20260630@100000@20230106@20260701@14,3495@14,3196@14,3196@999,469078@0\n"
-        "NTN-B@20260630@760199@20000715@20350515@8,1311@8,0984@8,1098@4181,03@0\n"
-        "NTN-C@20260630@770100@20000701@20310101@8,28@7,95@8,0626@7992,77@0\n"  # IGP-M → excluded
+        # LTN short, LTN 2029, NTN-F same 2029 date (should lose to LTN), NTN-F long 2035
+        "LTN@20260630@100000@20230106@20260701@14,3495@14,3196@14,3196@999,47@0\n"
+        "LTN@20260630@100000@20240105@20290101@13,95@13,94@13,953@821,64@0\n"
+        "NTN-F@20260630@950199@20100101@20290101@13,90@13,88@13,89@1050,0@0\n"
+        "NTN-F@20260630@950199@20100101@20350101@14,20@14,18@14,19@980,0@0\n"
+        "NTN-B@20260630@760199@20000715@20350515@8,1311@8,0984@8,1098@4181,03@0\n"  # real
+        "NTN-C@20260630@770100@20000701@20310101@8,28@7,95@8,0626@7992,77@0\n"  # IGP-M excluded
+        "LFT@20260630@210100@20000701@20260901@-0,03@-0,07@-0,06@19326,08@0\n"  # floater excluded
     )
     pts = anbima_parse(text)
-    assert len(pts) == 1  # only the NTN-B row (LTN nominal + NTN-C IGP-M dropped)
-    p = pts[0]
-    assert (p.country, p.currency, p.curve_set, p.basis, p.rate_type) == (
-        "BR", "BRL", "anbima", "real", "yield")
-    assert p.as_of_date == date(2026, 6, 30) and p.value == 8.1098
-    assert abs(p.tenor - (date(2035, 5, 15) - date(2026, 6, 30)).days / 365) < 1e-6
+    by = {(p.basis, round(p.tenor, 4)): p for p in pts}
+    assert all(p.country == "BR" and p.curve_set == "anbima" and p.rate_type == "yield"
+               for p in pts)
+    # NTN-C + LFT excluded; LTN 2029 wins over the same-maturity NTN-F (zero-coupon preferred)
+    t2029 = round((date(2029, 1, 1) - date(2026, 6, 30)).days / 365, 4)
+    assert by[("nominal", t2029)].value == 13.953  # the LTN, not the NTN-F 13.89
+    # NTN-F still populates the 2035 long tenor no LTN covers
+    t2035 = round((date(2035, 1, 1) - date(2026, 6, 30)).days / 365, 4)
+    assert by[("nominal", t2035)].value == 14.19
+    # real NTN-B present
+    t_real = round((date(2035, 5, 15) - date(2026, 6, 30)).days / 365, 4)
+    assert by[("real", t_real)].value == 8.1098
+    assert {p.basis for p in pts} == {"nominal", "real"}
 
 
 def test_oecd_ltir_parses_ch_10y_yield_at_month_end():
