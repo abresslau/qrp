@@ -1,6 +1,6 @@
 # Story: Low-volatility long/short backtest, Sharpe-ranked (market-neutral, inverse-vol)
 
-Status: ready-for-dev
+Status: review
 
 <!-- Created via bmad-create-story 2026-07-02. The follow-on to asset-risk-metrics-vol-sharpe-fwd
 (Andre: "backtest creating a portfolio with low volatility (targeting 0) with long and shorts, I
@@ -252,7 +252,17 @@ claude-opus-4-8[1m] (Opus 4.8, 1M context) — bmad-dev-story.
   regressions; long-only path byte-identical.
 - **Migrations:** none — no schema change in either package (reuses the merged `fact_asset_metrics`).
 
-<!-- AC-6 SMOKE RESULT PLACEHOLDER — filled after the live run below. -->
+**AC-6 live smoke (sp500, monthly, 2024-07-01…2026-07-02, cost_bps=0, sharpe_tr).** Backfilled
+`fact_asset_metrics` for 562 sp500 all-ever members first (7.85M rows). Two runs over the identical
+window/roster:
+- **Long/short dollar-neutral inverse-vol** (`long_pct=0.2, short_pct=0.2, weighting=inverse_vol`):
+  run 34, 501 days / 25 rebalances, **net_exposure ≈ 0** (−2e-17), **gross ≈ 1.0**, n_long=98,
+  n_short=98, **ann_vol = 8.67%**, sharpe 0.81.
+- **Long-only top-Sharpe equal-weight** (`top_pct=0.2, weighting=equal`): run 35, same window,
+  net=1, gross=1, n_long=98, **ann_vol = 17.53%**.
+- **Verdict: PASS** — the market-neutral book's vol is **49% of** the long-only book's (materially
+  below), and the net-zero `_daily_weighted` fix produced a non-empty 501-day series across 25
+  rebalances (the old `÷Σw` gate would have yielded an empty backtest).
 
 ### File List
 
