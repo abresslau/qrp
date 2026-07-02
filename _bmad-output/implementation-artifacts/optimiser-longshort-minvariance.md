@@ -1,6 +1,6 @@
 # Story: Optimiser min-variance long/short (covariance-aware dollar-neutral book)
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-07-02. The follow-on to backtest-lowvol-longshort-sharpe
 (that story's "Follow-on story" section is the authoritative scope seed). Replaces the inverse-vol
@@ -212,6 +212,27 @@ projection onto a product set = project each block independently — and the opt
   (weighting enum, min_variance-requires-shorts, borrow_bps range, optimiser L/S XOR).
 - [x] **Tests + live smoke + docs** (AC: 6, 7) — the unit tests above + the inverse-vol-vs-min-variance
   sp500 smoke (AC-6); note the min-variance mode + borrow cost in `docs/data-conventions.md`.
+
+### Review Findings
+
+Code review 2026-07-02 (bmad-code-review, 3 adversarial layers: Blind Hunter / Edge Case Hunter /
+Acceptance Auditor). 3 patch, 3 defer, 4 dismissed. Acceptance Auditor: **7/7 ACs MET**; the
+load-bearing look-ahead guardrail is correctly honoured AND has a behavioural test. Edge Case Hunter
+confirmed the integration is sound — the two-way `backtest↔optimiser` workspace cycle is safe (uv
+resolves it; the runtime cycle is broken by the function-local import), look-ahead bounding is
+correct, and signed-weight persistence is safe end-to-end. The Blind Hunter's two borrow-cost HIGH
+findings were REFUTED by the Edge Case Hunter (repo access): no double-count, `common` days are all
+after the first rebalance, and holding-through a skipped rebalance is intended. **All 3 patches APPLIED 2026-07-02** —
+optimiser 27 + backtest 58 + signals 17 green, ruff clean. Status -> done (fixes on the main working
+tree; commit pending).
+
+- [x] [Review][Patch] `dropped_no_cov` under-counts leg-cap trims — `n_sel` is measured AFTER `longs[:leg_cap]`/`shorts[:leg_cap]`, so names removed by the leg cap are never counted, contradicting the docstring "counts every selected name not in the final weighted book"; measure the pre-cap total (and clarify it is a per-rebalance running total) [packages/backtest/src/backtest/engine.py:_min_variance_weights]
+- [x] [Review][Patch] `_aligned_returns_asof` trim loop never tests the 2-name set — `while len(kept) > 2 … else: return [],[]` bails when `kept` hits 2 without testing it, dropping a valid 1×1-leg covariance; mirror the optimiser `_return_matrix` pattern (test the smallest allowed set) [packages/backtest/src/backtest/engine.py:_aligned_returns_asof]
+- [x] [Review][Patch] `borrow_bps>0` on a long-only run is silently ignored (engine guards `if borrow_bps and want_shorts`) — reject with a 422 for parity with the other cross-mode rejections [packages/backtest/src/backtest/router.py:run_backtest_ep]
+- [x] [Review][Defer] Borrow drag uses the NOMINAL short mass while the daily return is rescaled to the PRICED gross — on partial-pricing days the financing is over-deducted (second-order; borrow_bps defaults 0) [engine.py borrow loop] — deferred, minor modelling approximation
+- [x] [Review][Defer] AC-6 vol ratio (0.66) is confounded by the 252-day alignment trimming the min_variance book 40/40→29/29 — a smaller dollar-neutral book carries lower vol partly from fewer names, so the headline overstates the pure covariance effect (the same-universe unit test is the rigorous proof; disclosed in the Dev Agent Record) [smoke] — deferred, honestly disclosed; looser/pairwise covariance is the follow-on
+- [x] [Review][Defer] `_aligned_returns_asof` greedy "drop worst-covered" trim is not the max-cardinality ≥30-date subset — the covariance may use fewer names than achievable [engine.py:_aligned_returns_asof] — deferred, quality nuance
+- Dismissed (4): (1) Blind "borrow charged before the first rebalance / on stale weights" — refuted, `common` days are all > rebals[0] and hold-through is intended; (2) Blind "borrow double-counts" — refuted, turnover and borrow accumulate as distinct charges; (3) Blind "`costed` flips on realized not modelled drag" — unreachable, min_variance/L/S always has shorts by validation so borrow_cost_total>0; (4) Blind "`_pgd` 800 iters may not converge at n≈120" — no evidence, the smoke's net was ~1e-16 and cov_leg_cap bounds n≤120.
 
 ## Dev Notes
 
