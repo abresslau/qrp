@@ -537,7 +537,13 @@ export default function BacktestPage() {
                     </div>
                     <div className="text-xs text-muted">
                       {r.spec
-                        ? `${r.spec.top_n != null ? `top ${r.spec.top_n}` : `top ${((r.spec.top_pct ?? 0) * 100).toFixed(0)}%`} · ${r.spec.weighting} · ${r.spec.rebalance}${(r.spec.cost_bps ?? 0) > 0 ? ` · ${r.spec.cost_bps}bps` : ""} · `
+                        ? `${
+                            r.spec.short_n != null || r.spec.short_pct != null
+                              ? `L/S ${r.spec.long_n != null ? `long ${r.spec.long_n}` : `long ${((r.spec.long_pct ?? 0) * 100).toFixed(0)}%`} / ${r.spec.short_n != null ? `short ${r.spec.short_n}` : `short ${((r.spec.short_pct ?? 0) * 100).toFixed(0)}%`}`
+                              : r.spec.top_n != null
+                                ? `top ${r.spec.top_n}`
+                                : `top ${((r.spec.top_pct ?? 0) * 100).toFixed(0)}%`
+                          } · ${r.spec.weighting} · ${r.spec.rebalance}${(r.spec.cost_bps ?? 0) > 0 ? ` · ${r.spec.cost_bps}bps` : ""} · `
                         : ""}
                       {r.n_rebalances} rebals · {r.n_days}d ·{" "}
                       {pct(r.summary?.strategy?.ann_return)} ann

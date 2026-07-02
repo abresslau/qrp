@@ -128,9 +128,10 @@ def test_neutral_weights_inverse_vol_net_zero_gross_one_and_drops_no_vol():
     assert sum(abs(v) for v in w.values()) == pytest.approx(1.0)  # gross 1
     # inverse-vol: the lower-vol long (A, vol 0.10) carries more weight than B (vol 0.20)
     assert w["A"] > w["B"]
-    # the read pins window 11 + gated=false + positive vol
-    sql, _ = eq.calls[0]
+    # the read pins window 11 + gated=false + positive vol + the >=60-obs floor (no thin-name blowup)
+    sql, params = eq.calls[0]
     assert "window_id=%s" in sql and "gated=false" in sql and "vol_tr > 0" in sql
+    assert "n_obs >= %s" in sql and 60 in params
 
 
 def test_neutral_weights_equal_splits_each_side_no_vol_read():
@@ -244,6 +245,16 @@ def test_engine_rejects_both_long_or_short_selectors_and_cap_with_shorts():
     # cap weighting has no meaning on a short leg — reject the combo loudly
     assert "cap weighting is long-only" in run_backtest(
         sym, bt, universe_conn=sym, equity_conn=sym, weighting="cap", short_n=5)["error"]
+
+
+def test_engine_rejects_cross_mode_selectors_not_silently_ignored():
+    # long_* without a short selector, or top_* with shorts, would be silently dropped — reject.
+    sym, bt = _engine_conns()
+    assert "require a short selector" in run_backtest(
+        sym, bt, universe_conn=sym, equity_conn=sym, long_n=5)["error"]
+    sym, bt = _engine_conns()
+    assert "long-only" in run_backtest(
+        sym, bt, universe_conn=sym, equity_conn=sym, top_pct=0.1, short_n=5)["error"]
 
 
 def test_engine_rejects_nonpositive_top_n():

@@ -431,7 +431,7 @@ class DbPortfolioGateway:
             pr = pr_map.get(figi)
             contrib = None
             if pr is not None:
-                covered_w += w
+                covered_w += abs(w)  # GROSS present — long-only == net; dollar-neutral stays > 0
                 contrib = w * float(pr)
                 port_ret += contrib
                 n_with_return += 1
