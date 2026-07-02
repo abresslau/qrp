@@ -225,3 +225,29 @@ re-index of `fact_returns` (no new price math), for the rolling windows (1W/1M/3
 unrealized tail (t+H not yet reached) is simply ABSENT. **Never use `fwd_pr`/`fwd_tr` as a feature**
 — they embed future information relative to `as_of_date`; drop NULL/absent rows from training sets,
 and keep features strictly as-of ≤ `as_of_date`.
+
+## Long/short backtest — dollar-neutral, inverse-vol, Sharpe-ranked (backtest engine)
+
+The backtest engine runs a **market-neutral long/short** book on top of the metrics above:
+
+- **Selection.** `signals.sharpe_tr` (direction `high`) reads `equity.fact_asset_metrics` at
+  `window_id=11` (1Y), `gated=false` — the long leg is the best Sharpe names, the short leg the
+  worst. A short selector (`short_pct` XOR `short_n`) engages long/short mode; the long leg is sized
+  by `long_pct` XOR `long_n` (default: top quintile).
+- **Dollar-neutral, gross 1.** Longs sum to **+0.5**, shorts to **−0.5** → **net exposure ≈ 0, gross
+  ≈ 1**. This removes market beta — the dominant volatility source — so the book targets low
+  (systematic) vol by construction. Reported per run: `net_exposure`, `gross_exposure`, `n_long`,
+  `n_short`.
+- **Weighting = `inverse_vol`** sets each name ∝ `1/vol_tr` (1Y, `gated=false`) within its side, so
+  the *proportions are data-driven, not guessed*, and low-vol names carry more weight (lower book
+  vol). A name with no positive `vol_tr` is DROPPED from its side and counted (`dropped_no_vol`),
+  never zero-weighted. `weighting='equal'` splits each side evenly; `cap` is **long-only** (rejected
+  with shorts). True **min-variance** (covariance-aware) weighting is a follow-on (the optimiser).
+- **Daily P&L rescale.** A signed book's daily return is `Σ(wᵢ·prᵢ)` over priced names divided by
+  the **gross** weight present (`Σ|wᵢ|`), NOT `÷Σwᵢ` — the net sum is ~0 for a dollar-neutral book,
+  so a net normalization would divide by ~0 and drop every day. Long-only (all `wᵢ ≥ 0`) reduces to
+  the historical `Σ(w·pr)/Σw` unchanged.
+- **Stable turnover — sticky selection.** A currently-held name is retained while it stays within a
+  wider keep band (`sticky_keep_mult × entry cut`, default 1.5×), only replaced once it exits — this
+  damps the name churn a hard top/bottom cutoff produces each rebalance. Turnover (`0.5·Σ|Δw|`) is
+  reported regardless.

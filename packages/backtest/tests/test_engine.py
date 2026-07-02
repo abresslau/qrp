@@ -9,7 +9,9 @@ import pytest
 from backtest.engine import (
     _cap_weights,
     _daily_weighted,
+    _neutral_weights,
     _rebalance_dates,
+    _select_long_short,
     _select_top,
     run_backtest,
 )
@@ -78,6 +80,102 @@ def test_select_top_pct_unchanged_behavior():
     assert _select_top(_RAW, "high", 0.01, None) == ["A"]  # ceil floor of 1
 
 
+# ---- long/short selection (Sharpe-ranked, sticky) ----------------------------------------
+
+
+def test_select_long_short_longs_top_shorts_bottom_disjoint():
+    longs, shorts = _select_long_short(_RAW, "high", None, 2, None, 2, set(), set(), 1.5)
+    assert longs == ["A", "B"]          # best by value
+    assert shorts == ["E", "D"]         # worst by value (worst-first)
+    assert not (set(longs) & set(shorts))  # a name is never both a long and a short
+
+
+def test_select_long_short_long_leg_matches_select_top():
+    # the long leg selection is the same ranking _select_top uses (consistency with long-only)
+    longs, _ = _select_long_short(_RAW, "high", 0.4, None, None, 1, set(), set(), 1.5)
+    assert longs == _select_top(_RAW, "high", 0.4, None)
+
+
+def test_sticky_selection_reduces_turnover_vs_hard_cutoff():
+    # C was held last rebalance; it has drifted to rank 4 (just outside the top-3 entry cut) but
+    # is still inside the keep band (top ceil(3*1.5)=5). A hard cutoff drops it for D (a swap);
+    # sticky RETAINS it -> zero name churn on the long leg. This is AC-4's turnover damping.
+    raw_t2 = {"A": 5.0, "B": 4.0, "D": 3.0, "C": 2.5, "E": 1.0}
+    prev_held = {"A", "B", "C"}
+    hard, _ = _select_long_short(raw_t2, "high", None, 3, None, 1, set(), set(), 1.5)
+    sticky, _ = _select_long_short(raw_t2, "high", None, 3, None, 1, prev_held, set(), 1.5)
+    assert hard == ["A", "B", "D"]        # C fell out; D took its slot
+    assert set(sticky) == {"A", "B", "C"}  # C retained within the keep band
+    hard_churn = len(set(hard) ^ prev_held)
+    sticky_churn = len(set(sticky) ^ prev_held)
+    assert sticky_churn < hard_churn      # sticky selection churns fewer names
+
+
+# ---- signed dollar-neutral weighting ------------------------------------------------------
+
+
+def test_neutral_weights_inverse_vol_net_zero_gross_one_and_drops_no_vol():
+    # longs A,B ; shorts C,D — but D has no positive vol_tr row -> dropped from the short leg
+    eq = _RoutedConn([("fact_asset_metrics", _Cur(rows=[
+        ("A", 0.10), ("B", 0.20), ("C", 0.40),  # D absent
+    ]))])
+    w, dl, ds = _neutral_weights(eq, ["A", "B"], ["C", "D"], date(2026, 6, 1),
+                                 "inverse_vol", 0.5, 0.5)
+    assert ds == 1 and dl == 0                      # D dropped, counted (never zero-weighted)
+    assert "D" not in w
+    assert w["A"] > 0 and w["B"] > 0 and w["C"] < 0  # signs from the leg
+    assert sum(w.values()) == pytest.approx(0.0)     # dollar-neutral (net 0)
+    assert sum(abs(v) for v in w.values()) == pytest.approx(1.0)  # gross 1
+    # inverse-vol: the lower-vol long (A, vol 0.10) carries more weight than B (vol 0.20)
+    assert w["A"] > w["B"]
+    # the read pins window 11 + gated=false + positive vol
+    sql, _ = eq.calls[0]
+    assert "window_id=%s" in sql and "gated=false" in sql and "vol_tr > 0" in sql
+
+
+def test_neutral_weights_equal_splits_each_side_no_vol_read():
+    eq = _RoutedConn()  # equal weighting needs no fact_asset_metrics read
+    w, dl, ds = _neutral_weights(eq, ["A", "B"], ["C", "D"], date(2026, 6, 1), "equal", 0.5, 0.5)
+    assert w == {"A": 0.25, "B": 0.25, "C": -0.25, "D": -0.25}
+    assert sum(w.values()) == pytest.approx(0.0)
+    assert sum(abs(v) for v in w.values()) == pytest.approx(1.0)
+    assert dl == 0 and ds == 0
+    assert not eq.calls  # no DB read for equal
+
+
+# ---- the net-zero _daily_weighted fix (THE load-bearing correctness fix) ------------------
+
+
+def test_daily_weighted_signed_book_is_non_empty_and_rescaled_by_gross():
+    # a dollar-neutral book (Σw = 0). The OLD ÷Σw / `if cw>0` gate dropped EVERY day (empty
+    # backtest); dividing by GROSS present keeps the series and computes Σ(w·pr)/Σ|w|.
+    conn = _RoutedConn([("fact_returns", _Cur(rows=[
+        (date(2026, 6, 2), "FIGI_LONG00000", 0.02),
+        (date(2026, 6, 2), "FIGI_SHORT0000", 0.01),
+        (date(2026, 6, 3), "FIGI_LONG00000", 0.03),  # short unpriced: rescale by gross present
+    ]))])
+    w = {"FIGI_LONG00000": 0.5, "FIGI_SHORT0000": -0.5}
+    out = _daily_weighted(conn, w, date(2026, 6, 1), date(2026, 6, 30))
+    assert out, "dollar-neutral book must produce a non-empty daily series (net-zero trap)"
+    # day 1: (0.5*0.02 + -0.5*0.01) / (0.5+0.5) = 0.005
+    assert out[date(2026, 6, 2)] == pytest.approx(0.005)
+    # day 2: only the long priced -> 0.5*0.03 / 0.5 = 0.03 (rescaled by gross present, not net)
+    assert out[date(2026, 6, 3)] == pytest.approx(0.03)
+
+
+def test_daily_weighted_long_only_unchanged_by_the_fix():
+    # regression: an all-positive book is byte-identical to the historical Σ(w·pr)/Σw
+    conn = _RoutedConn([("fact_returns", _Cur(rows=[
+        (date(2026, 6, 2), "FIGI_A0000000", 0.01),
+        (date(2026, 6, 2), "FIGI_B0000000", 0.03),
+        (date(2026, 6, 3), "FIGI_A0000000", 0.02),  # B unpriced: renormalise over A
+    ]))])
+    out = _daily_weighted(conn, {"FIGI_A0000000": 0.75, "FIGI_B0000000": 0.25},
+                          date(2026, 6, 1), date(2026, 6, 30))
+    assert out[date(2026, 6, 2)] == pytest.approx(0.75 * 0.01 + 0.25 * 0.03)
+    assert out[date(2026, 6, 3)] == pytest.approx(0.02)  # 0.75*0.02 / 0.75
+
+
 # ---- cap weighting -----------------------------------------------------------------------
 
 
@@ -133,6 +231,19 @@ def test_engine_rejects_both_selections_no_silent_preference():
     sym, bt = _engine_conns()
     out = run_backtest(sym, bt, universe_conn=sym, equity_conn=sym, top_pct=0.1, top_n=5)
     assert "not both" in out["error"]
+
+
+def test_engine_rejects_both_long_or_short_selectors_and_cap_with_shorts():
+    sym, bt = _engine_conns()
+    assert "long_pct OR long_n" in run_backtest(
+        sym, bt, universe_conn=sym, equity_conn=sym, long_pct=0.1, long_n=5, short_n=5)["error"]
+    sym, bt = _engine_conns()
+    assert "short_pct OR short_n" in run_backtest(
+        sym, bt, universe_conn=sym, equity_conn=sym, short_pct=0.1, short_n=5)["error"]
+    sym, bt = _engine_conns()
+    # cap weighting has no meaning on a short leg — reject the combo loudly
+    assert "cap weighting is long-only" in run_backtest(
+        sym, bt, universe_conn=sym, equity_conn=sym, weighting="cap", short_n=5)["error"]
 
 
 def test_engine_rejects_nonpositive_top_n():
@@ -347,6 +458,47 @@ def test_engine_signals_factor_without_module_conn_is_an_attributed_error():
     out = run_backtest(sym, bt, universe_conn=sym, equity_conn=sym, factor="fiscal_sens")
     assert "requires module connection" in out["error"]
     assert "macro" in out["error"]
+
+
+def _long_short_run(**kw):
+    """A dollar-neutral long/short momentum run on a FLAT synthetic market (all daily pr=0.001).
+
+    30 names carry momentum raws (descending) so the long leg = the 5 best, the short leg = the 5
+    worst; all 30 price every day, so both legs are fully covered. A dollar-neutral book on a flat
+    market has ~zero gross return — the market-neutrality this story targets.
+    """
+    roster = [(f"FIGI_{i:08d}",) for i in range(50)]
+    days = [(date.fromordinal(date(2026, 1, 1).toordinal() + i),) for i in range(200)]
+    ret_rows = [(d, f, 0.001) for (d,) in days for (f,) in roster[:30]]
+    sym = _RoutedConn([
+        ("universe_membership", _Cur(rows=roster)),
+        ("min(as_of_date), max(as_of_date)", _Cur(one=(date(2025, 1, 1), date(2026, 6, 5)))),
+        ("DISTINCT as_of_date", _Cur(rows=days)),
+        ("fact_returns a", _Cur(rows=[(f, 0.10 - i * 0.001)
+                                      for i, (f,) in enumerate(roster[:30])])),
+        ("SELECT as_of_date, composite_figi, pr", _Cur(rows=ret_rows)),
+    ])
+    return run_backtest(
+        sym, _BtRunConn(), universe_conn=sym, equity_conn=sym, factor="mom_12_1",
+        long_n=5, short_n=5, weighting="equal", rebalance="quarterly", **kw,
+    )
+
+
+def test_long_short_run_is_dollar_neutral_and_non_empty():
+    out = _long_short_run()
+    assert out.get("run_id") == 77, out.get("error")
+    s = out["summary"]
+    # AC-6 book diagnostics: net ≈ 0, gross ≈ 1, and both legs sized 5
+    assert s["net_exposure"] == pytest.approx(0.0, abs=1e-9)
+    assert s["gross_exposure"] == pytest.approx(1.0)
+    assert s["n_long"] == 5 and s["n_short"] == 5
+    # the net-zero fix: the dollar-neutral book produced a non-empty daily series
+    assert out["n_days"] > 0
+    # a dollar-neutral book on a flat market earns ~0 gross (market-neutral)
+    assert s["strategy_gross"]["total_return"] == pytest.approx(0.0, abs=1e-9)
+    # the long/short spec fields persist for reproducibility
+    assert out["spec"]["long_n"] == 5 and out["spec"]["short_n"] == 5
+    assert out["spec"]["sticky_keep_mult"] == 1.5
 
 
 def test_score_weights_math_and_exclusive_start():
