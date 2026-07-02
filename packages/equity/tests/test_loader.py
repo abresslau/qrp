@@ -227,14 +227,23 @@ def test_extremes_orphan_delete_covers_the_extremes_table():
     """
     src = _loader_src()
     assert "fact_price_extremes" in src
-    # the orphan DELETE iterates both fact tables
-    assert '("fact_returns", "fact_price_extremes")' in src
+    # the orphan DELETE iterates all three per-figi fact tables (returns + extremes + risk metrics)
+    assert '("fact_returns", "fact_price_extremes", "fact_asset_metrics")' in src
 
 
 def test_extremes_upsert_has_dirty_set_guard():
     """The extreme UPSERT must skip rows whose input_hash/gated are unchanged (3.6)."""
     src = _loader_src()
     assert "fact_price_extremes.input_hash IS DISTINCT FROM EXCLUDED.input_hash" in src
+
+
+def test_metrics_upsert_has_dirty_set_guard():
+    """The risk-metric UPSERT must skip rows whose input_hash/gated are unchanged (AR-13
+    idempotency: a second consecutive recompute makes zero net fact_asset_metrics mutations)."""
+    src = _loader_src()
+    assert "INSERT INTO fact_asset_metrics" in src
+    assert "fact_asset_metrics.input_hash IS DISTINCT FROM EXCLUDED.input_hash" in src
+    assert "fact_asset_metrics.gated IS DISTINCT FROM EXCLUDED.gated" in src
     assert "fact_price_extremes.gated IS DISTINCT FROM EXCLUDED.gated" in src
 
 

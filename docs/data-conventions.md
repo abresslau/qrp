@@ -189,3 +189,39 @@ window contains a reverses-corrective can return a different member set than it
 did under toggle semantics. Reproducibility going FORWARD is unaffected (a
 watermark can never include a corrective without its target — `reverse` checks
 the target exists before appending, and `event_id` is monotonic).
+
+## Asset-level risk metrics — volatility & Sharpe (equity.fact_asset_metrics)
+
+Alongside `fact_returns` (point-to-point PR/TR per window) the equity loader materializes
+`equity.fact_asset_metrics` — per `(composite_figi, window_id, as_of_date)` the security's own
+**annualized volatility** and **Sharpe**, on both the PR and TR daily-return series:
+
+- **Volatility** = `stddev_samp(daily) × sqrt(252)` — the dispersion of the DAILY returns inside the
+  window's `(base, as_of]` span, NOT the single point-to-point window return. (So "1M vol" is the
+  stdev of the ~21 daily returns in the trailing month.) This matches `signals.vol_1y`'s definition
+  AND its flag handling (below), so the 1Y window reconciles with that factor **exactly** (bit-equal
+  in practice), modulo an occasional ≤1-session difference at the 365-calendar-day vs
+  12-month-session base boundary.
+- **Sharpe** = `(mean(daily) / stddev_samp(daily)) × sqrt(252)` with **rf = 0** (annualize the ratio
+  ONCE). A real risk-free rate (BR→CDI, US→SOFR) is a documented future refinement, not baked in.
+- **These are single-security metrics** — no covariance/diversification (that has no asset-level
+  analog and is applied downstream in portfolio construction / the optimiser). They are the correct
+  input for RANKING assets (e.g. best/worst Sharpe for a long/short screen).
+- `n_obs` (the daily-return count) is stored so consumers apply their own min-obs floor (e.g.
+  `signals.vol_1y` keeps its ≥60). A window with < 2 daily returns (incl. `1D`) or zero variance → NULL.
+- **Flag handling — EXCLUDE, don't gate the window** (a dispersion metric differs from a
+  point-to-point return): a daily return is dropped from the sample when its session, or the priced
+  session immediately before it, carries an unreviewed `prices_review` flag (a flagged price
+  corrupts the ratio into AND out of it) — exactly the set `signals.vol_1y` drops via `pr IS NOT
+  NULL`. The metric is then computed over the clean remainder (not folded-with-suspect-prices, and
+  not NULLed — a single partial-EOD can flag ~every name, so whole-window NULLing would destroy
+  long-window coverage). Only a row whose **as-of (snapshot) date** is itself flagged is gated NULL.
+  `input_hash` (over the clean-day values + `n_obs` + in-window flag count) + `gated` drive the
+  dirty-set, so a price revision OR a review re-dirties. Survivorship is inherited (delisted included).
+
+**Forward returns (`equity.v_forward_returns`) — ML TARGETS ONLY.** A forward return over horizon H
+at date t IS the trailing-H return observed at the first session ≥ t+H, so the view is a pure
+re-index of `fact_returns` (no new price math), for the rolling windows (1W/1M/3M/6M/9M/1Y). The
+unrealized tail (t+H not yet reached) is simply ABSENT. **Never use `fwd_pr`/`fwd_tr` as a feature**
+— they embed future information relative to `as_of_date`; drop NULL/absent rows from training sets,
+and keep features strictly as-of ≤ `as_of_date`.
