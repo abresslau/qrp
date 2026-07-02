@@ -532,3 +532,24 @@ Low-reachability for current loaders (single-statement, no MERGE/CTAS/VIEW/strin
 ## Deferred from: code review of rates-br-enrich-tesouro (2026-06-30)
 - gateway._full_curve_by_date pulls the FULL unbounded history of both nominal+real series per breakeven request (no date window/cap). BR-safe today (index-covered ~0.15s; the generic be10y spec only fires for BR — GB is curated, US is suppressed by its inflation curve). If a future high-row-count country gains a real curve, this materializes its entire history into Python on every /spreads call — add a date window or cache then.
 - gateway be10y is gated by whether an 'inflation' basis exists on the country's LATEST day, but _interp_breakeven_series renders the FULL history. Harmless for BR (no inflation series ever). Would be methodologically inconsistent if a country's native inflation/breakeven series started or stopped mid-history (interpolated approximation overlapping real published breakevens, or whole-spec suppression on a single recent day).
+
+## Deferred from: code review of asset-risk-metrics-vol-sharpe-fwd (2026-07-02)
+
+Adversarial 3-layer review (Blind / Edge / Acceptance Auditor). Acceptance Auditor: all 7 ACs MET.
+2 patches applied in-review (interior-gate exclusion in `metrics.py` + bounded forward LATERAL in
+`v_forward_returns.sql`). Deferred:
+
+- **Forward view: a gated forward endpoint yields `fwd_pr=NULL`, indistinguishable from the
+  unrealized (absent) tail** (`packages/equity/db/deploy/v_forward_returns.sql`) — the LATERAL picks
+  the first `as_of_date ≥ t+H`; if that endpoint row is gated its `pr`/`tr` are NULL and pass through,
+  so a consumer can't tell "endpoint gated" from "endpoint not yet occurred." Doc already says
+  gated→NULL / drop from training, so it's safe; a distinguishing column (or skip-to-next-ungated) is
+  a refinement.
+- **`compute_metric_rows` degenerate-window branch sets `gated = (as_of_date in gated_dates)` only**
+  (`packages/equity/src/equity/returns/metrics.py`) — ignores base/end/tr gating unlike the normal
+  branch. Cosmetic: the row's values are already NULL (degenerate span), so only the published-index
+  `gated` flag differs on an already-empty row.
+- **`n_obs` is always the PR daily-return count** (`metrics.py`) — consumers use it as the min-obs
+  floor for the TR metrics too. Benign: the TRI shares the PR session set (growth ≥ 1, non-positive
+  price breaks both chains identically), so `len(tr_rets) == len(pr_rets)` in practice; revisit only
+  if a non-positive-TRI-with-positive-adj case ever becomes possible.

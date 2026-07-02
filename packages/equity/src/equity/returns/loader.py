@@ -19,6 +19,7 @@ from decimal import Decimal
 import psycopg
 
 from equity.returns.extremes import ExtremeRow, compute_extreme_rows
+from equity.returns.metrics import MetricRow, compute_metric_rows
 from equity.returns.windows import (
     INCEPTION,
     WINDOWS,
@@ -326,11 +327,56 @@ def _upsert_extremes(
         )
 
 
+def _upsert_metrics(
+    conn: psycopg.Connection, figi: str, rows: Sequence[MetricRow]
+) -> None:
+    """COPY per-window risk-metric rows into a temp table then UPSERT — durable per figi.
+
+    Same dirty-set skip as ``_upsert``/``_upsert_extremes``: rewrite only rows whose ``input_hash``
+    or ``gated`` changed, so the nightly recompute touches just the moved metrics.
+    """
+    if not rows:
+        return
+    with conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            "CREATE TEMP TABLE _met (composite_figi char(12), window_id int, as_of_date date, "
+            "vol_pr numeric, vol_tr numeric, sharpe_pr numeric, sharpe_tr numeric, n_obs int, "
+            "input_hash text, gated boolean) ON COMMIT DROP"
+        )
+        copy_sql = (
+            "COPY _met (composite_figi, window_id, as_of_date, vol_pr, vol_tr, sharpe_pr, "
+            "sharpe_tr, n_obs, input_hash, gated) FROM STDIN"
+        )
+        with cur.copy(copy_sql) as cp:
+            for r in rows:
+                cp.write_row(
+                    (figi, r.window_id, r.as_of_date, r.vol_pr, r.vol_tr, r.sharpe_pr,
+                     r.sharpe_tr, r.n_obs, r.input_hash, r.gated)
+                )
+        cur.execute(
+            """
+            INSERT INTO fact_asset_metrics
+                (composite_figi, window_id, as_of_date, vol_pr, vol_tr, sharpe_pr, sharpe_tr,
+                 n_obs, input_hash, gated)
+            SELECT composite_figi, window_id, as_of_date, vol_pr, vol_tr, sharpe_pr, sharpe_tr,
+                   n_obs, input_hash, gated FROM _met
+            ON CONFLICT (composite_figi, window_id, as_of_date) DO UPDATE
+                SET vol_pr = EXCLUDED.vol_pr, vol_tr = EXCLUDED.vol_tr,
+                    sharpe_pr = EXCLUDED.sharpe_pr, sharpe_tr = EXCLUDED.sharpe_tr,
+                    n_obs = EXCLUDED.n_obs,
+                    input_hash = EXCLUDED.input_hash, gated = EXCLUDED.gated
+                WHERE fact_asset_metrics.input_hash IS DISTINCT FROM EXCLUDED.input_hash
+                   OR fact_asset_metrics.gated IS DISTINCT FROM EXCLUDED.gated
+            """
+        )
+
+
 @dataclass
 class RecomputeSummary:
     securities: int = 0
     rows: int = 0
     extreme_rows: int = 0
+    metric_rows: int = 0
 
 
 def load_returns(
@@ -365,7 +411,7 @@ def load_returns(
         as_of_dates = [d for d in sorted(adj) if start_date <= d <= end_date]
         # Drop rows whose as-of date no longer has a price (e.g. an overwrite removed a
         # vendor-phantom bar) — the upsert alone never deletes, so they'd live forever.
-        for table in ("fact_returns", "fact_price_extremes"):
+        for table in ("fact_returns", "fact_price_extremes", "fact_asset_metrics"):
             conn.execute(
                 f"DELETE FROM {table} WHERE composite_figi = %s "  # noqa: S608 (fixed table list)
                 "AND as_of_date BETWEEN %s AND %s AND NOT (as_of_date = ANY(%s))",
@@ -383,9 +429,15 @@ def load_returns(
             adj, as_of_dates, calendar_version, gated_dates=gated_dates
         )
         _upsert_extremes(conn, figi, extreme_rows)
+        # Per-window asset risk metrics (vol + Sharpe) — same per-figi pass, reuse adj + tri.
+        metric_rows = compute_metric_rows(
+            figi, as_of_dates, adj, tri, sessions, calendar_version, gated_dates,
+        )
+        _upsert_metrics(conn, figi, metric_rows)
         summary.securities += 1
         summary.rows += len(rows)
         summary.extreme_rows += len(extreme_rows)
+        summary.metric_rows += len(metric_rows)
     return summary
 
 

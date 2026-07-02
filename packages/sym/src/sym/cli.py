@@ -504,7 +504,8 @@ def _cmd_recompute(args: argparse.Namespace) -> int:
         return 1
     print(
         f"recompute PR+TR [{start_date} .. {end_date}]: {summary.securities} securities, "
-        f"{summary.rows:,} fact_returns rows, {summary.extreme_rows:,} fact_price_extremes rows"
+        f"{summary.rows:,} fact_returns rows, {summary.extreme_rows:,} fact_price_extremes rows, "
+        f"{summary.metric_rows:,} fact_asset_metrics rows"
     )
     return 0
 
