@@ -35,6 +35,10 @@ REBALANCES = ("monthly", "quarterly")
 DEFAULT_TOP_PCT = 0.2  # the quintile default when neither selection is given
 DEFAULT_STICKY_KEEP_MULT = 1.5  # a held name is retained while it stays within 1.5x the entry cut
 _W_1Y = 11  # fact_asset_metrics window for the 1Y vol/Sharpe reads (matches signals._W_1Y)
+# Minimum daily-return observations for an inverse-vol weight. fact_asset_metrics publishes a
+# non-NULL vol_tr from as few as MIN_OBS=2 returns; a 2-obs vol can be near-zero, so 1/vol_tr would
+# explode and concentrate the leg on a fragile name. Match signals.vol_1y's >=60 floor.
+_MIN_VOL_OBS = 60
 
 
 def _members(conn, universe_id: str, as_of_date: date | None = None) -> list[str]:
@@ -172,8 +176,8 @@ def _neutral_weights(
             rows = eq_conn.execute(
                 "SELECT composite_figi, vol_tr FROM fact_asset_metrics "
                 "WHERE window_id=%s AND gated=false AND vol_tr IS NOT NULL AND vol_tr > 0 "
-                "AND as_of_date=%s AND composite_figi = ANY(%s)",
-                (_W_1Y, d, names),
+                "AND n_obs >= %s AND as_of_date=%s AND composite_figi = ANY(%s)",
+                (_W_1Y, _MIN_VOL_OBS, d, names),
             ).fetchall()
             vol = {f: float(v) for f, v in rows if v is not None and float(v) > 0}
 
@@ -379,16 +383,26 @@ def _run_backtest(
         return {"error": f"sticky_keep_mult must be >= 1.0 (got {sticky_keep_mult})"}
     if not want_shorts:
         # LONG-ONLY path — unchanged: selection/weighting run through the historical top_pct/top_n
-        # + _select_top so an existing long-only spec is byte-identical. (long_*/short_* are the
-        # long/short API only; inverse_vol is a new long-only-compatible weighting.)
+        # + _select_top so an existing long-only spec is byte-identical. long_*/short_* are the
+        # long/short API only — a long_* without a short selector is a misconfig, not a silent
+        # no-op. (inverse_vol is a new long-only-compatible weighting.)
+        if long_pct is not None or long_n is not None:
+            return {"error": "long_pct/long_n require a short selector; long-only sizes with "
+                             "top_pct/top_n"}
         if top_pct is not None and top_n is not None:
             return {"error": "give top_pct OR top_n, not both"}
         if top_n is not None and top_n < 1:
             return {"error": f"top_n must be >= 1 (got {top_n})"}
         if top_pct is None and top_n is None:
             top_pct = DEFAULT_TOP_PCT  # the documented top-quintile default
-    elif long_pct is None and long_n is None:
-        long_pct = DEFAULT_TOP_PCT  # L/S long side defaults to the top quintile
+    else:
+        # LONG/SHORT path — the long leg is sized by long_*; top_* is meaningless here (would be
+        # silently dropped), so reject it rather than accept-and-ignore.
+        if top_pct is not None or top_n is not None:
+            return {"error": "top_pct/top_n are long-only; a long/short run sizes its long leg "
+                             "with long_pct/long_n"}
+        if long_pct is None and long_n is None:
+            long_pct = DEFAULT_TOP_PCT  # L/S long side defaults to the top quintile
 
     members = _members(u_conn, universe_id)  # all-ever: calendar + data range only
     if not members:

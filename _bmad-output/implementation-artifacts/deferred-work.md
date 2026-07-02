@@ -553,3 +553,11 @@ Adversarial 3-layer review (Blind / Edge / Acceptance Auditor). Acceptance Audit
   floor for the TR metrics too. Benign: the TRI shares the PR session set (growth ≥ 1, non-positive
   price breaks both chains identically), so `len(tr_rets) == len(pr_rets)` in practice; revisit only
   if a non-positive-TRI-with-positive-adj case ever becomes possible.
+
+## Deferred from: code review of backtest-lowvol-longshort-sharpe (2026-07-02)
+
+- **Book diagnostics computed only at the first rebalance** (`packages/backtest/src/backtest/engine.py`, `_run_backtest` summary) — `net_exposure`/`gross_exposure`/`n_long`/`n_short` are a one-day snapshot of `weights_at[rebals[0]]`; documented, but could misrepresent later-rebalance drift. Consider reporting time-averaged exposures.
+- **Small-universe leg under-fill** (`_select_long_short`) — when `long_n + short_n` exceeds the covered-name count, the short leg (which excludes the longs) under-fills, yielding lopsided legs (e.g. 5 long / 3 short) while masses stay 0.5/0.5 (per-name weights then differ across legs), with no diagnostic. Low-probability given the ≥20 coverage gate; add an under-fill warning if it ever bites.
+- **Partial-coverage day on a dollar-neutral book reports a single-leg return** (`_daily_weighted`) — on a day only one leg priced, the gross rescale reports that leg's directional return, injecting beta into the "market-neutral" series. Same shape as the historical long-only partial-coverage renormalization; acceptable but the neutrality guarantee quietly breaks on thin days.
+- **`save_portfolio` files every backtest under a synthetic "(backtest)" client** (`backtest/gateway.py:run` → `portfolio/gateway.py:create`) — pre-existing (not introduced by this story); the L/S `save_portfolio` path exercises it. Likely unintended as a first-class client in the FR-13 client list.
+- **AC-4 sticky test measures a churn proxy** (`packages/backtest/tests/test_engine.py`, `test_sticky_selection_reduces_turnover_vs_hard_cutoff`) — asserts name-set symmetric-difference rather than the engine's reported `turnover_at` (`0.5·Σ|Δw|`) through a full run. Fair proxy under equal weighting; strengthen to assert the reported metric across a two-rebalance run.

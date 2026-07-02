@@ -26,7 +26,10 @@ from .engine import run_backtest
 
 # Parameters a sweep is allowed to vary / fix. Anything in run_backtest's spec.
 _RUN_KWARGS = {"factor", "universe_id", "top_pct", "top_n", "weighting", "rebalance",
-               "cost_bps", "start_date", "end_date"}
+               "cost_bps", "start_date", "end_date",
+               # long/short (dollar-neutral) params — so the market-neutral book is sweepable
+               # (Deflated-Sharpe/PBO). They flow through **spec into run_backtest.
+               "long_pct", "long_n", "short_pct", "short_n", "sticky_keep_mult"}
 
 
 def _annualised_em(n_trials: int, sigma_sr: float) -> float:

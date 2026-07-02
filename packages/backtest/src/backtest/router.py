@@ -196,6 +196,17 @@ def run_backtest_ep(
         raise HTTPException(
             status_code=422,
             detail="cap weighting is long-only; use 'equal' or 'inverse_vol' with shorts")
+    # Reject cross-mode selectors rather than silently ignore them: long_* only make sense with a
+    # short leg, and top_* are long-only (a long/short run sizes its long leg with long_*).
+    if not want_shorts and (body.long_pct is not None or body.long_n is not None):
+        raise HTTPException(
+            status_code=422,
+            detail="long_pct/long_n require a short selector; long-only sizes with top_pct/top_n")
+    if want_shorts and (body.top_pct is not None or body.top_n is not None):
+        raise HTTPException(
+            status_code=422,
+            detail="top_pct/top_n are long-only; a long/short run sizes its long leg with "
+                   "long_pct/long_n")
     # long-only defaults to the top quintile; a long/short run sizes its long leg via long_*
     if body.top_pct is not None or body.top_n is not None:
         top_pct = body.top_pct

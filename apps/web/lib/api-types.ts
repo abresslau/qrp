@@ -3358,6 +3358,16 @@ export interface components {
             start_date?: string | null;
             /** End Date */
             end_date?: string | null;
+            /** Long Pct */
+            long_pct?: number | null;
+            /** Long N */
+            long_n?: number | null;
+            /** Short Pct */
+            short_pct?: number | null;
+            /** Short N */
+            short_n?: number | null;
+            /** Sticky Keep Mult */
+            sticky_keep_mult?: number | null;
         };
         /** Summary */
         Summary: {

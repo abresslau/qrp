@@ -1,6 +1,6 @@
 # Story: Low-volatility long/short backtest, Sharpe-ranked (market-neutral, inverse-vol)
 
-Status: review
+Status: done
 
 <!-- Created via bmad-create-story 2026-07-02. The follow-on to asset-risk-metrics-vol-sharpe-fwd
 (Andre: "backtest creating a portfolio with low volatility (targeting 0) with long and shorts, I
@@ -166,6 +166,32 @@ long/short path. A behavioral test MUST assert a dollar-neutral book produces a 
   added only on L/S runs so long-only specs stay byte-identical); `WEIGHTINGS` gains `inverse_vol`.
 - [x] **Tests + docs** (AC: 7) — unit tests above (signals 17, backtest 48) + live sp500 smoke
   (AC-6 vol comparison, see Completion Notes); strategy documented in `docs/data-conventions.md`.
+
+### Review Findings
+
+Code review 2026-07-02 (bmad-code-review, 3 adversarial layers: Blind Hunter / Edge Case Hunter /
+Acceptance Auditor). 5 patch, 5 defer, 4 dismissed. Acceptance Auditor: 5/7 ACs MET, 2 PARTIAL
+(both minor); the `_daily_weighted` single-gross-path is an accepted, documented deviation.
+**All 5 patches APPLIED 2026-07-02** — backtest 49 + signals 17 green, ruff `src` clean, web
+typecheck clean. Status -> done. (Fixes were applied to the working tree on main; commit pending.)
+
+- [x] [Review][Patch] inverse-vol read has no min-obs floor — a thin name with a 2-obs `vol_tr` gets an exploding `1/vol_tr` weight and dominates its leg, defeating "low-vol by construction"; add `n_obs >= 60` to match `signals.vol_1y` [packages/backtest/src/backtest/engine.py:_neutral_weights]
+- [x] [Review][Patch] L/S selectors silently ignored on misconfiguration — `long_*`/`top_*` without a short selector, or `top_*` with shorts, are dropped with no error (and a bogus non-null pollutes `backtest.run.top_pct`); reject as 422 in router + error in engine [packages/backtest/src/backtest/router.py, engine.py]
+- [x] [Review][Patch] L/S strategy unreachable from the sweep/overfitting harness — `_RUN_KWARGS` omits the L/S params, so the flagship market-neutral book can't be Deflated-Sharpe/PBO tested; add the 5 L/S params [packages/backtest/src/backtest/sweep.py:28]
+- [x] [Review][Patch] saved dollar-neutral portfolio's `returns()` attribution divides by NET weight (`covered_w`) — the same net-zero trap the engine just fixed, now reachable via `save_portfolio=True`; normalize by gross (`abs`) like the sibling `analytics` path (byte-identical for long-only) [packages/portfolio/src/portfolio/gateway.py:~434,456]
+- [x] [Review][Patch] web run-detail renders "top 0%" for an L/S run and ignores the L/S spec fields; show a long/short label when `long_*`/`short_*` present [apps/web/app/backtest/page.tsx:~540]
+- [x] [Review][Defer] Book diagnostics (net/gross/n_long/n_short) computed only at the first rebalance — one-day snapshot, documented, could misrepresent later drift [engine.py summary] — deferred, minor reporting
+- [x] [Review][Defer] Small-universe leg under-fill: when `long_n + short_n > covered names` the short leg under-fills (lopsided legs) with masses still 0.5/0.5 and no diagnostic [engine.py:_select_long_short] — deferred, low-probability edge (coverage gate ≥20)
+- [x] [Review][Defer] Partial-coverage day on a neutral book reports a single-leg (directional) return — same shape as the historical long-only renormalization; neutrality breaks on thin days [engine.py:_daily_weighted] — deferred, pre-existing semantics
+- [x] [Review][Defer] `save_portfolio` files every backtest under a synthetic "(backtest)" client [gateway.py:run] — deferred, pre-existing (not introduced here)
+- [x] [Review][Defer] AC-4 sticky test asserts name-set churn (a proxy) rather than the engine's reported `turnover_at` through a full run [tests/test_engine.py] — deferred, fair proxy, test-hardening only
+
+Dismissed (4): (1) Blind "sticky over-crowding" — standard buffer/hysteresis, matches docstring,
+bounded by `keep_cut`; the retain-held-over-fresh is the intended turnover/signal tradeoff, not a
+defect. (2) Blind "overlapping-legs double-map in `_neutral_weights`" — unreachable, legs are
+disjoint by construction. (3) Blind "`math` import unverifiable" — false positive, `import math`
+is present. (4) Auditor "AC-7 gates unverified" — re-run green here (signals 17 + backtest 48, ruff
+`src` clean).
 
 ## Dev Notes
 
