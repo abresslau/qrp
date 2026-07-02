@@ -7,8 +7,10 @@ from datetime import date
 import pytest
 
 from backtest.engine import (
+    _aligned_returns_asof,
     _cap_weights,
     _daily_weighted,
+    _min_variance_weights,
     _neutral_weights,
     _rebalance_dates,
     _select_long_short,
@@ -175,6 +177,82 @@ def test_daily_weighted_long_only_unchanged_by_the_fix():
                           date(2026, 6, 1), date(2026, 6, 30))
     assert out[date(2026, 6, 2)] == pytest.approx(0.75 * 0.01 + 0.25 * 0.03)
     assert out[date(2026, 6, 3)] == pytest.approx(0.02)  # 0.75*0.02 / 0.75
+
+
+# ---- min_variance weighting (covariance-aware, as-of-bounded) -----------------------------
+
+
+def test_aligned_returns_asof_is_upper_bounded_by_the_rebalance_date():
+    # the #1 look-ahead guardrail: the covariance read must be capped at the rebalance date d
+    conn = _RoutedConn([("SELECT as_of_date, composite_figi, pr", _Cur(rows=[]))])
+    d = date(2025, 6, 30)
+    _aligned_returns_asof(conn, ["FIGI_A0000000", "FIGI_B0000000"], d, lookback=252)
+    sql, params = conn.calls[0]
+    assert "as_of_date <= %s" in sql and "as_of_date > %s - %s::int" in sql
+    # d appears as BOTH the inclusive upper bound and the lookback anchor (never a global max)
+    assert params == (1, ["FIGI_A0000000", "FIGI_B0000000"], d, d, 252)
+    assert "max(as_of_date)" not in sql  # NOT the optimiser's global-max bounding
+
+
+def test_min_variance_weights_are_dollar_neutral_via_the_optimiser():
+    # 2 longs + 2 shorts, 40 aligned days with a shared market factor (genuine covariance). The
+    # optimiser solve must return a signed net≈0 / gross≈1 book (real optimiser math, no mocks).
+    longs, shorts = ["FIGI_L0000000", "FIGI_L1000000"], ["FIGI_S0000000", "FIGI_S1000000"]
+    figis = longs + shorts
+    d0 = date(2025, 1, 1)
+    rows = []
+    for k in range(40):
+        dd = date.fromordinal(d0.toordinal() + k)
+        mkt = 0.01 * ((-1) ** k)
+        for i, f in enumerate(figis):
+            rows.append((dd, f, (0.5 + 0.2 * i) * mkt + 0.001 * ((-1) ** (k + i))))
+    conn = _RoutedConn([("SELECT as_of_date, composite_figi, pr", _Cur(rows=rows))])
+    w, dropped = _min_variance_weights(
+        conn, longs, shorts, date(2025, 3, 1), long_mass=0.5, short_mass=0.5,
+        lookback=252, cov_method="shrinkage", leg_cap=60,
+    )
+    assert dropped == 0
+    assert sum(w.values()) == pytest.approx(0.0, abs=1e-6)          # dollar-neutral
+    assert sum(abs(v) for v in w.values()) == pytest.approx(1.0, abs=1e-6)  # gross 1
+    assert all(w[f] > 0 for f in longs) and all(w[f] < 0 for f in shorts)
+
+
+def test_min_variance_weights_skips_when_history_too_short():
+    # < 30 aligned days → no covariance → empty book (caller skips the rebalance), names counted
+    conn = _RoutedConn([("SELECT as_of_date, composite_figi, pr", _Cur(rows=[
+        (date(2025, 1, 1), "FIGI_L0000000", 0.01), (date(2025, 1, 1), "FIGI_S0000000", 0.02),
+    ]))])
+    w, dropped = _min_variance_weights(
+        conn, ["FIGI_L0000000"], ["FIGI_S0000000"], date(2025, 3, 1),
+        long_mass=0.5, short_mass=0.5, lookback=252, cov_method="shrinkage", leg_cap=60,
+    )
+    assert w == {} and dropped == 2
+
+
+def test_engine_rejects_min_variance_without_shorts():
+    sym, bt = _engine_conns()
+    out = run_backtest(sym, bt, universe_conn=sym, equity_conn=sym, weighting="min_variance")
+    assert "min_variance weighting requires a short selector" in out["error"]
+
+
+def test_borrow_cost_accrues_on_the_short_leg_separate_from_turnover():
+    # a dollar-neutral book with borrow but NO turnover cost: the drag is all borrow, the headline
+    # is NET (costed), and borrow_cost_total is reported separately and > 0.
+    out = _long_short_run(cost_bps=0.0, borrow_bps=100.0)
+    assert out.get("run_id") == 77, out.get("error")
+    s = out["summary"]
+    assert s["borrow_bps"] == 100.0
+    assert s["borrow_cost_total"] > 0.0
+    # short gross ~0.5 financed daily; drag = 0.5 * (100/1e4)/252 per common day
+    assert s["borrow_cost_total"] == pytest.approx(out["n_days"] * 0.5 * (100 / 1e4) / 252, rel=1e-6)
+    assert s["cost_drag_total"] == pytest.approx(s["borrow_cost_total"])  # cost_bps=0 → no turnover
+    assert s["strategy_gross"] is not None  # borrow makes the run costed → net headline + gross block
+
+
+def test_long_short_run_has_zero_borrow_by_default():
+    s = _long_short_run(cost_bps=0.0)["summary"]  # no borrow_bps
+    assert s["borrow_cost_total"] == 0.0
+    assert s["borrow_bps"] == 0.0
 
 
 # ---- cap weighting -----------------------------------------------------------------------

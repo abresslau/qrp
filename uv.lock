@@ -148,6 +148,7 @@ version = "0.1.0"
 source = { editable = "packages/backtest" }
 dependencies = [
     { name = "fastapi" },
+    { name = "optimiser" },
     { name = "portfolio" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
@@ -164,6 +165,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "optimiser", editable = "packages/optimiser" },
     { name = "portfolio", editable = "packages/portfolio" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic", specifier = ">=2" },

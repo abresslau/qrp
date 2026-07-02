@@ -49,6 +49,14 @@ class SolveSpec(BaseModel):
     save_portfolio: bool = False
     train_start: str | None = None
     train_end: str | None = None
+    # long/short (min_variance_long_short) fields — present only on L/S solutions
+    factor: str | None = None
+    long_n: int | None = None
+    long_pct: float | None = None
+    short_n: int | None = None
+    short_pct: float | None = None
+    net_target: float | None = None
+    gross_target: float | None = None
 
 
 class OptSolutionSummary(BaseModel):
@@ -91,6 +99,16 @@ class OptSolveRequest(BaseModel):
     holdout_days: int = Field(default=0, ge=0, le=252)
     # Q7.4a: persist the allocation as a portfolios Portfolio
     save_portfolio: bool = False
+    # method='min_variance_long_short': the covariance-aware dollar-neutral long/short solve. The
+    # ranking factor pre-signs names (top=long, bottom=short); each leg is sized by _n XOR _pct.
+    # net_target/gross_target set the leg masses (0 / 1 = dollar-neutral).
+    factor: str = "sharpe_tr"
+    long_n: int | None = Field(default=None, gt=0)
+    long_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    short_n: int | None = Field(default=None, gt=0)
+    short_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    net_target: float = Field(default=0.0, ge=-1, le=1, allow_inf_nan=False)
+    gross_target: float = Field(default=1.0, gt=0, le=4, allow_inf_nan=False)
 
 
 class OptSolveResult(BaseModel):
@@ -106,18 +124,33 @@ class OptSolveResult(BaseModel):
 def solve_ep(body: OptSolveRequest = Body(...), gw: DbOptimiserGateway = Depends(_gateway)) -> dict:
     # No silent clamping/preferences: out-of-range params are 422s via the request
     # model; an unknown method is the caller's error.
-    if body.method not in ("min_variance", "max_sharpe"):
+    if body.method not in ("min_variance", "max_sharpe", "min_variance_long_short"):
         raise HTTPException(status_code=422,
                             detail=f"unknown method {body.method!r}")
     if body.cov_method not in ("shrinkage", "sample"):
         raise HTTPException(status_code=422,
                             detail=f"unknown cov_method {body.cov_method!r}")
-    if body.max_weight is not None and body.max_weight * body.n < 1.0:
+    is_long_short = body.method == "min_variance_long_short"
+    # The long-only max_weight*n feasibility check does not apply to L/S (the cap is per LEG, not
+    # over n) — that feasibility is validated in the engine helper against the aligned leg sizes.
+    if not is_long_short and body.max_weight is not None and body.max_weight * body.n < 1.0:
         raise HTTPException(
             status_code=422,
             detail=f"infeasible max_weight {body.max_weight} for n={body.n} "
                    "(max_weight * n must be >= 1)",
         )
+    if is_long_short:
+        if body.long_n is not None and body.long_pct is not None:
+            raise HTTPException(status_code=422, detail="give long_n OR long_pct, not both")
+        if body.short_n is not None and body.short_pct is not None:
+            raise HTTPException(status_code=422, detail="give short_n OR short_pct, not both")
+    elif body.signal_tilt is None and (
+        body.long_n or body.long_pct or body.short_n or body.short_pct
+    ):
+        # long/short selectors are meaningless for a long-only method — reject, don't silently drop
+        raise HTTPException(
+            status_code=422,
+            detail="long_n/long_pct/short_n/short_pct require method='min_variance_long_short'")
 
     # The tilt factor's input modules are read over their OWN connections, opened only
     # when the factor's declared inputs demand them (AR-R2 — the Q6.3 router pattern).
@@ -160,7 +193,11 @@ def solve_ep(body: OptSolveRequest = Body(...), gw: DbOptimiserGateway = Depends
             body.universe, body.method, body.n, body.lookback,
             max_weight=body.max_weight, cov_method=body.cov_method,
             signal_tilt=body.signal_tilt.model_dump() if body.signal_tilt else None,
-            holdout_days=body.holdout_days, portfolios_gw=pgw, **module_conns,
+            holdout_days=body.holdout_days, portfolios_gw=pgw,
+            factor=body.factor, long_n=body.long_n, long_pct=body.long_pct,
+            short_n=body.short_n, short_pct=body.short_pct,
+            net_target=body.net_target, gross_target=body.gross_target,
+            **module_conns,
         )
     finally:
         if pconn is not None:

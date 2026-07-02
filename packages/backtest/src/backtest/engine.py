@@ -30,7 +30,7 @@ from signals.compute import factor_direction, raw_factor
 
 _W_1D = 1
 
-WEIGHTINGS = ("equal", "cap", "inverse_vol")
+WEIGHTINGS = ("equal", "cap", "inverse_vol", "min_variance")
 REBALANCES = ("monthly", "quarterly")
 DEFAULT_TOP_PCT = 0.2  # the quintile default when neither selection is given
 DEFAULT_STICKY_KEEP_MULT = 1.5  # a held name is retained while it stays within 1.5x the entry cut
@@ -39,6 +39,10 @@ _W_1Y = 11  # fact_asset_metrics window for the 1Y vol/Sharpe reads (matches sig
 # non-NULL vol_tr from as few as MIN_OBS=2 returns; a 2-obs vol can be near-zero, so 1/vol_tr would
 # explode and concentrate the leg on a fragile name. Match signals.vol_1y's >=60 floor.
 _MIN_VOL_OBS = 60
+# min_variance weighting: the trailing-return window for the covariance, and a per-leg name cap so
+# the O(n^2 t) pure-Python shrinkage stays tractable (the optimiser is comfortable to n~80).
+DEFAULT_COV_LOOKBACK = 252
+DEFAULT_COV_LEG_CAP = 60
 
 
 def _members(conn, universe_id: str, as_of_date: date | None = None) -> list[str]:
@@ -201,6 +205,84 @@ def _neutral_weights(
     return weights, dl, ds
 
 
+def _aligned_returns_asof(
+    eq_conn, figis: list[str], d: date, lookback: int
+) -> tuple[list[str], list[list[float]]]:
+    """Daily returns for ``figis`` over the ``lookback`` days ending AT ``d`` (inclusive), aligned
+    to the dates on which EVERY kept name priced — a clean covariance input.
+
+    CRITICAL (no look-ahead): the read is upper-bounded by the rebalance date ``d``
+    (``as_of_date <= d AND as_of_date > d − lookback``). Do NOT reuse the optimiser's
+    ``_return_matrix``, which bounds on the GLOBAL ``max(as_of_date)`` and would leak future returns
+    into a historical rebalance. Names with poor coverage are trimmed until ≥30 common dates remain
+    (mirrors the optimiser's alignment fallback); returns ``([], [])`` if a ≥2-name / ≥30-date set
+    can't be formed.
+    """
+    rows = eq_conn.execute(
+        "SELECT as_of_date, composite_figi, pr FROM fact_returns "
+        "WHERE window_id=%s AND pr IS NOT NULL AND composite_figi = ANY(%s) "
+        "AND as_of_date <= %s AND as_of_date > %s - %s::int "
+        "ORDER BY as_of_date",
+        (_W_1D, list(figis), d, d, lookback),
+    ).fetchall()
+    by_date: dict = {}
+    for dd, f, pr in rows:
+        by_date.setdefault(dd, {})[f] = float(pr)
+    fset = set(figis)
+    dates = [dd for dd in sorted(by_date) if fset.issubset(by_date[dd].keys())]
+    kept = list(figis)
+    if len(dates) < 30:
+        present = sorted(figis, key=lambda f: sum(1 for dd in by_date if f in by_date[dd]),
+                         reverse=True)
+        kept = list(present)
+        while len(kept) > 2:
+            ds = [dd for dd in sorted(by_date) if set(kept).issubset(by_date[dd].keys())]
+            if len(ds) >= 30:
+                dates = ds
+                break
+            kept.pop()  # drop the worst-covered name
+        else:
+            return [], []
+    series = {f: [by_date[dd][f] for dd in dates] for f in kept}
+    return list(kept), [series[f] for f in kept]
+
+
+def _min_variance_weights(
+    eq_conn, longs: list[str], shorts: list[str], d: date, *,
+    long_mass: float, short_mass: float, lookback: int, cov_method: str, leg_cap: int,
+) -> tuple[dict[str, float], int]:
+    """Signed min-variance dollar-neutral weights via the optimiser's covariance solve (weighting=
+    'min_variance'). Longs/shorts are already sign-fixed by the Sharpe selection → convex.
+
+    Builds a shrinkage (or sample) covariance over ``longs ∪ shorts`` AS OF ``d`` (no look-ahead)
+    and calls ``optimiser.min_variance_long_short``. Each leg is capped at ``leg_cap`` names (by
+    selection rank — the strongest Sharpe names) to keep the O(n²·t) covariance tractable. Names
+    with insufficient aligned history are dropped; returns ``({}, dropped)`` if a two-leg covariance
+    can't be formed (caller skips the rebalance). ``dropped`` counts every selected name not in the
+    final weighted book.
+    """
+    # Lazy import breaks the optimiser<->backtest module cycle (optimiser imports score_weights).
+    from optimiser.engine import _const_corr_shrinkage, _mean_cov, min_variance_long_short
+
+    longs, shorts = longs[:leg_cap], shorts[:leg_cap]
+    names = list(longs) + list(shorts)
+    n_sel = len(names)
+    figis, matrix = _aligned_returns_asof(eq_conn, names, d, lookback)
+    long_set, short_set = set(longs), set(shorts)
+    long_idx = [i for i, f in enumerate(figis) if f in long_set]
+    short_idx = [i for i, f in enumerate(figis) if f in short_set]
+    if not long_idx or not short_idx or len(figis) < 2 or not matrix or len(matrix[0]) < 30:
+        return {}, n_sel  # can't form a two-leg covariance → skip
+    cov = _const_corr_shrinkage(matrix)[0] if cov_method == "shrinkage" else _mean_cov(matrix)[1]
+    try:
+        w = min_variance_long_short(cov, long_idx, short_idx,
+                                    long_mass=long_mass, short_mass=short_mass, cap=None)
+    except ValueError:
+        return {}, n_sel
+    weights = {figis[i]: w[i] for i in range(len(figis)) if abs(w[i]) > 1e-9}
+    return weights, n_sel - len(weights)
+
+
 def _cap_weights(conn, eq_conn, figis: list[str], d: date) -> tuple[dict[str, float], int]:
     """Market-cap weights at ``d`` for the holding.
 
@@ -339,6 +421,10 @@ def _run_backtest(
     short_pct: float | None = None,
     short_n: int | None = None,
     sticky_keep_mult: float = DEFAULT_STICKY_KEEP_MULT,
+    borrow_bps: float = 0.0,
+    cov_lookback: int = DEFAULT_COV_LOOKBACK,
+    cov_method: str = "shrinkage",
+    cov_leg_cap: int = DEFAULT_COV_LEG_CAP,
     return_daily: bool = False,
     alt_conn: psycopg.Connection | None = None,
     macro_conn: psycopg.Connection | None = None,
@@ -379,6 +465,13 @@ def _run_backtest(
         return {"error": f"short_n must be >= 1 (got {short_n})"}
     if want_shorts and weighting == "cap":
         return {"error": "cap weighting is long-only; use 'equal' or 'inverse_vol' with shorts"}
+    if weighting == "min_variance" and not want_shorts:
+        return {"error": "min_variance weighting requires a short selector (it is a long/short "
+                         "dollar-neutral book)"}
+    if cov_method not in ("shrinkage", "sample"):
+        return {"error": f"unknown cov_method {cov_method!r} (one of shrinkage, sample)"}
+    if borrow_bps < 0:
+        return {"error": f"borrow_bps must be >= 0 (got {borrow_bps})"}
     if sticky_keep_mult < 1.0:
         return {"error": f"sticky_keep_mult must be >= 1.0 (got {sticky_keep_mult})"}
     if not want_shorts:
@@ -434,6 +527,7 @@ def _run_backtest(
     members_at: dict[date, list[str]] = {}
     dropped_no_mcap = 0     # long-only cap-weighting drops (unchanged)
     dropped_no_vol = 0      # inverse-vol names with no positive vol_tr (long/short)
+    dropped_no_cov = 0      # min_variance names without aligned history / trimmed by the leg cap
     held_long: set[str] = set()   # carried across rebalances for sticky selection
     held_short: set[str] = set()
     # dollar-neutral L/S puts ±0.5 on each side (net 0, gross 1); long-only puts the full 1.0 long.
@@ -456,10 +550,17 @@ def _run_backtest(
             )
             if not longs or not shorts:
                 continue  # can't hold a dollar-neutral book without both legs
-            w, dl, ds = _neutral_weights(eq_conn, longs, shorts, d, weighting,
-                                         long_mass, short_mass)
-            dropped_no_vol += dl + ds
-            # inverse-vol can empty a leg (all names lacked a positive vol) — skip, don't un-neutral
+            if weighting == "min_variance":
+                w, dropped = _min_variance_weights(
+                    eq_conn, longs, shorts, d, long_mass=long_mass, short_mass=short_mass,
+                    lookback=cov_lookback, cov_method=cov_method, leg_cap=cov_leg_cap,
+                )
+                dropped_no_cov += dropped
+            else:
+                w, dl, ds = _neutral_weights(eq_conn, longs, shorts, d, weighting,
+                                             long_mass, short_mass)
+                dropped_no_vol += dl + ds
+            # a weighting can empty a leg (no vol / no covariance history) — skip, don't un-neutral
             if not any(v > 0 for v in w.values()) or not any(v < 0 for v in w.values()):
                 continue
             held_long, held_short = set(longs), set(shorts)
@@ -519,6 +620,24 @@ def _run_backtest(
             if hit is not None:
                 cost_on_date[hit] = cost_on_date.get(hit, 0.0) + turnover_at[d] * rate
 
+    # Short borrow cost — a PERIODIC HOLDING charge (unlike the one-time turnover cost): the short
+    # leg's gross exposure is financed every day it is held. Accrued per common day at the active
+    # holding period's short gross × (borrow_bps/1e4)/252. Long-only / borrow_bps=0 runs are inert.
+    borrow_cost_total = 0.0
+    if borrow_bps and want_shorts:
+        brate = (borrow_bps / 1e4) / 252.0
+        ri = 0
+        for d in common:
+            while ri + 1 < len(rebals) and rebals[ri + 1] <= d:
+                ri += 1
+            short_gross = sum(-v for v in weights_at[rebals[ri]].values() if v < 0)
+            drag = short_gross * brate
+            cost_on_date[d] = cost_on_date.get(d, 0.0) + drag
+            borrow_cost_total += drag
+
+    # "Costed" iff ANY cost is modelled — turnover (cost_bps) OR the short borrow. Either flips the
+    # headline from gross to net (borrow_bps>0 with cost_bps=0 must still show a NET headline).
+    costed = bool(cost_bps) or borrow_cost_total > 0.0
     s_cum = b_cum = s_cum_net = 1.0
     s_curve, s_curve_net, b_curve = [], [], []
     s_ser, s_ser_net, b_ser, points = [], [], [], []
@@ -535,16 +654,16 @@ def _run_backtest(
         s_curve_net.append(s_cum_net)
         b_curve.append(b_cum)
         # the persisted curve is the headline: net when costs are modelled, else gross.
-        points.append((d, s_cum_net if cost_bps else s_cum, b_cum))
+        points.append((d, s_cum_net if costed else s_cum, b_cum))
 
     gross_stats = _stats(s_ser, s_curve)
     base_stats = _stats(b_ser, b_curve)
-    strat_stats = _stats(s_ser_net, s_curve_net) if cost_bps else gross_stats
+    strat_stats = _stats(s_ser_net, s_curve_net) if costed else gross_stats
 
     # Spread t-stat of the (headline) strategy-minus-baseline daily excess. The Harvey-Liu-Zhu
     # multiple-testing hurdle for a NEWLY claimed factor is t>3.0, not the naive 2.0 — surfaced
     # so a sweep's winner is judged against the right bar, not in-sample luck.
-    headline = s_ser_net if cost_bps else s_ser
+    headline = s_ser_net if costed else s_ser
     excess = [headline[i] - b_ser[i] for i in range(len(common))]
     spread_tstat: float | None = None
     if len(excess) > 1:
@@ -570,7 +689,11 @@ def _run_backtest(
             "long_pct": long_pct, "long_n": long_n,
             "short_pct": short_pct, "short_n": short_n,
             "sticky_keep_mult": sticky_keep_mult,
+            "borrow_bps": borrow_bps,
         })
+        if weighting == "min_variance":
+            spec.update({"cov_lookback": cov_lookback, "cov_method": cov_method,
+                         "cov_leg_cap": cov_leg_cap})
     # Book exposure diagnostics at the first rebalance (net ≈ 0 / gross ≈ 1 for a dollar-neutral
     # L/S book; net = gross = 1 for a long-only book) — makes "low vol / market-neutral" measurable.
     w0 = weights_at[rebals[0]]
@@ -595,12 +718,15 @@ def _run_backtest(
         "n_short": n_short,
         "dropped_no_mcap": dropped_no_mcap,  # cap-weighting honesty: names dropped, never zeroed
         "dropped_no_vol": dropped_no_vol,    # inverse-vol names dropped for no positive vol_tr
+        "dropped_no_cov": dropped_no_cov,    # min_variance names dropped (no history / leg cap)
         # turnover + transaction-cost honesty (always reported; cost applied only when cost_bps>0)
         "turnover_ann": (turnover_total / years) if years > 0 else None,
         "turnover_total": turnover_total,
         "cost_bps": cost_bps,
-        "cost_drag_total": sum(cost_on_date.values()),
-        "strategy_gross": gross_stats if cost_bps else None,  # net is the headline when costed
+        "cost_drag_total": sum(cost_on_date.values()),  # total drag (turnover + short borrow)
+        "borrow_bps": borrow_bps,
+        "borrow_cost_total": borrow_cost_total,  # the short-financing portion of the drag
+        "strategy_gross": gross_stats if costed else None,  # net is the headline when costed
         # statistical-significance guardrail (Harvey-Liu-Zhu): hurdle is t>3.0, not 2.0
         "spread_tstat": spread_tstat,
         "spread_tstat_hurdle": 3.0,

@@ -38,8 +38,9 @@ from signals.compute import factor_direction, raw_factor
 _W_1D = 1
 ANN = 252
 
-METHODS = ("min_variance", "max_sharpe")
+METHODS = ("min_variance", "max_sharpe", "min_variance_long_short")
 COV_METHODS = ("shrinkage", "sample")  # default = Ledoit-Wolf const-correlation shrinkage
+LS_DEFAULT_LEG_PCT = 0.2  # each leg = the top/bottom quintile of the ranked pool when unspecified
 
 
 def _select_names(u_conn, sym_conn, universe_id: str, n: int) -> list[str]:
@@ -218,21 +219,23 @@ def _project_simplex(v: list[float]) -> list[float]:
     return _project_simplex_mass(v, 1.0)
 
 
-def _project_capped_simplex(v: list[float], cap: float) -> list[float]:
-    """Euclidean projection onto {w : Σw=1, 0 ≤ wᵢ ≤ cap}.
+def _project_capped_simplex(v: list[float], cap: float, mass: float = 1.0) -> list[float]:
+    """Euclidean projection onto {w : Σw=mass, 0 ≤ wᵢ ≤ cap} (``mass`` defaults to 1).
 
     Iterative cap-and-redistribute: project the free coordinates onto the simplex of
     the remaining mass; any that exceed the cap are fixed AT the cap and removed from
     the free set; repeat. Each pass fixes ≥1 more coordinate, so it terminates (≤ n
     passes), and the result is the exact Euclidean projection (the KKT active-set for
-    this box-and-sum constraint). Caller guarantees feasibility (cap·n ≥ 1).
+    this box-and-sum constraint). Caller guarantees feasibility (cap·n ≥ mass). The
+    ``mass`` parameter lets the long/short projection scale a leg to ±0.5 (see
+    ``_project_long_short``); mass=1 is the long-only case and is byte-identical to before.
     """
     n = len(v)
     fixed: dict[int, float] = {}
     free = list(range(n))
     while True:
-        mass = 1.0 - cap * len(fixed)
-        sub = _project_simplex_mass([v[i] for i in free], mass)
+        remaining = mass - cap * len(fixed)
+        sub = _project_simplex_mass([v[i] for i in free], remaining)
         over = [idx for idx, w in zip(free, sub, strict=True) if w > cap + 1e-12]
         if not over:
             out = [0.0] * n
@@ -244,8 +247,35 @@ def _project_capped_simplex(v: list[float], cap: float) -> list[float]:
         for idx in over:
             fixed[idx] = cap
         free = [i for i in free if i not in fixed]
-        if not free:  # everything capped: feasible only when cap*n == 1 (mass exact)
+        if not free:  # everything capped: feasible only when cap*n == mass (exact)
             return [fixed.get(i, 0.0) for i in range(n)]
+
+
+def _project_long_short(
+    v: list[float], long_idx: list[int], short_idx: list[int],
+    long_mass: float = 0.5, short_mass: float = 0.5, cap: float | None = None,
+) -> list[float]:
+    """Euclidean projection onto the PRODUCT of two (capped) simplices — the long/short set.
+
+    Long coordinates project onto ``{w ≥ 0, Σ = +long_mass, w ≤ cap}``; short coordinates'
+    MAGNITUDES project onto ``{m ≥ 0, Σ = short_mass, m ≤ cap}`` and are then negated. Because
+    the long and short index blocks are disjoint, projecting each block independently IS the exact
+    Euclidean projection onto the product set — this is what makes the dollar-neutral min-variance
+    solve convex once the Sharpe selection has fixed each name's sign. Net = long_mass − short_mass
+    (0 when equal); gross = long_mass + short_mass (1 for the 0.5/0.5 dollar-neutral default).
+    """
+    out = [0.0] * len(v)
+
+    def _side(idxs: list[int], mass: float, sgn: float) -> None:
+        vals = [sgn * v[i] for i in idxs]  # long: +v ; short: the magnitudes −v
+        pw = (_project_simplex_mass(vals, mass) if cap is None
+              else _project_capped_simplex(vals, cap, mass=mass))
+        for i, w in zip(idxs, pw, strict=True):
+            out[i] = sgn * w
+
+    _side(long_idx, long_mass, 1.0)
+    _side(short_idx, short_mass, -1.0)
+    return out
 
 
 def _project_simplex_mass(v: list[float], mass: float) -> list[float]:
@@ -264,20 +294,60 @@ def _project_simplex_mass(v: list[float], mass: float) -> list[float]:
 
 
 def _pgd(cov, mean, lam: float, tilt: list[float] | None = None,
-         cap: float | None = None, iters: int = 800) -> list[float]:
-    """Minimise lam·wᵀΣw − wᵀμ − wᵀtilt over the (capped) simplex."""
+         cap: float | None = None, iters: int = 800, project=None) -> list[float]:
+    """Minimise lam·wᵀΣw − wᵀμ − wᵀtilt over a feasible set.
+
+    The feasible set is the (capped) simplex by default; pass ``project`` to inject a different
+    Euclidean projector (e.g. the long/short product set). The starting point is projected once so
+    an injected set gets a feasible seed — for the long-only simplex, ``[1/n]`` is already a fixed
+    point, so this is byte-identical to before.
+    """
     n = len(cov)
     w = [1.0 / n] * n
     # Step from a Gershgorin bound on the largest eigenvalue of 2*lam*Σ.
     l_max = max(sum(abs(cov[i][j]) for j in range(n)) for i in range(n)) * 2 * lam + 1e-9
     step = 1.0 / l_max
     z = tilt or [0.0] * n
-    project = (lambda x: _project_capped_simplex(x, cap)) if cap is not None else _project_simplex
+    if project is None:
+        project = ((lambda x: _project_capped_simplex(x, cap)) if cap is not None
+                   else _project_simplex)
+    w = project(w)
     for _ in range(iters):
         sig_w = _matvec(cov, w)
         grad = [2 * lam * sig_w[i] - mean[i] - z[i] for i in range(n)]
         w = project([w[i] - step * grad[i] for i in range(n)])
     return w
+
+
+def min_variance_long_short(
+    cov: list[list[float]], long_idx: list[int], short_idx: list[int], *,
+    long_mass: float = 0.5, short_mass: float = 0.5, cap: float | None = None,
+    iters: int = 800,
+) -> list[float]:
+    """Signed min-variance weights for a PRE-SIGNED long/short book (net & gross set by the masses).
+
+    Minimises ``wᵀΣw`` s.t. the longs sum to ``+long_mass`` (each in ``[0, cap]``) and the shorts
+    sum to ``−short_mass`` (each in ``[−cap, 0]``) — a CONVEX QP once the signs are fixed (by the
+    caller's Sharpe selection), solved by projected gradient over the product of two capped
+    simplices (``_project_long_short``). Dollar-neutral default (0.5/0.5) → net 0, gross 1; the cov
+    (correlations) is exploited to push book variance below what per-name inverse-vol reaches.
+    ``mean``/tilt are zero here — pure minimum-variance. Raises on an infeasible cap for a leg.
+    """
+    if cap is not None and (
+        cap * len(long_idx) < long_mass - 1e-12 or cap * len(short_idx) < short_mass - 1e-12
+    ):
+        raise ValueError(
+            f"infeasible cap {cap} for leg sizes (long {len(long_idx)}, short {len(short_idx)}): "
+            f"cap*leg must be >= the leg mass"
+        )
+    n = len(cov)
+
+    def _proj(x: list[float]) -> list[float]:
+        return _project_long_short(x, long_idx, short_idx, long_mass, short_mass, cap)
+
+    # lam=1 suffices — with no mean term the argmin of lam·wᵀΣw is scale-free; the step is set from
+    # the 2·lam·Σ Gershgorin bound inside _pgd.
+    return _pgd(cov, [0.0] * n, lam=1.0, cap=None, iters=iters, project=_proj)
 
 
 def _stats(w, mean, cov):
@@ -313,6 +383,145 @@ def _tilt_scores(
     return [sign * (raw[f] - mu) / sd if f in raw else 0.0 for f in figis], len(raw)
 
 
+def _long_short_solve(
+    sym_conn, opt_conn, *, universe_id, factor, long_n, long_pct, short_n, short_pct,
+    lookback, max_weight, cov_method, net_target, gross_target,
+    portfolios_gw, alt_conn, macro_conn, u_conn, eq_conn,
+) -> dict:
+    """Covariance-aware min-variance dollar-neutral long/short solve (the L/S method).
+
+    Ranks the current roster by ``factor`` (default sharpe_tr, direction-aware), takes the top
+    ``long_*`` as longs and the bottom ``short_*`` as shorts (signs FIXED by the ranking → the solve
+    is convex), builds a shrinkage covariance over the union AS OF the latest data, and solves the
+    signed min-variance book via ``min_variance_long_short`` (net ``net_target``, gross
+    ``gross_target``; 0 / 1 → dollar-neutral). Persists a signed solution + weights + spec.
+    """
+    roster = [
+        r[0] for r in u_conn.execute(
+            "SELECT composite_figi FROM universe_membership "
+            "WHERE universe_id = %s AND valid_to IS NULL",
+            (universe_id,),
+        ).fetchall()
+    ]
+    if len(roster) < 4:
+        return {"error": f"too few current members for {universe_id!r} (need >= 4 for two legs)"}
+    as_of = eq_conn.execute(
+        "SELECT max(as_of_date) FROM fact_returns WHERE window_id = %s", (_W_1D,)
+    ).fetchone()[0]
+    if as_of is None:
+        return {"error": "no fact_returns data to rank/score against"}
+    try:
+        raw = raw_factor(factor, roster, as_of, sym_conn=sym_conn, eq_conn=eq_conn,
+                         alt_conn=alt_conn, macro_conn=macro_conn)
+    except ValueError as exc:  # unknown factor / missing module conn — attributed
+        return {"error": str(exc)}
+    if len(raw) < 4:
+        return {"error": f"factor {factor!r} scored only {len(raw)} of {len(roster)} members "
+                         f"at {as_of} — too few to form both legs"}
+    sign = 1.0 if factor_direction(factor) == "high" else -1.0
+    ordered = [f for f, _ in sorted(raw.items(), key=lambda kv: (-kv[1] * sign, kv[0]))]
+
+    def _sz(pct: float | None, k: int | None) -> int:
+        if k is not None:
+            return min(len(ordered), k)
+        return max(1, math.ceil(len(ordered) * (pct if pct is not None else LS_DEFAULT_LEG_PCT)))
+
+    longs = ordered[: _sz(long_pct, long_n)]
+    long_set = set(longs)
+    shorts = [f for f in reversed(ordered) if f not in long_set][: _sz(short_pct, short_n)]
+    if not longs or not shorts:
+        return {"error": "empty long or short leg after ranking"}
+
+    names = longs + shorts
+    figis, matrix, dates = _return_matrix(eq_conn, names, lookback)
+    if len(figis) < 4 or len(matrix[0]) < 30:
+        return {"error": "insufficient aligned daily history for a covariance"}
+    short_set = set(shorts)
+    long_idx = [i for i, f in enumerate(figis) if f in long_set]
+    short_idx = [i for i, f in enumerate(figis) if f in short_set]
+    if not long_idx or not short_idx:
+        return {"error": "a leg lost all its names to covariance alignment"}
+    cov_end = dates[-1]
+
+    mean, sample_cov = _mean_cov(matrix)
+    if cov_method == "shrinkage":
+        cov, shrink_delta = _const_corr_shrinkage(matrix)
+    else:
+        cov, shrink_delta = sample_cov, None
+
+    long_mass = (gross_target + net_target) / 2.0
+    short_mass = (gross_target - net_target) / 2.0
+    if long_mass <= 0 or short_mass <= 0:
+        return {"error": f"net_target {net_target} / gross_target {gross_target} give a "
+                         f"non-positive leg mass (need |net| < gross)"}
+    try:
+        w = min_variance_long_short(cov, long_idx, short_idx, long_mass=long_mass,
+                                    short_mass=short_mass, cap=max_weight)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    exp_ret, exp_vol, sharpe = _stats(w, mean, cov)
+    # baseline: equal-weight within each leg at the same masses (the inverse-vol-free reference)
+    ew = _project_long_short([1.0] * len(figis), long_idx, short_idx, long_mass, short_mass, None)
+    _, ew_vol, _ = _stats(ew, mean, cov)
+
+    spec = {
+        "universe": universe_id, "method": "min_variance_long_short", "n": len(figis),
+        "lookback": lookback, "max_weight": max_weight, "cov_method": cov_method,
+        "factor": factor, "long_n": long_n, "long_pct": long_pct,
+        "short_n": short_n, "short_pct": short_pct,
+        "net_target": net_target, "gross_target": gross_target,
+        "signal_tilt": None, "holdout_days": 0,
+        "save_portfolio": portfolios_gw is not None,
+        "train_start": dates[0].isoformat(), "train_end": cov_end.isoformat(),
+    }
+    tickers = _tickers(sym_conn, figis)
+    summary = {
+        "n_dates": len(matrix[0]), "net_exposure": sum(w), "gross_exposure": sum(abs(x) for x in w),
+        "n_long": len(long_idx), "n_short": len(short_idx),
+        "max_abs_weight": max(abs(x) for x in w), "weights_sum": sum(w),
+        "cov_method": cov_method, "shrink_delta": shrink_delta, "holdout": None,
+        "chosen_lam": None, "tilt_coverage": None,
+    }
+    sol_id = opt_conn.execute(
+        """
+        INSERT INTO optimiser.solution
+            (universe_id, method, n_assets, lookback_days, exp_return, exp_vol, sharpe, ew_vol,
+             summary, spec)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb) RETURNING solution_id
+        """,
+        (universe_id, "min_variance_long_short", len(figis), lookback, exp_ret, exp_vol, sharpe,
+         ew_vol, json.dumps(summary), json.dumps(spec)),
+    ).fetchone()[0]
+    # signed weights (longs +, shorts −) — optimiser.weight.weight has no CHECK, negatives OK.
+    order = sorted(range(len(figis)), key=lambda i: (-w[i], figis[i]))
+    kept = [(figis[i], w[i]) for i in order if abs(w[i]) > 1e-5]
+    with opt_conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO optimiser.weight (solution_id, composite_figi, ticker, weight) "
+            "VALUES (%s,%s,%s,%s)",
+            [(sol_id, f, tickers.get(f), wt) for f, wt in kept],
+        )
+
+    # Optional portfolio save: upload the SIGNED weights AS-IS (net ≈ 0) — never renormalise by the
+    # net sum (the dollar-neutral net-zero trap); the gross is already ≈ gross_target.
+    portfolio_id = portfolio_error = portfolio_upload = None
+    if portfolios_gw is not None:
+        try:
+            portfolio_id = portfolios_gw.create(
+                f"Optimiser #{sol_id}: min_var L/S · {universe_id}", "(optimiser)", "USD"
+            )
+            portfolio_upload = portfolios_gw.upload_weights(portfolio_id, cov_end, kept)
+        except Exception as exc:  # noqa: BLE001 — attributed, the solution stands
+            portfolio_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+
+    return {"solution_id": int(sol_id), "universe_id": universe_id,
+            "method": "min_variance_long_short", "n_assets": len(figis), "exp_return": exp_ret,
+            "exp_vol": exp_vol, "sharpe": sharpe, "ew_vol": ew_vol, "summary": summary,
+            "spec": spec, "holdout": None, "portfolio_id": portfolio_id,
+            "portfolio_upload": portfolio_upload, "portfolio_error": portfolio_error}
+
+
 def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
           universe_id="sp500", method="min_variance", n=40, lookback=252,
           max_weight: float | None = None,
@@ -321,7 +530,10 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
           cov_method: str = "shrinkage",
           portfolios_gw=None,
           alt_conn=None, macro_conn=None,
-          u_conn=None, eq_conn=None) -> dict:
+          u_conn=None, eq_conn=None,
+          factor: str = "sharpe_tr", long_n: int | None = None, long_pct: float | None = None,
+          short_n: int | None = None, short_pct: float | None = None,
+          net_target: float = 0.0, gross_target: float = 1.0) -> dict:
     """Solve the spec'd allocation; persist solution + weights + the full spec.
 
     ``signal_tilt`` = ``{"factor": <signals key>, "strength": float > 0}``;
@@ -336,6 +548,21 @@ def solve(sym_conn: psycopg.Connection, opt_conn: psycopg.Connection,
         return {"error": f"unknown method {method!r} (one of {METHODS})"}
     if cov_method not in COV_METHODS:
         return {"error": f"unknown cov_method {cov_method!r} (one of {COV_METHODS})"}
+    if method == "min_variance_long_short":
+        # Distinct orchestration (factor-rank → sign → per-leg min-variance); its own cap/mass
+        # feasibility lives in the helper. The long-only max_weight*n check below does not apply.
+        if long_n is not None and long_pct is not None:
+            return {"error": "give long_n OR long_pct, not both"}
+        if short_n is not None and short_pct is not None:
+            return {"error": "give short_n OR short_pct, not both"}
+        return _long_short_solve(
+            conn, opt_conn, universe_id=universe_id, factor=factor,
+            long_n=long_n, long_pct=long_pct, short_n=short_n, short_pct=short_pct,
+            lookback=lookback, max_weight=max_weight, cov_method=cov_method,
+            net_target=net_target, gross_target=gross_target,
+            portfolios_gw=portfolios_gw, alt_conn=alt_conn, macro_conn=macro_conn,
+            u_conn=u_conn, eq_conn=eq_conn,
+        )
     if max_weight is not None and max_weight * n < 1.0:
         return {"error": f"infeasible max_weight {max_weight} for n={n} (cap*n must be >= 1)"}
     tilt_factor = (signal_tilt or {}).get("factor")
