@@ -22,13 +22,14 @@ class DbBacktestGateway:
             top_n: int | None = None, weighting: str = "equal", rebalance: str = "monthly",
             cost_bps: float = 10.0, long_pct: float | None = None, long_n: int | None = None,
             short_pct: float | None = None, short_n: int | None = None,
-            sticky_keep_mult: float = 1.5, alt_conn=None, macro_conn=None) -> dict:
+            sticky_keep_mult: float = 1.5, borrow_bps: float = 0.0,
+            alt_conn=None, macro_conn=None) -> dict:
         res = run_backtest(self._sym, self._conn, factor=factor, universe_id=universe_id,
                            top_pct=top_pct, top_n=top_n, weighting=weighting,
                            rebalance=rebalance, start_date=start_date, end_date=end_date,
                            cost_bps=cost_bps, long_pct=long_pct, long_n=long_n,
                            short_pct=short_pct, short_n=short_n,
-                           sticky_keep_mult=sticky_keep_mult,
+                           sticky_keep_mult=sticky_keep_mult, borrow_bps=borrow_bps,
                            alt_conn=alt_conn, macro_conn=macro_conn)
         # Q6.4: optionally materialise the run as a paper Portfolio (persisted via the
         # portfolios package's own writer — module ownership respected, no cross-DB write here).

@@ -10,12 +10,19 @@ import pytest
 
 from optimiser.engine import (
     _const_corr_shrinkage,
+    _matvec,
     _pgd,
     _project_capped_simplex,
+    _project_long_short,
     _project_simplex,
     _tilt_scores,
+    min_variance_long_short,
     solve,
 )
+
+
+def _bookvar(w, cov):
+    return sum(w[i] * _matvec(cov, w)[i] for i in range(len(w)))
 
 
 class _Cur:
@@ -87,6 +94,56 @@ def test_pgd_respects_the_cap_at_the_solution():
     w_cap = _pgd(cov, mean, lam=1e6, cap=0.5)
     assert max(w_cap) <= 0.5 + 1e-9
     assert sum(w_cap) == pytest.approx(1.0)
+
+
+# ---- long/short projection + min-variance solve -------------------------------------------
+
+
+def test_project_long_short_masses_signs_bounds():
+    # longs {0,1} to +0.5, shorts {2,3} to −0.5; net 0, gross 1
+    w = _project_long_short([0.9, 0.1, -0.8, -0.2], long_idx=[0, 1], short_idx=[2, 3])
+    assert sum(w[i] for i in (0, 1)) == pytest.approx(0.5)   # long mass
+    assert sum(w[i] for i in (2, 3)) == pytest.approx(-0.5)  # short mass
+    assert sum(w) == pytest.approx(0.0)                       # net 0
+    assert sum(abs(x) for x in w) == pytest.approx(1.0)       # gross 1
+    assert w[0] >= 0 and w[1] >= 0 and w[2] <= 0 and w[3] <= 0
+
+
+def test_project_long_short_respects_the_cap_per_leg():
+    # cap 0.3 on a 2-name +0.5 leg forces both toward the cap (0.3 + 0.2)
+    w = _project_long_short([5.0, 0.0, -5.0, 0.0], long_idx=[0, 1], short_idx=[2, 3], cap=0.3)
+    assert all(-0.3 - 1e-9 <= x <= 0.3 + 1e-9 for x in w)
+    assert sum(w[i] for i in (0, 1)) == pytest.approx(0.5)
+    assert sum(w[i] for i in (2, 3)) == pytest.approx(-0.5)
+
+
+def test_min_variance_long_short_beats_inverse_vol_by_exploiting_covariance():
+    # 2 longs {0,1} + 2 shorts {2,3}, equal vols (0.2) so inverse-vol is uniform ±0.25. A strong
+    # positive corr between long-0 and short-2 means shorting 2 HEDGES holding 0 — the covariance
+    # min-variance solver must exploit it and reach LOWER book variance than the inverse-vol vector.
+    var = 0.04
+    c02 = 0.032  # corr(0,2)=0.8
+    cov = [
+        [var, 0.0, c02, 0.0],
+        [0.0, var, 0.0, 0.0],
+        [c02, 0.0, var, 0.0],
+        [0.0, 0.0, 0.0, var],
+    ]
+    inv_vol = [0.25, 0.25, -0.25, -0.25]  # feasible: equal vols, net 0 / gross 1
+    assert sum(inv_vol[i] for i in (0, 1)) == pytest.approx(0.5)
+    w = min_variance_long_short(cov, long_idx=[0, 1], short_idx=[2, 3])
+    # net 0 / gross 1 preserved; signs correct
+    assert sum(w) == pytest.approx(0.0, abs=1e-6)
+    assert sum(abs(x) for x in w) == pytest.approx(1.0, abs=1e-6)
+    assert w[0] >= -1e-9 and w[2] <= 1e-9
+    # the payoff: min-variance strictly undercuts the inverse-vol book variance
+    assert _bookvar(w, cov) < _bookvar(inv_vol, cov) - 1e-9
+
+
+def test_min_variance_long_short_rejects_infeasible_cap():
+    with pytest.raises(ValueError, match="infeasible cap"):
+        # cap 0.2 on a single-name +0.5 long leg is infeasible (0.2 < 0.5)
+        min_variance_long_short([[0.04, 0.0], [0.0, 0.04]], long_idx=[0], short_idx=[1], cap=0.2)
 
 
 # ---- Ledoit-Wolf constant-correlation covariance shrinkage --------------------------------
@@ -291,6 +348,44 @@ def test_solve_persists_the_full_spec_to_sql():
     assert out["summary"]["max_weight"] <= 0.3 + 1e-9
 
 
+def test_solve_min_variance_long_short_persists_signed_weights_and_spec(monkeypatch):
+    import optimiser.engine as eng
+
+    figis, ret_rows = _market_fixture()
+    sym = _RoutedConn([
+        ("universe_membership", _Cur(rows=[(f,) for f in figis])),
+        ("fundamentals", _Cur(rows=[(f, 1.0) for f in figis])),
+        ("fact_returns", _Cur(one=(date(2026, 4, 30),), rows=ret_rows)),
+        ("security_symbology", _Cur(rows=[])),
+    ])
+    opt = _RoutedConn([("INSERT INTO optimiser.solution", _Cur(one=(88,)))])
+    # rank the 6 names deterministically: top-2 long, bottom-2 short
+    scores = {f: 6.0 - i for i, f in enumerate(figis)}
+    monkeypatch.setattr(eng, "raw_factor", lambda key, members, d, **kw: scores)
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, method="min_variance_long_short",
+                lookback=200, long_n=2, short_n=2)
+    assert out.get("solution_id") == 88, out.get("error")
+    s = out["summary"]
+    assert s["net_exposure"] == pytest.approx(0.0, abs=1e-6)   # dollar-neutral
+    assert s["gross_exposure"] == pytest.approx(1.0, abs=1e-6)
+    assert s["n_long"] == 2 and s["n_short"] == 2
+    assert out["spec"]["method"] == "min_variance_long_short"
+    assert out["spec"]["factor"] == "sharpe_tr"
+    assert out["spec"]["long_n"] == 2 and out["spec"]["short_n"] == 2
+    assert out["spec"]["net_target"] == 0.0 and out["spec"]["gross_target"] == 1.0
+    # signed weights persisted — at least one negative (a short) reached the weight INSERT
+    weight_rows = next(p for sql, p in opt.calls
+                       if isinstance(p, tuple) and "INSERT INTO optimiser.weight" in sql)
+    assert any(wt < 0 for (_sid, _f, _tk, wt) in weight_rows)
+
+
+def test_solve_long_short_rejects_both_leg_selectors():
+    sym, opt = _RoutedConn(), _RoutedConn()
+    out = solve(sym, opt, u_conn=sym, eq_conn=sym, method="min_variance_long_short",
+                long_n=5, long_pct=0.2, short_n=5)
+    assert "long_n OR long_pct" in out["error"]
+
+
 def test_solve_holdout_too_large_is_a_named_error():
     figis, ret_rows = _market_fixture(n_days=80)
     sym = _RoutedConn([
@@ -437,4 +532,13 @@ def test_router_422s_for_caller_shape_errors():
     with pytest.raises(HTTPException) as e:
         solve_ep(OptSolveRequest(signal_tilt={"factor": "nope", "strength": 1.0}),
                  _GwNeverReached())
+    assert e.value.status_code == 422
+    # long/short method is accepted (reaches the gateway); both-leg-selectors is a 422
+    with pytest.raises(HTTPException) as e:
+        solve_ep(OptSolveRequest(method="min_variance_long_short", long_n=5, long_pct=0.2,
+                                 short_n=5), _GwNeverReached())
+    assert e.value.status_code == 422 and "long_n OR long_pct" in e.value.detail
+    # long/short selectors on a long-only method are rejected, not silently dropped
+    with pytest.raises(HTTPException) as e:
+        solve_ep(OptSolveRequest(method="min_variance", short_n=5), _GwNeverReached())
     assert e.value.status_code == 422

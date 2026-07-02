@@ -51,11 +51,14 @@ class Summary(BaseModel):
     n_long: int | None = None
     n_short: int | None = None
     dropped_no_vol: int | None = None
+    dropped_no_cov: int | None = None  # min_variance names dropped (no aligned history / leg cap)
     # turnover + transaction-cost honesty (1A): turnover always reported; cost applied iff costed
     turnover_ann: float | None = None
     turnover_total: float | None = None
     cost_bps: float | None = None
     cost_drag_total: float | None = None
+    borrow_bps: float | None = None
+    borrow_cost_total: float | None = None  # the short-financing portion of the total drag
     strategy_gross: Stats | None = None  # populated only when costs are modelled
     # statistical-significance guardrail (1B; Harvey-Liu-Zhu hurdle is t>3.0, not 2.0)
     spread_tstat: float | None = None
@@ -81,6 +84,11 @@ class StrategySpec(BaseModel):
     short_pct: float | None = None
     short_n: int | None = None
     sticky_keep_mult: float | None = None
+    borrow_bps: float | None = None
+    # min_variance weighting only: the covariance window + per-leg name cap
+    cov_lookback: int | None = None
+    cov_method: str | None = None
+    cov_leg_cap: int | None = None
 
 
 class RunSummary(BaseModel):
@@ -114,7 +122,7 @@ class BacktestRunRequest(BaseModel):
     # selection: exactly one of top_pct / top_n (422 if both given)
     top_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
     top_n: int | None = Field(default=None, gt=0)
-    weighting: str = "equal"  # equal | cap | inverse_vol (inverse_vol required for a low-vol book)
+    weighting: str = "equal"  # equal | cap | inverse_vol | min_variance (last two: low-vol books)
     rebalance: str = "monthly"  # monthly | quarterly
     # 1A transaction costs: bps charged on one-way turnover (0 = gross). Default 10 (liquid
     # large-cap one-way) so runs are NET by default; raise for a less-liquid book, 0 for gross.
@@ -130,6 +138,9 @@ class BacktestRunRequest(BaseModel):
     short_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
     short_n: int | None = Field(default=None, gt=0)
     sticky_keep_mult: float = Field(default=1.5, ge=1.0, le=10.0, allow_inf_nan=False)
+    # short borrow cost (annual bps on the short leg's gross exposure; 0 = no financing charge).
+    # A periodic HOLDING cost, distinct from the turnover cost_bps.
+    borrow_bps: float = Field(default=0.0, ge=0, le=1000, allow_inf_nan=False)
     save_portfolio: bool = False  # Q6.4: also materialise the run as a paper Portfolio
 
 
@@ -188,14 +199,18 @@ def run_backtest_ep(
         raise HTTPException(status_code=422, detail="give long_pct OR long_n, not both")
     if body.short_pct is not None and body.short_n is not None:
         raise HTTPException(status_code=422, detail="give short_pct OR short_n, not both")
-    if body.weighting not in ("equal", "cap", "inverse_vol"):
+    if body.weighting not in ("equal", "cap", "inverse_vol", "min_variance"):
         raise HTTPException(status_code=422,
-                            detail="weighting must be one of equal, cap, inverse_vol")
+                            detail="weighting must be one of equal, cap, inverse_vol, min_variance")
     want_shorts = body.short_pct is not None or body.short_n is not None
     if want_shorts and body.weighting == "cap":
         raise HTTPException(
             status_code=422,
             detail="cap weighting is long-only; use 'equal' or 'inverse_vol' with shorts")
+    if body.weighting == "min_variance" and not want_shorts:
+        raise HTTPException(
+            status_code=422,
+            detail="min_variance weighting requires a short selector (a long/short book)")
     # Reject cross-mode selectors rather than silently ignore them: long_* only make sense with a
     # short leg, and top_* are long-only (a long/short run sizes its long leg with long_*).
     if not want_shorts and (body.long_pct is not None or body.long_n is not None):
@@ -254,7 +269,8 @@ def run_backtest_ep(
                      top_n=body.top_n, weighting=body.weighting, rebalance=body.rebalance,
                      cost_bps=body.cost_bps, long_pct=body.long_pct, long_n=body.long_n,
                      short_pct=body.short_pct, short_n=body.short_n,
-                     sticky_keep_mult=body.sticky_keep_mult, **module_conns)
+                     sticky_keep_mult=body.sticky_keep_mult, borrow_bps=body.borrow_bps,
+                     **module_conns)
     finally:
         if pconn is not None:
             pconn.close()

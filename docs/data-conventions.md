@@ -238,11 +238,24 @@ The backtest engine runs a **market-neutral long/short** book on top of the metr
   ≈ 1**. This removes market beta — the dominant volatility source — so the book targets low
   (systematic) vol by construction. Reported per run: `net_exposure`, `gross_exposure`, `n_long`,
   `n_short`.
-- **Weighting = `inverse_vol`** sets each name ∝ `1/vol_tr` (1Y, `gated=false`) within its side, so
-  the *proportions are data-driven, not guessed*, and low-vol names carry more weight (lower book
-  vol). A name with no positive `vol_tr` is DROPPED from its side and counted (`dropped_no_vol`),
-  never zero-weighted. `weighting='equal'` splits each side evenly; `cap` is **long-only** (rejected
-  with shorts). True **min-variance** (covariance-aware) weighting is a follow-on (the optimiser).
+- **Weighting = `inverse_vol`** sets each name ∝ `1/vol_tr` (1Y, `gated=false`, `n_obs ≥ 60`) within
+  its side, so the *proportions are data-driven, not guessed*, and low-vol names carry more weight
+  (lower book vol). A name with no positive `vol_tr` is DROPPED from its side and counted
+  (`dropped_no_vol`), never zero-weighted. `weighting='equal'` splits each side evenly; `cap` is
+  **long-only** (rejected with shorts).
+- **Weighting = `min_variance`** (covariance-aware, the strongest low-vol construction): builds a
+  Ledoit-Wolf shrinkage covariance over the selected longs∪shorts **as of the rebalance date** (a
+  strictly-upper-bounded read — never the optimiser's global-max window — so no look-ahead) and
+  solves the signed dollar-neutral book via `optimiser.min_variance_long_short`. Because the Sharpe
+  selection pre-signs each name, the problem is a **convex** QP (two capped-simplex projections per
+  side), not the NP-hard general long/short case. Each leg is capped at `cov_leg_cap` names (default
+  60, by selection rank) to keep the O(n²·t) pure-Python shrinkage tractable; names without aligned
+  history are dropped and counted (`dropped_no_cov`). Exploits correlations to push book vol below
+  what per-name inverse-vol reaches.
+- **Short borrow cost (`borrow_bps`)** is a PERIODIC HOLDING charge (distinct from the one-time
+  turnover `cost_bps`): the short leg's gross exposure is financed every day it is held, at
+  `short_gross × (borrow_bps/1e4)/252` per day. Reported as `borrow_cost_total`, separate from the
+  turnover `cost_drag_total`; any modelled cost (turnover OR borrow) flips the headline to net.
 - **Daily P&L rescale.** A signed book's daily return is `Σ(wᵢ·prᵢ)` over priced names divided by
   the **gross** weight present (`Σ|wᵢ|`), NOT `÷Σwᵢ` — the net sum is ~0 for a dollar-neutral book,
   so a net normalization would divide by ~0 and drop every day. Long-only (all `wᵢ ≥ 0`) reduces to

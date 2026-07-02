@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS optimiser.solution (
     solution_id   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     universe_id   TEXT NOT NULL,
-    method        TEXT NOT NULL,             -- 'min_variance' | 'max_sharpe'
+    method        TEXT NOT NULL,             -- 'min_variance' | 'max_sharpe' | 'min_variance_long_short'
     n_assets      INTEGER NOT NULL,
     lookback_days INTEGER NOT NULL,
     exp_return    DOUBLE PRECISION,          -- annualised
@@ -26,8 +26,13 @@ CREATE TABLE IF NOT EXISTS optimiser.weight (
     solution_id    BIGINT NOT NULL REFERENCES optimiser.solution(solution_id) ON DELETE CASCADE,
     composite_figi CHAR(12) NOT NULL,
     ticker         TEXT,
+    -- SIGNED weight: positive = long, NEGATIVE = short. Deliberately NO CHECK — the
+    -- min_variance_long_short method persists dollar-neutral books with negative short weights.
     weight         DOUBLE PRECISION NOT NULL,
     PRIMARY KEY (solution_id, composite_figi)
 );
+
+COMMENT ON COLUMN optimiser.weight.weight IS
+    'Signed target weight: >0 long, <0 short (long/short solutions). No sign constraint by design.';
 
 COMMIT;

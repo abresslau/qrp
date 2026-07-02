@@ -18,6 +18,9 @@ class DbOptimiserGateway:
     def solve(self, universe_id: str, method: str, n: int, lookback: int,
               max_weight: float | None = None, signal_tilt: dict | None = None,
               holdout_days: int = 0, cov_method: str = "shrinkage", portfolios_gw=None,
+              factor: str = "sharpe_tr", long_n: int | None = None, long_pct: float | None = None,
+              short_n: int | None = None, short_pct: float | None = None,
+              net_target: float = 0.0, gross_target: float = 1.0,
               alt_conn=None, macro_conn=None) -> dict:
         # Membership lives in the universe DB; fact_returns in the equity DB — open both for the
         # solve (roster-fetch + return matrix), scoped to this call.
@@ -27,7 +30,10 @@ class DbOptimiserGateway:
             return _solve(self._sym, self._conn, universe_id=universe_id, method=method, n=n,
                           lookback=lookback, max_weight=max_weight, signal_tilt=signal_tilt,
                           holdout_days=holdout_days, cov_method=cov_method,
-                          portfolios_gw=portfolios_gw, alt_conn=alt_conn, macro_conn=macro_conn,
+                          portfolios_gw=portfolios_gw, factor=factor, long_n=long_n,
+                          long_pct=long_pct, short_n=short_n, short_pct=short_pct,
+                          net_target=net_target, gross_target=gross_target,
+                          alt_conn=alt_conn, macro_conn=macro_conn,
                           u_conn=u_conn, eq_conn=eq_conn)
 
     def solutions(self, limit: int = 25) -> list[dict]:
