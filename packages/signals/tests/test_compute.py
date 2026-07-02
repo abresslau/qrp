@@ -220,6 +220,47 @@ def test_raw_factor_dispatches_to_the_single_definition():
     assert out == {"FIGI_A0000000": 5e9}
 
 
+# ---- sharpe_tr (1Y TR Sharpe, read from equity.fact_asset_metrics) ------------------------
+
+
+def test_sharpe_tr_reads_gated_false_metrics_at_1y_window():
+    from signals.compute import _raw_sharpe_tr
+
+    # only the SQL-returned rows (already scoped gated=false + non-NULL) become scores
+    eq = _RoutedConn([("fact_asset_metrics",
+                       _Cur(rows=[("FIGI_GOOD0000", 1.4), ("FIGI_MEH00000", -0.3)]))])
+    as_of = date(2026, 6, 5)
+    out = _raw_sharpe_tr(eq, ["FIGI_GOOD0000", "FIGI_MEH00000"], as_of)
+    assert out == {"FIGI_GOOD0000": 1.4, "FIGI_MEH00000": -0.3}
+    sql, params = eq.calls[0]
+    # the read pins window 11 (1Y), gated=false, non-NULL, and the exact as-of date (no look-ahead)
+    assert "window_id = %s" in sql and "gated = false" in sql
+    assert "sharpe_tr IS NOT NULL" in sql and "as_of_date = %s" in sql
+    assert params == (11, as_of, ["FIGI_GOOD0000", "FIGI_MEH00000"])
+
+
+def test_sharpe_tr_absent_rows_are_omitted_never_imputed():
+    from signals.compute import _raw_sharpe_tr
+
+    # a member with no gated=false metric row simply doesn't come back from SQL -> absent
+    eq = _RoutedConn([("fact_asset_metrics", _Cur(rows=[("FIGI_ONLY00000", 0.9)]))])
+    out = _raw_sharpe_tr(eq, ["FIGI_ONLY00000", "FIGI_GATED0000"], date(2026, 6, 5))
+    assert out == {"FIGI_ONLY00000": 0.9}
+    assert "FIGI_GATED0000" not in out  # not zero-scored
+
+
+def test_sharpe_tr_required_modules_empty_and_dispatches():
+    # equity is a core always-open read (eq_conn), so required_modules is empty despite the
+    # equity: input label — the backtest/router won't try to open an "equity" module connection.
+    from signals.compute import raw_factor, required_modules
+
+    assert required_modules("sharpe_tr") == frozenset()
+    assert FACTORS["sharpe_tr"]["direction"] == "high"
+    eq = _RoutedConn([("fact_asset_metrics", _Cur(rows=[("FIGI_A0000000", 2.1)]))])
+    out = raw_factor("sharpe_tr", ["FIGI_A0000000"], date(2026, 6, 5), sym_conn=eq, eq_conn=eq)
+    assert out == {"FIGI_A0000000": 2.1}
+
+
 # ---- skip attribution --------------------------------------------------------------------
 
 

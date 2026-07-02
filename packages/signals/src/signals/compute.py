@@ -65,6 +65,18 @@ FACTORS = {
         ">=5 and >=15 obs respectively, else absent; winsorised 1/99; direction high "
         "(rising attention favoured). Coverage limited to altdata's curated wiki map.",
     },
+    "sharpe_tr": {
+        "name": "Sharpe (1Y, TR)",
+        "description": "Annualised Sharpe ratio (rf=0) of daily TOTAL-return over the trailing "
+        "year (the risk-adjusted-quality factor; winsorised at 1/99 pct).",
+        "direction": "high",
+        "inputs": ["equity:fact_asset_metrics:sharpe_tr", "universe:universe_membership"],
+        "method": "sharpe_tr from equity.fact_asset_metrics at window_id=11 (1Y) as of the scoring "
+        "date, reading only gated=false rows with a non-NULL value (absent otherwise, never "
+        "imputed); winsorised 1/99; direction high (best risk-adjusted names favoured). The metric "
+        "is (mean/stddev_samp of daily tr) x sqrt(252), rf=0 — precomputed by the equity returns "
+        "loader, not recomputed here.",
+    },
     "fiscal_sens": {
         "name": "Fiscal-Flow Sensitivity",
         "description": "Absolute 1Y beta of daily returns to daily %-changes in US total "
@@ -91,9 +103,10 @@ def required_modules(factor_key: str) -> frozenset[str]:
     if factor_key not in FACTORS:
         raise ValueError(f"unknown factor {factor_key!r} (one of {sorted(FACTORS)})")
     modules = {ref.split(":", 1)[0] for ref in FACTORS[factor_key]["inputs"]}
-    # sym + universe are always-opened core reads (fact_returns/fundamentals + the member
-    # roster), not optional module connections the caller must gate on.
-    return frozenset(modules - {"sym", "universe"})
+    # sym + equity + universe are always-opened core reads (fundamentals + fact_returns/
+    # fact_asset_metrics + the member roster), not optional module connections the caller must
+    # gate on. (equity is passed as eq_conn everywhere raw_factor is called.)
+    return frozenset(modules - {"sym", "equity", "universe"})
 
 
 def factor_direction(factor_key: str) -> str:
@@ -133,6 +146,8 @@ def raw_factor(
         return _raw_momentum(eq_conn, members, as_of_date)
     if factor_key == "vol_1y":
         return _raw_vol(eq_conn, members, as_of_date)
+    if factor_key == "sharpe_tr":
+        return _raw_sharpe_tr(eq_conn, members, as_of_date)
     if factor_key == "size":
         return _raw_size(sym_conn, members, as_of_date)
     if factor_key == "wiki_attention":
@@ -197,6 +212,29 @@ def _raw_vol(conn, members, as_of_date) -> dict[str, float]:
          GROUP BY composite_figi HAVING count(*) >= 60
         """,
         (_W_1D, start_date, as_of_date, members),
+    ).fetchall()
+    return {f: float(v) for f, v in rows if v is not None}
+
+
+def _raw_sharpe_tr(conn, members, as_of_date) -> dict[str, float]:
+    """1Y annualised total-return Sharpe per member, read from equity.fact_asset_metrics.
+
+    The metric is PRECOMPUTED by the equity returns loader (mean/stddev_samp of daily tr x
+    sqrt(252), rf=0) at ``window_id=11`` (1Y); this factor only reads the value AS OF the scoring
+    date. Only ``gated=false`` rows with a non-NULL ``sharpe_tr`` are returned — a row whose as-of
+    snapshot was under an unreviewed price flag (``gated=true``) or that lacked a defined Sharpe is
+    ABSENT, never imputed. Reads on the exact ``as_of_date`` (the loader writes a metric row for the
+    same trading days as fact_returns, so a rebalance date present in fact_returns has its metrics),
+    mirroring the endpoint-exact reads of ``_raw_momentum``.
+    """
+    rows = conn.execute(
+        """
+        SELECT composite_figi, sharpe_tr
+          FROM fact_asset_metrics
+         WHERE window_id = %s AND gated = false AND sharpe_tr IS NOT NULL
+           AND as_of_date = %s AND composite_figi = ANY(%s)
+        """,
+        (_W_1Y, as_of_date, members),
     ).fetchall()
     return {f: float(v) for f, v in rows if v is not None}
 
@@ -390,6 +428,8 @@ def _compute_universe(
                            _raw_momentum(eq_conn, members, as_of_date)),
         "vol_1y": _store(sig_conn, universe_id, as_of_date, "vol_1y", "low",
                          _raw_vol(eq_conn, members, as_of_date)),
+        "sharpe_tr": _store(sig_conn, universe_id, as_of_date, "sharpe_tr", "high",
+                            _raw_sharpe_tr(eq_conn, members, as_of_date)),
         "size": _store(sig_conn, universe_id, as_of_date, "size", "low",
                        _raw_size(sym_conn, members, as_of_date)),
     }

@@ -44,6 +44,13 @@ class Summary(BaseModel):
     first_holding_n: int | None = None
     # cap-weighting honesty: names dropped for missing market cap (never zero-weighted)
     dropped_no_mcap: int | None = None
+    # long/short book diagnostics: net ≈ 0, gross ≈ 1 for a dollar-neutral book; leg counts + the
+    # inverse-vol drop count (names with no positive vol_tr). All None on long-only equal/cap runs.
+    net_exposure: float | None = None
+    gross_exposure: float | None = None
+    n_long: int | None = None
+    n_short: int | None = None
+    dropped_no_vol: int | None = None
     # turnover + transaction-cost honesty (1A): turnover always reported; cost applied iff costed
     turnover_ann: float | None = None
     turnover_total: float | None = None
@@ -68,6 +75,12 @@ class StrategySpec(BaseModel):
     cost_bps: float | None = None  # round-trip cost per unit one-way turnover (NULL on pre-1A runs)
     start_date: str | None = None
     end_date: str | None = None
+    # long/short fields — present only on long/short runs (NULL on long-only specs)
+    long_pct: float | None = None
+    long_n: int | None = None
+    short_pct: float | None = None
+    short_n: int | None = None
+    sticky_keep_mult: float | None = None
 
 
 class RunSummary(BaseModel):
@@ -101,13 +114,22 @@ class BacktestRunRequest(BaseModel):
     # selection: exactly one of top_pct / top_n (422 if both given)
     top_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
     top_n: int | None = Field(default=None, gt=0)
-    weighting: str = "equal"  # equal | cap
+    weighting: str = "equal"  # equal | cap | inverse_vol (inverse_vol required for a low-vol book)
     rebalance: str = "monthly"  # monthly | quarterly
     # 1A transaction costs: bps charged on one-way turnover (0 = gross). Default 10 (liquid
     # large-cap one-way) so runs are NET by default; raise for a less-liquid book, 0 for gross.
     cost_bps: float = Field(default=10.0, ge=0, le=1000, allow_inf_nan=False)
     start_date: date | None = None  # FR-18: optional explicit range (default: ~5y of data)
     end_date: date | None = None
+    # long/short (dollar-neutral) book: supply a short selector to engage it. The long leg is sized
+    # by long_pct XOR long_n (defaults to the top quintile); the short leg by short_pct XOR short_n.
+    # sticky_keep_mult (>= 1) sets the hysteresis band that stabilises turnover. cap weighting is
+    # long-only; use weighting='inverse_vol' (or 'equal') with shorts.
+    long_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    long_n: int | None = Field(default=None, gt=0)
+    short_pct: float | None = Field(default=None, gt=0, le=1, allow_inf_nan=False)
+    short_n: int | None = Field(default=None, gt=0)
+    sticky_keep_mult: float = Field(default=1.5, ge=1.0, le=10.0, allow_inf_nan=False)
     save_portfolio: bool = False  # Q6.4: also materialise the run as a paper Portfolio
 
 
@@ -162,7 +184,23 @@ def run_backtest_ep(
 
     if body.top_pct is not None and body.top_n is not None:
         raise HTTPException(status_code=422, detail="give top_pct OR top_n, not both")
-    top_pct = body.top_pct if (body.top_pct is not None or body.top_n is not None) else 0.2
+    if body.long_pct is not None and body.long_n is not None:
+        raise HTTPException(status_code=422, detail="give long_pct OR long_n, not both")
+    if body.short_pct is not None and body.short_n is not None:
+        raise HTTPException(status_code=422, detail="give short_pct OR short_n, not both")
+    if body.weighting not in ("equal", "cap", "inverse_vol"):
+        raise HTTPException(status_code=422,
+                            detail="weighting must be one of equal, cap, inverse_vol")
+    want_shorts = body.short_pct is not None or body.short_n is not None
+    if want_shorts and body.weighting == "cap":
+        raise HTTPException(
+            status_code=422,
+            detail="cap weighting is long-only; use 'equal' or 'inverse_vol' with shorts")
+    # long-only defaults to the top quintile; a long/short run sizes its long leg via long_*
+    if body.top_pct is not None or body.top_n is not None:
+        top_pct = body.top_pct
+    else:
+        top_pct = None if want_shorts else 0.2
     try:
         needed = required_modules(body.factor)
     except ValueError as exc:  # unknown factor
@@ -203,7 +241,9 @@ def run_backtest_ep(
         res = gw.run(body.factor, body.universe, top_pct, portfolios_gw=pgw,
                      start_date=body.start_date, end_date=body.end_date,
                      top_n=body.top_n, weighting=body.weighting, rebalance=body.rebalance,
-                     cost_bps=body.cost_bps, **module_conns)
+                     cost_bps=body.cost_bps, long_pct=body.long_pct, long_n=body.long_n,
+                     short_pct=body.short_pct, short_n=body.short_n,
+                     sticky_keep_mult=body.sticky_keep_mult, **module_conns)
     finally:
         if pconn is not None:
             pconn.close()
