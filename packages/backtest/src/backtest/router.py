@@ -211,6 +211,10 @@ def run_backtest_ep(
         raise HTTPException(
             status_code=422,
             detail="min_variance weighting requires a short selector (a long/short book)")
+    if body.borrow_bps and not want_shorts:
+        raise HTTPException(
+            status_code=422,
+            detail="borrow_bps finances the short leg; it requires a short selector")
     # Reject cross-mode selectors rather than silently ignore them: long_* only make sense with a
     # short leg, and top_* are long-only (a long/short run sizes its long leg with long_*).
     if not want_shorts and (body.long_pct is not None or body.long_n is not None):

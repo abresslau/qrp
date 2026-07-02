@@ -235,14 +235,14 @@ def _aligned_returns_asof(
         present = sorted(figis, key=lambda f: sum(1 for dd in by_date if f in by_date[dd]),
                          reverse=True)
         kept = list(present)
-        while len(kept) > 2:
+        while len(kept) >= 2:  # test down to the smallest 2-name (1x1-leg) set, then give up
             ds = [dd for dd in sorted(by_date) if set(kept).issubset(by_date[dd].keys())]
             if len(ds) >= 30:
                 dates = ds
                 break
+            if len(kept) == 2:
+                return [], []  # even the 2-name set lacks history
             kept.pop()  # drop the worst-covered name
-        else:
-            return [], []
     series = {f: [by_date[dd][f] for dd in dates] for f in kept}
     return list(kept), [series[f] for f in kept]
 
@@ -259,28 +259,29 @@ def _min_variance_weights(
     selection rank — the strongest Sharpe names) to keep the O(n²·t) covariance tractable. Names
     with insufficient aligned history are dropped; returns ``({}, dropped)`` if a two-leg covariance
     can't be formed (caller skips the rebalance). ``dropped`` counts every selected name not in the
-    final weighted book.
+    final weighted book — INCLUDING names trimmed by the leg cap (measured PRE-cap) — as a
+    per-rebalance running total (not a distinct-name count).
     """
     # Lazy import breaks the optimiser<->backtest module cycle (optimiser imports score_weights).
     from optimiser.engine import _const_corr_shrinkage, _mean_cov, min_variance_long_short
 
+    n_selected = len(longs) + len(shorts)  # pre-cap: leg-cap trims count as dropped too
     longs, shorts = longs[:leg_cap], shorts[:leg_cap]
     names = list(longs) + list(shorts)
-    n_sel = len(names)
     figis, matrix = _aligned_returns_asof(eq_conn, names, d, lookback)
     long_set, short_set = set(longs), set(shorts)
     long_idx = [i for i, f in enumerate(figis) if f in long_set]
     short_idx = [i for i, f in enumerate(figis) if f in short_set]
     if not long_idx or not short_idx or len(figis) < 2 or not matrix or len(matrix[0]) < 30:
-        return {}, n_sel  # can't form a two-leg covariance → skip
+        return {}, n_selected  # can't form a two-leg covariance → skip
     cov = _const_corr_shrinkage(matrix)[0] if cov_method == "shrinkage" else _mean_cov(matrix)[1]
     try:
         w = min_variance_long_short(cov, long_idx, short_idx,
                                     long_mass=long_mass, short_mass=short_mass, cap=None)
     except ValueError:
-        return {}, n_sel
+        return {}, n_selected
     weights = {figis[i]: w[i] for i in range(len(figis)) if abs(w[i]) > 1e-9}
-    return weights, n_sel - len(weights)
+    return weights, n_selected - len(weights)
 
 
 def _cap_weights(conn, eq_conn, figis: list[str], d: date) -> tuple[dict[str, float], int]:
@@ -472,6 +473,8 @@ def _run_backtest(
         return {"error": f"unknown cov_method {cov_method!r} (one of shrinkage, sample)"}
     if borrow_bps < 0:
         return {"error": f"borrow_bps must be >= 0 (got {borrow_bps})"}
+    if borrow_bps and not want_shorts:
+        return {"error": "borrow_bps finances the short leg; it requires a short selector"}
     if sticky_keep_mult < 1.0:
         return {"error": f"sticky_keep_mult must be >= 1.0 (got {sticky_keep_mult})"}
     if not want_shorts:

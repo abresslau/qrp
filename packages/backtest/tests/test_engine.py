@@ -235,6 +235,51 @@ def test_engine_rejects_min_variance_without_shorts():
     assert "min_variance weighting requires a short selector" in out["error"]
 
 
+def test_engine_rejects_borrow_bps_without_shorts():
+    # borrow_bps finances the short leg — a long-only run must reject it, not silently ignore it
+    sym, bt = _engine_conns()
+    out = run_backtest(sym, bt, universe_conn=sym, equity_conn=sym, borrow_bps=50.0)
+    assert "borrow_bps finances the short leg" in out["error"]
+
+
+def test_min_variance_weights_counts_leg_cap_trims_as_dropped():
+    # leg_cap=1 trims the 2-name legs to 1 each; the 2 trimmed names must be counted in `dropped`
+    longs, shorts = ["FIGI_L0000000", "FIGI_L1000000"], ["FIGI_S0000000", "FIGI_S1000000"]
+    figis = longs + shorts
+    d0 = date(2025, 1, 1)
+    rows = []
+    for k in range(40):
+        dd = date.fromordinal(d0.toordinal() + k)
+        mkt = 0.01 * ((-1) ** k)
+        for i, f in enumerate(figis):
+            rows.append((dd, f, (0.5 + 0.2 * i) * mkt + 0.001 * ((-1) ** (k + i))))
+    conn = _RoutedConn([("SELECT as_of_date, composite_figi, pr", _Cur(rows=rows))])
+    w, dropped = _min_variance_weights(
+        conn, longs, shorts, date(2025, 3, 1), long_mass=0.5, short_mass=0.5,
+        lookback=252, cov_method="shrinkage", leg_cap=1,
+    )
+    assert len(w) == 2 and dropped == 2  # 4 selected − 2 held = 2 trimmed by the leg cap, counted
+    assert sum(w.values()) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_aligned_returns_asof_keeps_the_two_name_set_after_trimming():
+    # A,B priced 40 days; C priced only 10 -> the full 3-set has <30 common dates, so C is trimmed
+    # and the 2-name {A,B} set (which DOES have >=30) must be RETURNED, not rejected.
+    d0 = date(2025, 1, 1)
+    rows = []
+    for k in range(40):
+        dd = date.fromordinal(d0.toordinal() + k)
+        rows.append((dd, "FIGI_A0000000", 0.001 * ((-1) ** k)))
+        rows.append((dd, "FIGI_B0000000", 0.002 * ((-1) ** k)))
+        if k < 10:  # C is sparse
+            rows.append((dd, "FIGI_C0000000", 0.003))
+    conn = _RoutedConn([("SELECT as_of_date, composite_figi, pr", _Cur(rows=rows))])
+    figis, matrix = _aligned_returns_asof(
+        conn, ["FIGI_A0000000", "FIGI_B0000000", "FIGI_C0000000"], date(2025, 3, 1), lookback=252)
+    assert set(figis) == {"FIGI_A0000000", "FIGI_B0000000"}  # C trimmed, 2-name set kept
+    assert len(matrix[0]) >= 30
+
+
 def test_borrow_cost_accrues_on_the_short_leg_separate_from_turnover():
     # a dollar-neutral book with borrow but NO turnover cost: the drag is all borrow, the headline
     # is NET (costed), and borrow_cost_total is reported separately and > 0.
